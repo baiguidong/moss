@@ -57,16 +57,15 @@ rea analyze-javascript-application output/codex-settings-analysis-20261029/raw \
 | 子会话 | `sessions` 中已识别的未归档子会话 |
 | 已归档会话 | 归档会话及其后代的目录 |
 | 项目与工作区 | `projects`, `workspaces`, `app-projects`, `app-authoring`, `artifacts`, `self-tests` 等 |
-| 已安装应用 | `apps`, `generated-apps` |
-| 应用数据 | `apps-data`, `generated-app-data`, `apps-runtime`, `app-tasks`, `browser-profiles` |
-| 运行环境 | `runtimes`, `mcp`, `dbx-mcp`, `browser-binaries`, `whisper-models`, `server` 等 |
+| 应用数据 | `apps-data`, `apps-runtime`, `app-tasks`, `browser-profiles` |
+| 运行环境 | `runtimes`, `server` 等核心运行环境；`server_bgd` 若仍存在会落入“数据库与其他”以便识别旧副本 |
 | 资源与记忆 | `skills`, `assistants`, `agents`, `connectors`, `library`, `memory`, `expert-hub` 等 |
-| 缓存 | `cache`, `.cache`, `caches`, `app-authoring-previews`, `cloud-transfers`，以及嵌套的 Chromium / npm 等缓存目录 |
+| 缓存与可重建内容 | `apps`, `generated-apps`, `generated-app-data`, `cache`, `.cache`, `caches`, `app-authoring-previews`, `app-market`、`mcp/python`、`browser-binaries`、`whisper-models`，以及嵌套的 Chromium / npm 等缓存目录 |
 | 历史版本 | `workspace-versions`, `turn-observations`, `preview-drafts`, `backups`, `file-history` |
 | 日志 | `logs`, `debug`, `traces`, `startup-perf` |
 | 数据库与其他 | 数据库、配置、索引及其余文件 |
 
-每个文件只归入一个分类；可展开分类查看真实目录及大小。`node_modules` / `site-packages` 内名为 cache 的源码目录仍计入安装代码。缓存是占用分类，没有附带自动删除。
+每个一级目录只归入一个分类；可展开分类查看真实目录及大小。应用数据和应用运行时按 `apps-data/<appId>`、`apps-runtime/<appId>` 展示，并按占用降序排列；DBX 的独立数据库目录 `dbx-mcp` 归到 `moss.dbx (dbx-mcp)`。未知一级目录进入“数据库与其他”，便于后续识别和调整；任何一级目录内部的 `cache` 子目录都不会再次拆分类别。`node_modules` / `site-packages` 内名为 cache 的源码目录仍计入所属目录。设置页提供“清理可重建缓存”：删除生成包、创作预览、市场目录、普通缓存、浏览器内核、Whisper 模型、MCP Python 环境和旧版 App 安装包，保留当前 App 版本、应用数据与核心运行环境。
 
 统计优先采用 `stat.blocks × 512` 的磁盘分配空间；不提供 blocks 的平台退回逻辑大小并标明。它与 `du` 的口径相近，不等于 APFS 去重、压缩后独占的物理容量。数据位置之外的工作区、远端数据、Moss 安装包和外部系统缓存不计入。Web 页面统计 Web Host 的目录，显示“此云电脑”。
 
@@ -101,6 +100,7 @@ rea analyze-javascript-application output/codex-settings-analysis-20261029/raw \
 ### 接口
 
 - `storage:get-overview` → 分类、总大小、统计完整性、时间、根目录。
+- `storage:clear-caches` → 清理可联网重建的缓存并返回释放字节数。
 - `storage:review-chats` → 候选列表、字节数、子会话数、服务端预览令牌。
 - `storage:delete-chats` → 所选预览的删除结果。
 - `storage:list-archives` / `storage:set-archived` → 归档列表、归档与恢复。

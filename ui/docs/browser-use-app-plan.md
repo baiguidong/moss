@@ -40,7 +40,7 @@
 
 - CDP 地址：`http://127.0.0.1:9222`。
 - 输出目录：`~/.moss/artifacts/playwright`。
-- 默认浏览器用户目录：`~/.moss/browser-profiles/playwright-cdp-9222`，端口变化时沿用现有对应目录规则。
+- 默认浏览器用户目录：当前 App 实例数据目录下的 `browser-profiles/playwright-cdp-9222`，端口变化时沿用现有对应目录规则。
 - 系统 Chrome 由现有启动器查找，Node 由 Moss 提供。运行阶段使用随包依赖。
 
 沿用默认浏览器目录是复用现有路径规则，不进行目录搬运或账号数据复制。新 App 不读取 MCP App 或旧 `settings.mcp` 的配置与凭据，也不保留接管旧 npx 预设的逻辑。

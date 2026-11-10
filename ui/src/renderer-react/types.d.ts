@@ -37,6 +37,7 @@ export type StorageReview = {
 };
 export type ArchivedChat = { id: string; title: string; updatedAt: number; archivedAt: number; subagents: number };
 export type StorageCleanupResult = { deleted: number; skipped: number; failed: number };
+export type StorageCacheCleanupResult = { deletedBytes: number; removed: string[]; failed: number };
 import type {
   SendRequest, SendResult, SessionRequest, AbortRequest, AbortResult, ControlResult, PlanDecisionResult,
   AnswerQuestionRequest, RejectQuestionRequest, SessionEvent, SessionStateEvent,
@@ -1427,6 +1428,7 @@ declare global {
         setArchived: (payload: { sessionId: string; archived: boolean }) => Promise<{ ok: boolean }>;
         onArchivesChanged: (callback: (payload: { ids: string[]; archived: boolean }) => void) => () => void;
         getOverview: () => Promise<StorageOverview>;
+        clearCaches: () => Promise<StorageCacheCleanupResult>;
         reviewChats: (payload: { days?: number; archivedOnly?: boolean; archivedIds?: string[] }) => Promise<StorageReview>;
         deleteChats: (payload: { token: string; ids: string[] }) => Promise<StorageCleanupResult>;
       };

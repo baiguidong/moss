@@ -6,11 +6,13 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { measureStorage } from '../src/storage-usage.mjs';
 
-test('complete allocation agrees with du, includes hidden/nested cache, excludes external links and deduplicates hardlinks', async t => {
+test('complete allocation agrees with du, includes hidden directories, excludes external links and deduplicates hardlinks', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-usage-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
-  const names = ['apps/demo/node_modules/cache/index.js', 'apps-data/demo/Cache/data', '.cache/index', 'runtimes/python/bin', 'sessions/normal/transcript', 'sessions/child/transcript', 'sessions/archived/transcript'];
+  const names = ['apps/demo/node_modules/cache/index.js', 'apps-data/demo/Cache/data', 'apps-data/large/file', 'apps-data/small/file', '.cache/index', 'runtimes/python/bin', 'sessions/normal/transcript', 'sessions/child/transcript', 'sessions/archived/transcript'];
   for (const name of names) { await fs.mkdir(path.dirname(path.join(root, name)), { recursive: true }); await fs.writeFile(path.join(root, name), Buffer.alloc(4096)); }
+  await fs.writeFile(path.join(root, 'apps-data/large/file'), Buffer.alloc(8192));
+  await fs.writeFile(path.join(root, 'apps-data/small/file'), Buffer.alloc(1024));
   await fs.link(path.join(root, names[0]), path.join(root, 'apps/demo/hardlink'));
   await fs.symlink(os.homedir(), path.join(root, 'external'));
   const result = await measureStorage(root, { sessionKinds: new Map([['normal', 'sessions'], ['child', 'subagents'], ['archived', 'archived']]) });
@@ -18,8 +20,9 @@ test('complete allocation agrees with du, includes hidden/nested cache, excludes
   assert.ok(Math.abs(result.totalBytes - du) < 1024, `scan=${result.totalBytes} du=${du}`);
   assert.equal(result.complete, true);
   const caches = result.categories.find(item => item.id === 'cache');
-  assert.deepEqual(caches.entries.map(item => item.path).sort(), ['.cache', 'apps-data/demo/Cache']);
-  for (const id of ['apps', 'runtimes', 'sessions', 'subagents', 'archived']) assert.ok(result.categories.find(item => item.id === id).bytes >= 4096);
+  assert.deepEqual(caches.entries.map(item => item.path).sort(), ['.cache', 'apps/demo']);
+  assert.deepEqual(result.categories.find(item => item.id === 'app-data').entries.map(item => item.path), ['apps-data/large', 'apps-data/demo', 'apps-data/small']);
+  for (const id of ['cache', 'runtimes', 'sessions', 'subagents', 'archived']) assert.ok(result.categories.find(item => item.id === id).bytes >= 4096);
 });
 
 test('large app trees do not exhaust a scan budget before later categories', async () => {
@@ -50,6 +53,21 @@ test('permission errors identify only affected categories; vanished caches are n
   const result = await measureStorage('/profile', { fileSystem });
   assert.equal(result.errorCount, 1);
   assert.equal(result.complete, false);
-  assert.equal(result.categories.find(item => item.id === 'apps').complete, false);
+  assert.equal(result.categories.find(item => item.id === 'cache').complete, false);
   assert.equal(result.categories.find(item => item.id === 'logs').complete, true);
+});
+
+test('keeps app-owned DBX data with the app and exposes legacy roots separately', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-usage-roots-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  for (const [name, size] of [['dbx-mcp/dbx.db', 4096], ['minimal-go-agent/main.go', 1024], ['server_bgd/moss-server.db', 2048]]) {
+    const target = path.join(root, name);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, Buffer.alloc(size));
+  }
+  const result = await measureStorage(root);
+  const appData = result.categories.find(item => item.id === 'app-data');
+  assert.deepEqual(appData.entries.map(item => item.path), ['moss.dbx (dbx-mcp)']);
+  assert.equal(result.categories.find(item => item.id === 'projects').entries[0].path, 'minimal-go-agent');
+  assert.equal(result.categories.find(item => item.id === 'other').entries[0].path, 'server_bgd');
 });

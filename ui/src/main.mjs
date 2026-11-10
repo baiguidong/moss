@@ -9969,6 +9969,11 @@ ipcMain.handle('storage:set-archived', async (_event, payload) => {
   return sessionArchives.set(payload);
 });
 ipcMain.handle('storage:get-overview', () => storageService.overview());
+ipcMain.handle('storage:clear-caches', async () => {
+  assertUpdateWorkAllowed();
+  await interruptedSessionRecoveryPromise;
+  return storageService.clearCaches();
+});
 ipcMain.handle('storage:review-chats', async (_event, payload) => {
   await interruptedSessionRecoveryPromise;
   return storageService.review(payload);

@@ -17,6 +17,18 @@ export function mergeMcpDefaults(previous, current, next) {
   // Transport-specific fields cannot be merged across stdio/HTTP/SSE variants.
   // A customized connection needs an explicit switch to the new transport.
   if (!isDeepStrictEqual(previous, current) && (current.type !== previous.type || next.type !== previous.type)) return structuredClone(current)
+  // A packaged Python service replaces `python -I -m module` with a bundled
+  // launcher. Preserve service arguments (e.g. Excel's --allow-dir) without
+  // feeding old interpreter flags to Node. Explicit custom services stay intact.
+  if (previous.python && !next.python && next.command === 'node'
+    && /(?:^|[/\\])runtime[/\\]launch\.cjs$/.test(next.args?.[0] || '')
+    && previous.args?.[0] === '-I' && previous.args?.[1] === '-m') {
+    if (current.command !== previous.command || !isDeepStrictEqual(current.python, previous.python)
+      || !isDeepStrictEqual(current.args?.slice(0, 3), previous.args.slice(0, 3))) return structuredClone(current)
+    const result = merge(previous, current, next)
+    if (!isDeepStrictEqual(current.args, previous.args)) result.args = [next.args[0], ...current.args.slice(3)]
+    return result
+  }
   return merge(previous, current, next)
 }
 

@@ -21,7 +21,7 @@ import { AppProcessLeases } from './lease.mjs'
 import { processTreeExists, readProcessInfo, signalProcessTree, waitForProcessTreeGone } from './process-info.mjs'
 import { createAppWatchdog } from './watchdog.mjs'
 
-const ALLOWED_ENV = ['PATH', 'Path', 'HOME', 'USERPROFILE', 'TMPDIR', 'TMP', 'TEMP', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY']
+const ALLOWED_ENV = ['PATH', 'Path', 'HOME', 'USERPROFILE', 'TMPDIR', 'TMP', 'TEMP', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'MOSS_APP_DATA_DIR']
 const MAX_HOST_REPLY_CACHE_ENTRIES = 128
 const MAX_CANCELED_ACTION_IDS = 4096
 const ACTIVITY_LEASE_MS = 120_000
@@ -277,6 +277,10 @@ export class AppProcessSupervisor {
           MOSS_APP_ID: definition.appId,
           MOSS_APP_VERSION: definition.version,
           MOSS_APP_INSTANCE_ID: definition.instanceId,
+          // Give an App process its own persistent data directory. App code
+          // must place files below this path instead of creating new roots
+          // directly under MOSS_HOME.
+          MOSS_APP_DATA_DIR: definition.dataDir,
           MOSS_APP_GENERATION: String(definition.generation),
           MOSS_APP_LAUNCH_TOKEN: launchToken,
         }),

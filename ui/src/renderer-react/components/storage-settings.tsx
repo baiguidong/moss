@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { isWebUI } from '@/lib/host-environment';
 import { cleanIpcErrorMessage } from '@/lib/app-notifications';
-import type { ArchivedChat, StorageCleanupResult, StorageOverview, StorageReview } from '../types';
+import type { ArchivedChat, StorageCacheCleanupResult, StorageCleanupResult, StorageOverview, StorageReview } from '../types';
 
 const colors: Record<string, string> = { sessions: 'bg-blue-400', subagents: 'bg-cyan-400', archived: 'bg-sky-600', projects: 'bg-indigo-400', apps: 'bg-violet-400', 'app-data': 'bg-fuchsia-400', runtimes: 'bg-teal-400', resources: 'bg-emerald-400', cache: 'bg-amber-400', history: 'bg-orange-400', logs: 'bg-slate-400', other: 'bg-zinc-300 dark:bg-zinc-600' };
 const selectClass = 'h-9 rounded-lg border border-border bg-background px-3 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring';
@@ -33,6 +33,8 @@ export function StorageSettings() {
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [confirming, setConfirming] = React.useState(false);
   const [result, setResult] = React.useState<StorageCleanupResult | null>(null);
+  const [cacheCleaning, setCacheCleaning] = React.useState(false);
+  const [cacheResult, setCacheResult] = React.useState<StorageCacheCleanupResult | null>(null);
   const dialog = React.useRef<HTMLDialogElement>(null);
   const live = React.useRef(false);
   const generation = React.useRef(0);
@@ -95,6 +97,15 @@ export function StorageSettings() {
       if (live.current) { setReview(null); setError(`${message(error)} 请重新查看待清理会话。`); }
     } finally { if (live.current) setDeleting(false); }
   }
+  async function clearCaches() {
+    if (cacheCleaning || scanning) return;
+    setCacheCleaning(true); setError(''); setCacheResult(null);
+    try {
+      const next = await window.agentDesktop.storage.clearCaches();
+      if (live.current) { setCacheResult(next); void refresh(); }
+    } catch (error) { if (live.current) setError(message(error)); }
+    finally { if (live.current) setCacheCleaning(false); }
+  }
   const selectedBytes = review?.items.reduce((sum, item) => sum + (selected.has(item.id) ? item.bytes : 0), 0) ?? 0;
   return <div className="space-y-7" data-storage-settings>
     <div className="space-y-5" aria-busy={scanning}>
@@ -115,8 +126,24 @@ export function StorageSettings() {
             title={`${category.label} ${bytes(category.bytes)}`} className={colors[category.id]}
             style={{ width: `${category.bytes / overview.totalBytes * 100}%` }} />)}
         </div>
+        {(() => {
+          const cache = overview.categories.find(category => category.id === 'cache');
+          return cache ? <div className="mb-2 border-b border-border py-4" data-storage-cache>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-[13px] font-medium">缓存</h3>
+                <p className="mt-1 text-xl font-semibold tabular-nums">{bytes(cache.bytes)}</p>
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">使用过程中产生的临时数据和可联网重建的资源，清理不会影响已保存的应用数据。</p>
+              </div>
+              <Button variant="outline" size="sm" className="shrink-0 rounded-lg" disabled={cacheCleaning || scanning || isWebUI()} onClick={() => void clearCaches()}>
+                {cacheCleaning ? '正在清理…' : '清理'}
+              </Button>
+            </div>
+            {cacheResult && <p role="status" className="mt-3 text-xs text-muted-foreground">已清理 {bytes(cacheResult.deletedBytes)}{cacheResult.failed ? `，${cacheResult.failed} 项未能清理` : ''}。</p>}
+          </div> : null;
+        })()}
         <div className="divide-y divide-border">
-          {overview.categories.filter(category => category.entries.length || !category.complete).map(category => <details key={category.id} className="group" data-storage-category={category.id}>
+          {overview.categories.filter(category => category.entries.length || !category.complete).map(category => <details key={category.id} open={category.id === 'app-data'} className="group" data-storage-category={category.id}>
             <summary className="flex cursor-pointer list-none items-center gap-2.5 py-3 text-[13px] [&::-webkit-details-marker]:hidden">
               <span aria-hidden="true" className={cn('h-2 w-2 rounded-full', colors[category.id])} />
               <span className="flex-1">{category.label}</span><span className="tabular-nums text-muted-foreground">{category.complete ? bytes(category.bytes) : category.bytes ? `已统计 ${bytes(category.bytes)}` : '未能读取'}</span>

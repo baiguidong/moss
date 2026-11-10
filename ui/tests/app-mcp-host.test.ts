@@ -179,7 +179,7 @@ test('all MCP services inherit App scope, including saves, refreshes and unselec
 test('portable stdio paths stay on disk and resolve identically for sessions and checks after restart', async () => {
   const f = await fixture()
   const portable = { type: 'stdio', command: '~/bin/mcp', args: ['--output-dir', '~/.moss/artifacts/playwright'] }
-  const resolved = { ...portable, env: { MOSS_SESSION_WORKSPACE: '' }, command: path.join(os.homedir(), 'bin/mcp'), args: ['--output-dir', path.join(os.homedir(), '.moss/artifacts/playwright')] }
+  const resolved = { ...portable, env: { MOSS_SESSION_WORKSPACE: '', MOSS_APP_DATA_DIR: f.context.dataDir }, command: path.join(os.homedir(), 'bin/mcp'), args: ['--output-dir', path.join(os.homedir(), '.moss/artifacts/playwright')] }
   await f.host.handle('servers.save', { name: 'browser', enabled: true, config: portable }, f.context)
   expect(f.host.enabledServers().browser).toEqual(resolved)
   expect(f.host.findServer('browser')?.config).toEqual(resolved)
@@ -202,7 +202,7 @@ test('session MCP launches bind their own workspace without changing shared sett
     const first = path.join(f.root, 'First workspace'), second = path.join(f.root, '第二个工作目录')
     const a = f.host.enabledServers([appId], first)[name]
     const b = f.host.enabledServers([appId], second)[name]
-    expect(a.env).toEqual({ TOKEN: 'fixture', MOSS_SESSION_WORKSPACE: first })
+    expect(a.env).toEqual({ TOKEN: 'fixture', MOSS_SESSION_WORKSPACE: first, MOSS_APP_DATA_DIR: context.dataDir })
     expect(b.env.MOSS_SESSION_WORKSPACE).toBe(second)
     expect(a.env.MOSS_SESSION_WORKSPACE).toBe(first)
     expect(a.args).toEqual(config.args)

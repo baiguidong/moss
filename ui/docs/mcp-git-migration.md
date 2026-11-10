@@ -1,5 +1,7 @@
 # Git 配置型 App（Host API 3.11）
 
+更新：Git App 0.1.5 起，官方服务和依赖在构建时打包进 `runtime/site-packages/`，由包内启动器调用 Core 内置 Python 3.13；运行时不再安装依赖或创建 `mcp/python` 缓存。以下记录为此前的 Python MCP 接入设计，自定义/旧 MCP 连接仍可使用该兼容机制。
+
 Git 0.1.2 固定使用官方 Python 服务 `mcp-server-git==2026.8.18`。移除原 App 的 Node 服务、Backend 和页面。Core 新增两项可选 stdio 配置：
 
 ```json

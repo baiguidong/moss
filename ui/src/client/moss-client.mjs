@@ -100,6 +100,7 @@ export function createMossClient(transport, platform = {}) {
       return () => transport.off('storage:archives-changed', handler);
     },
     getOverview: () => transport.invoke('storage:get-overview'),
+    clearCaches: () => transport.invoke('storage:clear-caches'),
     reviewChats: (payload) => transport.invoke('storage:review-chats', payload),
     deleteChats: (payload) => transport.invoke('storage:delete-chats', payload),
   },

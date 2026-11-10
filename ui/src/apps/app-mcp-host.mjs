@@ -381,7 +381,7 @@ export class AppMcpHost {
       for (const [name, entry] of Object.entries(provider.document.servers)) {
         if (Array.isArray(appIds) && !isToolSourceAvailable(this.owner(provider, entry), appIds, appServiceIds)) continue
         const config = restoreConfig(entry, provider.secrets)
-        if (entry.enabled && config) result[runtimeName(provider.appId, name, provider.owner)] = resolveMcpLaunchConfig(config, { workspace })
+        if (entry.enabled && config) result[runtimeName(provider.appId, name, provider.owner)] = resolveMcpLaunchConfig(config, { workspace, appDataDir: provider.dataDir })
       }
     }
     return result
@@ -405,7 +405,7 @@ export class AppMcpHost {
       for (const [localName, entry] of Object.entries(provider.document.servers)) {
         if (runtimeName(provider.appId, localName, provider.owner) !== name) continue
         const config = restoreConfig(entry, provider.secrets)
-        return config ? { ...entry, config: resolveMcpLaunchConfig(config), provider, localName } : null
+        return config ? { ...entry, config: resolveMcpLaunchConfig(config, { appDataDir: provider.dataDir }), provider, localName } : null
       }
     }
     const service = this.connectorServices().find(item => item.runtimeName === name || item.name === name)
@@ -447,7 +447,7 @@ export class AppMcpHost {
         }
         matches.push({ appId: provider.appId, instanceId: provider.instanceId, serviceId: currentServiceId,
           serviceRevision: this.toolRevision(provider, entry), localName, runtimeName: runtimeName(provider.appId, localName, provider.owner),
-          config: resolveMcpLaunchConfig(config) })
+          config: resolveMcpLaunchConfig(config, { appDataDir: provider.dataDir }) })
       }
     }
     if (serviceId && !matches.length) throw new AppServiceError(APP_ERROR_CODES.notFound, '目标 MCP 服务不存在。')
@@ -590,7 +590,7 @@ export class AppMcpHost {
     if (!found || !found.enabled || check.state !== 'connected') return
     if (Number.isFinite(connectionStartedAt) && connectionStartedAt < found.updatedAt) return
     const { scope: _scope, ...launch } = config
-    const expected = resolveMcpLaunchConfig(restoreConfig(found.provider.document.servers[found.localName], found.provider.secrets), { workspace: config.env?.MOSS_SESSION_WORKSPACE || undefined })
+    const expected = resolveMcpLaunchConfig(restoreConfig(found.provider.document.servers[found.localName], found.provider.secrets), { workspace: config.env?.MOSS_SESSION_WORKSPACE || undefined, appDataDir: found.provider.dataDir })
     if (!isDeepStrictEqual(launch, expected)) return
     const revision = this.toolRevision(found.provider, found)
     return this.serial(async () => {
@@ -782,7 +782,7 @@ export class AppMcpHost {
       if (['servers.inspect', 'auth.start', 'auth.clear'].includes(method)) {
         const config = restoreConfig(entry, provider.secrets)
         if (!config) throw new Error('服务凭据已清除，请编辑连接并重新填写。')
-        return { provider, entry, config: resolveMcpLaunchConfig(config) }
+        return { provider, entry, config: resolveMcpLaunchConfig(config, { appDataDir: provider.dataDir }) }
       }
       const document = structuredClone(provider.document), secrets = { ...provider.secrets }
       if (method === 'servers.save') {

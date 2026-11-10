@@ -22,6 +22,18 @@ test('only command and path arguments expand, without shell evaluation or mutati
   expect(resolveMcpLaunchConfig(http)).toEqual(http)
 })
 
+test('App data placeholders resolve only at launch time', () => {
+  const config = { type: 'stdio', command: 'node', args: ['server.js'], env: { DATA: '${MOSS_APP_DATA_DIR}/dbx', HOME_LITERAL: '~/keep' } }
+  expect(resolveMcpLaunchConfig(config, { appDataDir: '/tmp/apps-data/moss.dbx/instances/default' })).toMatchObject({
+    env: {
+      DATA: '/tmp/apps-data/moss.dbx/instances/default/dbx',
+      HOME_LITERAL: '~/keep',
+      MOSS_APP_DATA_DIR: '/tmp/apps-data/moss.dbx/instances/default',
+    },
+  })
+  expect(config.env.DATA).toBe('${MOSS_APP_DATA_DIR}/dbx')
+})
+
 test('Electron needs Node mode only when an MCP service launches the host executable', () => {
   const executable = '/opt/moss/ui/electron'
   expect(usesElectronAsNode(executable, executable, true)).toBe(true)

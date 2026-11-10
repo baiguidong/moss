@@ -42,7 +42,7 @@ test('overview accounts for managed files once, skips symlinks, marks incomplete
   assert.equal(result.complete, true);
   assert.equal(result.sizeKind, 'allocated');
   assert.equal(result.totalBytes, result.categories.reduce((sum, category) => sum + category.bytes, 0));
-  for (const id of ['sessions', 'projects', 'apps', 'history', 'logs', 'other']) assert.ok(result.categories.find(item => item.id === id).bytes > 0);
+  for (const id of ['sessions', 'projects', 'cache', 'history', 'logs', 'other']) assert.ok(result.categories.find(item => item.id === id).bytes > 0);
   const external = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-external-'));
   t.after(() => fs.rm(external, { recursive: true, force: true }));
   await fs.writeFile(path.join(external, 'large'), Buffer.alloc(1024 * 1024));
@@ -51,6 +51,26 @@ test('overview accounts for managed files once, skips symlinks, marks incomplete
   assert.ok(linked.totalBytes - result.totalBytes < 1024 * 1024, 'must not follow symlinks');
   const absent = createStorageService({ ...f.options, root: path.join(f.root, 'absent') });
   assert.equal((await absent.overview()).complete, false);
+});
+
+test('cache cleanup keeps current App packages and removes rebuildable artifacts', async t => {
+  const f = await fixture(t);
+  await f.write('apps/demo/current.json', JSON.stringify({ version: '2.0.0' }));
+  await f.write('apps/demo/versions/2.0.0/app.moss.json', 'current');
+  await f.write('apps/demo/versions/1.0.0/app.moss.json', 'old');
+  await f.write('apps/demo/verification/1.0.0.json', 'old');
+  await f.write('apps/demo/sources/1.0.0.tar.gz', 'old source');
+  await f.write('apps/demo/sources/2.0.0.tar.gz', 'current source');
+  await f.write('generated-apps/demo.zip', 'generated');
+  await f.write('app-market/catalog-v1.json', 'catalog');
+  const result = await f.service.clearCaches();
+  assert.ok(result.deletedBytes > 0);
+  assert.equal(await fs.readFile(path.join(f.root, 'apps/demo/versions/2.0.0/app.moss.json'), 'utf8'), 'current');
+  await assert.rejects(fs.access(path.join(f.root, 'apps/demo/versions/1.0.0')));
+  await assert.rejects(fs.access(path.join(f.root, 'apps/demo/sources/1.0.0.tar.gz')));
+  assert.equal(await fs.readFile(path.join(f.root, 'apps/demo/sources/2.0.0.tar.gz'), 'utf8'), 'current source');
+  await assert.rejects(fs.access(path.join(f.root, 'generated-apps')));
+  await assert.rejects(fs.access(path.join(f.root, 'app-market/catalog-v1.json')));
 });
 
 test('review excludes active, remote, project, special, recent and deeper nested conversations', async t => {
@@ -139,4 +159,30 @@ test('archived-only default, explicit all scope, archive changes and individual 
   assert.deepEqual(individual.items.map(item => item.id), ['recent-archive']);
   assert.deepEqual(await f.service.remove({ token: individual.token, ids: ['recent-archive'] }), { deleted: 1, skipped: 0, failed: 0 });
   await assert.rejects(f.service.review({ days: 0 }), /保留天数/);
+});
+
+
+test('cache cleanup retains referenced App versions, user data and external linked parents', async t => {
+  const f = await fixture(t);
+  await f.write('apps/demo/current.json', JSON.stringify({ version: '2.0.0' }));
+  await f.write('apps/demo/versions/1.0.0/app.moss.json', 'referenced');
+  await f.write('apps/demo/sources/1.0.0.tar.gz', 'referenced source');
+  await f.write('app-runtime-state.json', JSON.stringify({ installations: { otherOwner: { appId: 'demo', activeVersion: '1.0.0' } } }));
+  await f.write('generated-app-data/demo/document.txt', 'saved data');
+  await f.write('external/python/keep.txt', 'outside cache');
+  await fs.symlink(path.join(f.root, 'external'), path.join(f.root, 'mcp'));
+  const result = await f.service.clearCaches();
+  assert.equal(result.failed, 1);
+  for (const name of ['apps/demo/versions/1.0.0/app.moss.json', 'apps/demo/sources/1.0.0.tar.gz', 'generated-app-data/demo/document.txt', 'external/python/keep.txt']) await fs.access(path.join(f.root, name));
+});
+
+test('cache cleanup refuses active sessions and linked App containers', async t => {
+  const f = await fixture(t), record = await f.add('active', { busy: true });
+  await assert.rejects(f.service.clearCaches(), /运行中的会话/);
+  record.busy = false;
+  await f.write('external/demo/current.json', JSON.stringify({ version: '2.0.0' }));
+  await f.write('external/demo/versions/1.0.0/file', 'keep');
+  await fs.symlink(path.join(f.root, 'external'), path.join(f.root, 'apps'));
+  await assert.rejects(f.service.clearCaches(), /应用目录不可用/);
+  await fs.access(path.join(f.root, 'external/demo/versions/1.0.0/file'));
 });
