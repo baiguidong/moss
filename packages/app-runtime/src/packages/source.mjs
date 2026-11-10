@@ -6,6 +6,31 @@ import { APP_ERROR_CODES, AppServiceError } from '../../../app-sdk/src/errors.mj
 import { readConnectorAppPackage, readConnectorToolSource } from './connector-app.mjs'
 
 export const SOURCE_MANIFEST = 'source-manifest.json'
+// The SDK is supplied by Moss in a temporary authoring/build workspace. These
+// paths are deliberately absent from published App source snapshots.
+export const SHARED_SDK_WORKSPACES = Object.freeze([
+  '.moss-sdk/packages/app-sdk',
+  '.moss-sdk/packages/host-contracts',
+  '.moss-sdk/packages/app-runtime',
+])
+export const SHARED_SDK_PACKAGES = Object.freeze([
+  '@moss/app-sdk',
+  '@moss/host-contracts',
+  '@moss/app-runtime',
+])
+const LEGACY_SDK_WORKSPACES = Object.freeze([
+  'vendor/moss-core/packages/app-sdk',
+  'vendor/moss-core/packages/host-contracts',
+  'vendor/moss-core/packages/app-runtime',
+])
+const isSharedSdkPath = relative => [...SHARED_SDK_WORKSPACES, ...LEGACY_SDK_WORKSPACES].some(entry => relative === entry || relative.startsWith(`${entry}/`))
+const isLegacySdkEntry = relative => relative === 'vendor/moss-core' || relative === 'vendor/moss-core/packages'
+  || relative === 'vendor/moss-core/LICENSE' || relative === 'vendor/moss-core/LICENSE.md'
+  || LEGACY_SDK_WORKSPACES.some(entry => relative === entry || relative.startsWith(`${entry}/`))
+const normalizeSdkWorkspace = relative => {
+  const match = LEGACY_SDK_WORKSPACES.find(entry => relative === entry || relative.startsWith(`${entry}/`))
+  return match ? `${SHARED_SDK_WORKSPACES[LEGACY_SDK_WORKSPACES.indexOf(match)]}${relative.slice(match.length)}` : relative
+}
 const hash = value => createHash('sha256').update(typeof value === 'string' || Buffer.isBuffer(value) ? value : JSON.stringify(value)).digest('hex')
 const invalid = message => { throw new AppServiceError(APP_ERROR_CODES.invalidPackage, `App source: ${message}`) }
 const json = async file => JSON.parse(await fs.readFile(file, 'utf8'))
@@ -78,8 +103,11 @@ export async function sourceFileList(root, { filter = () => true, maxFileBytes =
 export async function copySourceTree(root, destination, { includeSdk = false } = {}) {
   // The generated SDK contains only its pinned dependency closure. Never copy the
   // project's node_modules or follow its SDK/workspace links into another tree.
-  const filter = (name, entry) => includeSdk && (name === '.moss-sdk' || name.startsWith('.moss-sdk/'))
-    ? !['.git', '.DS_Store'].includes(entry.name) : entry.name !== '.moss-sdk' && !excludeSourceEntry(entry.name, name)
+  const filter = (name, entry) => {
+    if (name === 'vendor/moss-core' || name.startsWith('vendor/moss-core/')) return includeSdk && isLegacySdkEntry(name) && !excludeSourceEntry(entry.name, name)
+    if (includeSdk && (name === '.moss-sdk' || name.startsWith('.moss-sdk/'))) return !excludeSourceEntry(entry.name, name)
+    return entry.name !== '.moss-sdk' && !excludeSourceEntry(entry.name, name)
+  }
   const files = await sourceFileList(root, { filter })
   await fs.mkdir(destination, { recursive: true })
   for (const file of files) {
@@ -118,10 +146,15 @@ export async function inspectSourceProject(root, { appRoot = '.', packageManager
   const packageRoots = [root, ...await Promise.all(workspaces.map(async relative => {
     if (relative.includes('*')) invalid('exported workspace paths must be explicit')
     const directory = sourcePath(root, relative)
-    await json(path.join(directory, 'package.json'))
-    return directory
-  }))]
-  const names = new Set(await Promise.all(packageRoots.map(async dir => (await json(path.join(dir, 'package.json'))).name)))
+    try {
+      await json(path.join(directory, 'package.json'))
+      return directory
+    } catch (error) {
+      if (error.code === 'ENOENT' && isSharedSdkPath(relative)) return null
+      throw error
+    }
+  }))].filter(Boolean)
+  const names = new Set([...SHARED_SDK_PACKAGES, ...await Promise.all(packageRoots.map(async dir => (await json(path.join(dir, 'package.json'))).name))])
   for (const directory of new Set([...packageRoots, appPath])) {
     const data = await json(path.join(directory, 'package.json'))
     for (const [name, version] of Object.entries({ ...data.dependencies, ...data.devDependencies, ...data.optionalDependencies })) {
@@ -151,7 +184,23 @@ export async function attachSourcePackage(packageRoot, sourceRoot, options = {})
   if (manifest.id !== project.manifest.id || manifest.version !== project.manifest.version) invalid('source identity does not match runtime')
   const destination = path.join(packageRoot, 'source')
   if (await exists(destination)) invalid('source package already exists')
-  await copySourceTree(sourceRoot, destination, { includeSdk: true })
+  // SDK/Core files are provided by Moss when a user opens or rebuilds the
+  // source. They are intentionally excluded from every published App ZIP.
+  await copySourceTree(sourceRoot, destination, { includeSdk: false })
+  // Migrate old source snapshots that declared the vendored Core workspaces.
+  // The package itself remains Core-free while Moss restores these workspaces
+  // under .moss-sdk before a build.
+  const workspaceFile = path.join(destination, 'package.json')
+  if (await exists(workspaceFile)) {
+    const workspace = await json(workspaceFile)
+    const paths = Array.isArray(workspace.workspaces) ? workspace.workspaces : workspace.workspaces?.packages
+    if (Array.isArray(paths)) {
+      const normalized = paths.map(normalizeSdkWorkspace)
+      if (Array.isArray(workspace.workspaces)) workspace.workspaces = normalized
+      else workspace.workspaces.packages = normalized
+      await fs.writeFile(workspaceFile, JSON.stringify(workspace, null, 2) + '\n')
+    }
+  }
   const files = await sourceFileList(destination)
   for (const file of files) if ((await fs.stat(sourcePath(destination, file.path))).mode & 0o111) file.executable = true
   const descriptor = {

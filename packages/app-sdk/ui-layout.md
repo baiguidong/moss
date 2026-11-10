@@ -27,7 +27,7 @@
 
 沿用 Moss 的字体栈、线性图标和语义颜色：`--background`、`--foreground`、`--card`、`--muted-foreground`、`--primary`、`--primary-foreground`、`--border`、`--destructive`、`--ring`。主操作使用主题主色，次要操作使用透明或轻边框按钮；不另造渐变品牌配色、彩色大块或厚重阴影。状态不能只靠颜色区分，图标按钮必须有可访问名称和清楚的焦点样式。
 
-App 页面是独立文档，不会自动继承 Moss 外框的 CSS 变量。随包提供与当前 Moss 一致的浅色/深色 token；通过 SDK client 的 `app.getInfo().appearance` 读取 `themeMode` 和 `cssThemeId`，订阅 `appearance` 事件，处理 `system` 对应的系统主题变化，并在卸载时清理订阅。不要写死浅色，也不要假设 appearance 返回整套 CSS 变量。不要从 Core 私有渲染模块导入组件或样式。
+App 页面是独立文档，但 Host 会在统一的 App preload 中自动同步 Moss 外观：`data-theme`、`data-theme-mode`、`data-css-theme`、`data-background-style`、语义 CSS 变量、界面/内容/代码字体、字号、代码字号、聊天字号/行高/间距、差异色、指针、动效和字体平滑都会随设置实时更新。业务 CSS 继续使用 `--background`、`--foreground`、`--card`、`--primary`、`--muted-foreground`、`--border`、`--font-sans`、`--moss-content-font`、`--font-mono`、`--color-code-*`、`--color-diff-*` 等变量即可；`app.getInfo().appearance` 和 `appearance` 事件仍公开完整快照，供需要自定义 Canvas、图表或其他非 CSS 绘制的组件读取。不要写死浅色，也不要从 Core 私有渲染模块导入组件或样式。
 
 ## 创建与验收
 

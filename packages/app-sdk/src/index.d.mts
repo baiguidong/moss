@@ -578,7 +578,50 @@ export type AppCallResult<T> = { ok: true; result: T } | { ok: false; error: { c
 
 export interface AppAppearance {
   themeMode: 'light' | 'dark' | 'system'
+  resolvedTheme?: 'light' | 'dark'
+  cssThemeId?: string
+  separateLightDark?: boolean
+  lightProfile?: AppAppearanceProfile
+  darkProfile?: AppAppearanceProfile
+  accent?: string
+  background?: string
+  foreground?: string
+  string?: string
+  keyword?: string
+  comment?: string
+  uiFontSize?: number
+  codeFontSize?: number
+  uiFont?: string
+  contentFont?: string
+  codeFont?: string
+  contrast?: number
+  reduceMotion?: 'system' | 'always' | 'never'
+  translucentSidebar?: boolean
+  diffMarkers?: 'colors' | 'markers' | 'both'
+  pointerCursors?: boolean
+  fontSmoothing?: boolean
+  toolDisplayMode?: 'expanded' | 'collapsed' | 'merged'
+  chatFontSize?: number
+  chatLineHeight?: number
+  chatMessageSpacing?: number
+  showAssistantMessageBorder?: boolean
+  showAssistantAvatar?: boolean
   [key: string]: unknown
+}
+export interface AppAppearanceProfile {
+  themeId?: string
+  accent?: string
+  background?: string
+  foreground?: string
+  string?: string
+  keyword?: string
+  comment?: string
+  uiFontSize?: number
+  codeFontSize?: number
+  uiFont?: string
+  contentFont?: string
+  codeFont?: string
+  contrast?: number
 }
 export interface AppUiInfo {
   id: string

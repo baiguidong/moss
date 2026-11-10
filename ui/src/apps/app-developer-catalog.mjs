@@ -3,6 +3,7 @@ import path from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { contracts } from '../../../packages/host-contracts/src/index.mjs'
+import { sourceFileList, excludeSourceEntry } from '../../../packages/app-runtime/src/packages/source.mjs'
 import { APP_HOST_API_VERSION, APP_MANIFEST_SCHEMA } from '../../../packages/app-sdk/src/schemas/index.mjs'
 import { APP_SERVICE_PROTOCOL_VERSION } from '../../../packages/app-sdk/src/protocol/index.mjs'
 import legacyContracts from '../../../packages/app-sdk/src/host/public-contracts.json' with { type: 'json' }
@@ -35,7 +36,7 @@ async function dependencyRoot(name, from) {
 }
 
 export async function createDeveloperCatalog({ packagesDir = packageRoot } = {}) {
-  const sdkRoot = path.join(packagesDir, 'app-sdk'), contractsRoot = path.join(packagesDir, 'host-contracts')
+  const sdkRoot = path.join(packagesDir, 'app-sdk'), contractsRoot = path.join(packagesDir, 'host-contracts'), runtimeRoot = path.join(packagesDir, 'app-runtime')
   const sdk = await readJson(path.join(sdkRoot, 'package.json'))
   const entries = [{ kind: 'manifest', member: 'app.moss.json', document: APP_MANIFEST_SCHEMA }]
   for (const [protocol, definition] of Object.entries({ ...legacyContracts, ...contracts })) {
@@ -65,9 +66,20 @@ export async function createDeveloperCatalog({ packagesDir = packageRoot } = {})
   }
   await visitDependencies(sdkRoot)
   await visitDependencies(contractsRoot)
-  const sdkFiles = { sdk: await files(sdkRoot), contracts: await files(contractsRoot), dependencies: {} }
+  await visitDependencies(runtimeRoot)
+  const sdkFiles = { sdk: await files(sdkRoot), contracts: await files(contractsRoot), runtime: await files(runtimeRoot), dependencies: {} }
   for (const [name, root] of dependencyRoots) sdkFiles.dependencies[name] = await files(root)
-  const info = { hostApiVersion: APP_HOST_API_VERSION, sdkVersion: sdk.version, manifestSchemaVersion: 2, contractHash: digest(entries), sdkHash: digest(sdkFiles) }
+  // Keep the provenance hash independent from the temporary dependency
+  // materialization. App source manifests and the App packager use this same
+  // canonical list when Moss exports the shared SDK/Core snapshot.
+  const snapshotFiles = []
+  for (const [name, root] of [['app-sdk', sdkRoot], ['host-contracts', contractsRoot], ['app-runtime', runtimeRoot]]) {
+    for (const file of await sourceFileList(root, { filter: (relative, entry) => entry.name !== 'node_modules' && !excludeSourceEntry(entry.name, relative) })) {
+      snapshotFiles.push({ path: `.moss-sdk/packages/${name}/${file.path}`, size: file.size, sha256: file.sha256 })
+    }
+  }
+  const snapshotHash = digest(snapshotFiles)
+  const info = { provider: 'moss', hostApiVersion: APP_HOST_API_VERSION, sdkVersion: sdk.version, coreVersion: (await readJson(path.join(runtimeRoot, 'package.json'))).version, manifestSchemaVersion: 2, contractHash: digest(entries), sdkHash: snapshotHash, coreHash: snapshotHash }
   return {
     info,
     list({ kind, offset = 0, limit = 50 } = {}) {
@@ -92,7 +104,7 @@ export async function createDeveloperCatalog({ packagesDir = packageRoot } = {})
       if (existing && (existing.sdkHash !== info.sdkHash || existing.contractHash !== info.contractHash)) fail('SDK snapshot changed; prepare a new project or refresh its SDK explicitly')
       if (existing) {
         // Verify the snapshot before reusing it; never follow modified export links.
-        for (const [name, expected] of [['app-sdk', sdkFiles.sdk], ['host-contracts', sdkFiles.contracts]]) {
+        for (const [name, expected] of [['app-sdk', sdkFiles.sdk], ['host-contracts', sdkFiles.contracts], ['app-runtime', sdkFiles.runtime]]) {
           if (digest(await files(path.join(destination, 'packages', name))) !== digest(expected)) fail('Exported SDK files changed; restore or remove the SDK snapshot before refreshing')
         }
         for (const [name, expected] of Object.entries(sdkFiles.dependencies)) {
@@ -103,12 +115,12 @@ export async function createDeveloperCatalog({ packagesDir = packageRoot } = {})
       const entries = await fs.readdir(destination).catch(error => { if (error.code === 'ENOENT') return []; throw error })
       if (entries.length) fail('SDK export destination is not empty')
       await fs.mkdir(destination, { recursive: true })
-      for (const [name, root] of [['app-sdk', sdkRoot], ['host-contracts', contractsRoot]]) {
+      for (const [name, root] of [['app-sdk', sdkRoot], ['host-contracts', contractsRoot], ['app-runtime', runtimeRoot]]) {
         await fs.cp(root, path.join(destination, 'packages', name), { recursive: true, filter: file => !file.split(path.sep).includes('node_modules') })
       }
       for (const [name, root] of dependencyRoots) await fs.cp(root, path.join(destination, 'node_modules', name), { recursive: true, dereference: true })
       }
-      for (const name of ['app-sdk', 'host-contracts']) {
+      for (const name of ['app-sdk', 'host-contracts', 'app-runtime']) {
         const link = path.join(projectRoot, 'node_modules', '@moss', name)
         await fs.mkdir(path.dirname(link), { recursive: true })
         try { await fs.symlink(path.join(destination, 'packages', name), link, process.platform === 'win32' ? 'junction' : 'dir') }

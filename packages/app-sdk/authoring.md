@@ -25,7 +25,7 @@ overview.description/examples 填写面向用户的能力说明与自然语言�
 
 scope/loading 都由整个 App 决定；启用、授权和配置仍需满足，backend.lifecycle 只管理进程。独立可选服务使用 toolSelection=services（Host >=3.8）；原生工具绑定稳定 serviceId，MCP 子项由 Host 提供。全局常驻会覆盖所有可用子服务；全局按需只让明确选中的服务常驻。
 
-有 UI 时从 @moss/app-sdk/ui 引入 createAppClient，不在浏览器引入 Node 根入口。通过 view.setState({dirty,busy}) 告知宿主未保存/提交状态，订阅 appearance 事件跟随主题；关闭页面清理请求与订阅。页面只展示业务内容，不重复通用信息、权限、工具范围和工具目录。具体尺寸和可访问性见 [布局约定](ui-layout.md)。
+有 UI 时从 @moss/app-sdk/ui 引入 createAppClient，不在浏览器引入 Node 根入口。Host preload 会自动把 Moss 外观（主题、背景、语义色、字体、字号、代码色、差异色和显示选项）同步到 App 文档；需要自定义 Canvas、图表或其他非 CSS 绘制时，再读取 `app.getInfo().appearance` 并订阅 `appearance` 事件。通过 view.setState({dirty,busy}) 告知宿主未保存/提交状态；关闭页面清理请求与订阅。页面只展示业务内容，不重复通用信息、权限、工具范围和工具目录。具体尺寸和可访问性见 [布局约定](ui-layout.md)。
 
 ## 创建、构建与验证
 

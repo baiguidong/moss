@@ -206,7 +206,7 @@ export interface HostHostOutputMap {
   "tools.scope.set": { "scope": "session" | "global"; "defaultScope": "session" | "global"; "overridden": boolean }
   "native.settings": { [key: string]: unknown }
   "capabilities.get": { "capabilities": Array<HostCapability> }
-  "info.get": { "hostApiVersion": string; "sdkVersion": string; "manifestSchemaVersion": number; "contractHash": string; "sdkHash": string }
+  "info.get": { "provider"?: string; "hostApiVersion": string; "sdkVersion": string; "coreVersion"?: string; "manifestSchemaVersion": number; "contractHash": string; "sdkHash": string; "coreHash"?: string }
   "contracts.list": { "contractHash": string; "items": Array<{ "kind": string; "member": string }>; "nextOffset": number | null }
   "contracts.get": { "kind": string; "member": string; "contractHash": string; "document": { [key: string]: unknown } }
   "sdk.export": { "projectRef": string; "path": string; "sdkHash": string; "contractHash": string }

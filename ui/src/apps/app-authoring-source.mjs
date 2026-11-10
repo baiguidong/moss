@@ -29,7 +29,7 @@ export function inside(root, candidate) {
   return path.resolve(candidate)
 }
 export async function realInside(root, candidate) { return inside(await fs.realpath(root), await fs.realpath(candidate)) }
-const ignored = (name, relative) => name === '.moss-sdk' || excludeSourceEntry(name, relative)
+const ignored = (name, relative) => name === '.moss-sdk' || relative === 'vendor/moss-core' || relative.startsWith('vendor/moss-core/') || excludeSourceEntry(name, relative)
 
 export async function sourceFiles(root, { packageFiles = false } = {}) {
   const files = []

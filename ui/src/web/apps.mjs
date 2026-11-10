@@ -15,7 +15,10 @@ export function createWebApps({ registry, resources, resolveApp, appearance = ()
   async function bootstrap() {
     if (!preloadSource) {
       const desktop = await fs.readFile(new URL('../apps/app-preload.mjs', import.meta.url), 'utf8');
-      preloadSource = desktop.slice(desktop.indexOf('function on('));
+      // Reuse the same appearance synchronizer as Electron App windows. The
+      // preload source is dependency-free after this declaration, so it can
+      // run against the MessagePort-backed IPC shim below as well.
+      preloadSource = desktop.slice(desktop.indexOf('const THEME_PALETTES'));
     }
     return `<script>(()=>{
       let port; const pending=new Map(), listeners=new Map();

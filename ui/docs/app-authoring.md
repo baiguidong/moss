@@ -42,7 +42,7 @@ Apps 与应用市场使用紧凑的分类 Tab（含“全部”与数量）展�
 
 `moss-apps` 的 `marketplace.json` 不再单独维护分类和关键词：发布记录与市场索引从 Manifest 生成 `category`、`keywords`，并输出单元素中文 `categories` 兼容旧客户端。仓库校验要求每个 App 显式选类，拒绝非法分类以及与 Manifest 冲突的市场字段。分类信息修改后，已有安装需更新到携带新 Manifest 的版本才会生效。
 
-构建前查询当前 Manifest 契约，确认绑定 SDK 能保留 `category` 和 `keywords`。这两个字段只影响发现与展示，不改变权限、工具范围或 Backend 生命周期，也不额外提高最低 Host API。旧 SDK 可能丢弃未知字段；恢复历史源码后如需新增分类，须先迁移固定 SDK 与锁文件，不能仅向旧 SDK 输入新字段。
+构建前查询当前 Manifest 契约，确认 Moss 共享 SDK 能保留 `category` 和 `keywords`。这两个字段只影响发现与展示，不改变权限、工具范围或 Backend 生命周期，也不额外提高最低 Host API。旧 SDK 可能丢弃未知字段；恢复历史源码后如需新增分类，须先迁移 SDK 版本和锁文件，不能仅向旧 SDK 输入新字段。
 
 ## 展示位置选择规则
 
@@ -66,7 +66,7 @@ Host API 3.4 已支持根级 `navigation.location: "more" | "settings" | "none"`
 
 Host API 3.22.0 新增 `navigation.location: "details"`，适用于仍需业务页面的工具/设置 App。`contributes.settings[].viewId` 指向 `contributes.views` 中的页面；Core 在详情顶部的“试用”旁提供唯一的“打开”入口，点击后创建隔离视图并进入整页 App 工作区；多个声明页面在工作区内切换，不在详情逐项列出启动行。`presentation.width` 保留兼容，整页布局不依赖此字段。App 页不重复通用信息、授权、范围或工具列表；用 SDK `view.setState({ dirty, busy })` 上报草稿和提交状态，并订阅 `appearance` 事件以实时跟随主题。打开页面及保存配置不得隐式检查 MCP。详见 [自带 UI 迁移实现](../../docs/app-details-embedded-ui-plan.md)。
 
-主会话工具模板默认 `none` 并提供可运行 Backend；有页面时按实际用途选择。新建模板不能统一默认 `more` 或 `settings`，旧包的兼容默认值也不是新建规则。Builder 指引、场景模板、仓库校验与实际安装验证必须同步维护，确保操作型、配置型、纯后台 App 生成不同的正确入口。恢复旧源码时先迁移固定 SDK，避免新字段在构建中丢失。
+主会话工具模板默认 `none` 并提供可运行 Backend；有页面时按实际用途选择。新建模板不能统一默认 `more` 或 `settings`，旧包的兼容默认值也不是新建规则。Builder 指引、场景模板、仓库校验与实际安装验证必须同步维护，确保操作型、配置型、纯后台 App 生成不同的正确入口。恢复旧源码时先迁移 SDK，避免新字段在构建中丢失。
 
 ## 工具范围
 
@@ -88,7 +88,7 @@ Host API 3.1 引入 App 根级 `toolScope`，唯一合法值为 `session` 和 `g
 
 ## App 子服务选择
 
-Host API 3.8 新增根级 `toolSelection: "app" | "services"`，缺省 `app`。面向完整业务能力的 App 使用整体选择；MCP 管理和需要用户分别选择业务服务的 App 声明 `services`，在 @ 与资源选择器展开第二层。显式字段、服务声明和工具的 `serviceId` 均要求最低 Host API 3.8.0，固定 SDK 必须同步升级。
+Host API 3.8 新增根级 `toolSelection: "app" | "services"`，缺省 `app`。面向完整业务能力的 App 使用整体选择；MCP 管理和需要用户分别选择业务服务的 App 声明 `services`，在 @ 与资源选择器展开第二层。显式字段、服务声明和工具的 `serviceId` 均要求最低 Host API 3.8.0，Moss 共享 SDK 必须同步升级。
 
 - 原生工具：在 `contributes.services` 声明 `{ id, title, description? }`，每个 `contributes.tools` 条目必须通过 `serviceId` 引用其中一个服务。稳定 id 不随标题修改；不存在的引用在构建时拒绝。
 - MCP 工具：Host 自动从 App 注册的服务生成子项，绑定 App、实例和持久化服务 ID。客户后续追加 MCP 无需重建 App；改名保留选择，删除再建不复用旧选择。原生服务和 MCP 服务可以共存。
@@ -142,11 +142,11 @@ Host API 3.8 新增根级 `toolSelection: "app" | "services"`，缺省 `app`。�
 ## 创建和编辑流程
 
 1. 从 Builder 或目标 App 的编辑入口选择资源，转入普通会话。编辑目标 App 时自动加入的是提供创作能力的 Builder，不会仅因目标引用就加入目标 App 的工具。
-2. 使用 Builder 查询当前开发契约，准备绑定的工程和 SDK。新建工程按分类表选择 `category`、填写相关 `keywords`；模板的 `other` 只是通用初始值，应按实际用途替换。按展示位置规则说明页面用途与入口，使用支持该契约的固定 SDK 显式生成位置字段。工具范围也独立按用途显式声明：分步思考这类启用后各会话可用的通用辅助能力写 `global`；没有跨会话需求时写 `session`，不能让模板覆盖已明确的用途。
+2. 使用 Builder 查询当前开发契约，准备绑定的工程和共享 SDK。新建工程按分类表选择 `category`、填写相关 `keywords`；模板的 `other` 只是通用初始值，应按实际用途替换。按展示位置规则说明页面用途与入口，使用 Moss 当前 SDK 显式生成位置字段。工具范围也独立按用途显式声明：分步思考这类启用后各会话可用的通用辅助能力写 `global`；没有跨会话需求时写 `session`，不能让模板覆盖已明确的用途。
 3. 编辑已有 App 时保留其范围、展示位置和设置分组。缺 `toolScope` 等价于 session，普通功能修改不自动改为 global，也不自动迁移页面位置。Skill 转换遵循同样规则。
-4. 使用恢复源码包时保留其固定 SDK 和锁文件；如要采用新字段，先明确迁移到支持该字段的 SDK，并同步最低宿主版本。不能把新字段交给旧 SDK 后让它静默丢失。
+4. 使用恢复源码包时保留其 SDK 版本/hash 元数据和锁文件；如要采用新字段，先明确迁移到支持该字段的 Moss SDK，并同步最低宿主版本。不能把新字段交给旧 SDK 后让它静默丢失。
 5. 按绑定源码、契约和 SDK 摘要构建，读取实际构建报告，验证真实 UI/Backend 行为，再按用户请求安装。
-6. 每次安装必须随版本保留完整可重建源码，包括 Manifest、构建脚本、依赖锁文件和固定 SDK。安装后验证工具的范围行为，换会话恢复编辑时仍保留同一声明。
+6. 每次安装必须随版本保留完整可重建的自有源码，包括 Manifest、构建脚本和依赖锁文件；SDK/Core 由 Moss 共享提供，source-manifest 记录其版本/hash。安装后验证工具的范围行为，换会话恢复编辑时仍保留同一声明。
 
 ## 验证要求
 

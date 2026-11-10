@@ -51,9 +51,9 @@ example-app/
 
 ### 源码随版本安装与发布
 
-后续所有新发布 App，以及 App Builder 创建或修改后每次本机安装的版本，都必须在包根/安装版本目录内携带完整、可重建源码：`source/` 保存工程，`source-manifest.json` 记录入口、版本、工具链、SDK 和文件摘要。源码包括实际构建需要的脚本、锁文件、资源、测试及本地依赖，不能只保存 `dist/`，也不能只引用会话工作区或构建缓存。
+后续普通 App，以及 App Builder 创建或修改后每次本机安装的版本，都必须在包根/安装版本目录内携带完整、可重建的自有源码：`source/` 保存工程，`source-manifest.json` 记录入口、版本、工具链、Moss SDK/Core 版本和 hash。共享 SDK/Core 由 Moss 在迭代和重建时临时提供，不复制到每个 App；配置型 MCP/connector App 只携带运行配置、资源和必要 runtime。
 
-打包器、CI、Core 安装和应用构建已接入该格式。源码以安装版本目录为准；`project.prepare` 恢复完整 workspace 并返回 `path/sourceRoot/appRoot`，`build.start` 使用声明的精确 npm/Bun 版本、锁文件和包内 SDK，构建后检查独立 Backend 握手。完整格式见 [moss-apps 源码随包发布规范与实施计划](https://github.com/baiguidong/moss-apps/blob/main/docs/app-source-packaging.md)。
+打包器、CI、Core 安装和应用构建已接入该格式。源码以安装版本目录为准；`project.prepare` 恢复完整 workspace 并返回 `path/sourceRoot/appRoot`，`build.start` 使用声明的精确 npm/Bun 版本、锁文件和 Moss 临时导出的共享 SDK，构建后检查独立 Backend 握手。完整格式见 [moss-apps 源码随包发布规范与实施计划](https://github.com/baiguidong/moss-apps/blob/main/docs/app-source-packaging.md)。
 
 Core 必须将运行产物、源码与安装回执一致提交和恢复。删除原会话工作区、清理临时构建缓存、重启或开新会话后，仍能从 `.moss/apps/<app-id>/versions/<version>/` 恢复真实工程继续迭代。源码与对应安装版本一同保留，不能被临时作业清理删除。
 

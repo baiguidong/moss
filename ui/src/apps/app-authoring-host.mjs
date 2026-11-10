@@ -407,7 +407,7 @@ export async function createAppAuthoringHost(options) {
         const pinnedSdk = await readJson(path.join(sdkRoot, 'snapshot.json'), null)
         const linkSdk = async () => {
           if (!pinnedSdk) return
-          for (const name of ['app-sdk', 'host-contracts']) {
+          for (const name of ['app-sdk', 'host-contracts', 'app-runtime']) {
             const link = path.join(directory, 'node_modules', '@moss', name)
             await fs.mkdir(path.dirname(link), { recursive: true })
             try { await fs.symlink(path.join(sdkRoot, 'packages', name), link, process.platform === 'win32' ? 'junction' : 'dir') }
@@ -416,11 +416,13 @@ export async function createAppAuthoringHost(options) {
         }
         const workspaceSdk = await fs.access(path.join(directory, 'vendor/moss-core/packages/app-sdk/package.json')).then(() => true, () => false)
         if (pinnedSdk) {
-          if (project.sourceManifest) {
-            const expected = project.sourceManifest.files.filter(file => file.path.startsWith('.moss-sdk/')).map(({ executable, ...file }) => file)
-            const actual = (await sourceFileList(sdkRoot)).map(file => ({ ...file, path: `.moss-sdk/${file.path}` }))
-            if (JSON.stringify(actual) !== JSON.stringify(expected)) fail('Pinned SDK source was modified; migrate the SDK explicitly')
-          }
+          // Published source snapshots intentionally omit the SDK files. When
+          // an installed version is reopened, source-manifest.sdk records the
+          // snapshot provenance while Moss materializes the matching shared
+          // SDK under .moss-sdk for this isolated build.
+          const recorded = project.sourceManifest?.sdk
+          if (recorded?.sdkHash && pinnedSdk.sdkHash !== recorded.sdkHash) fail('Source was built against a different Moss SDK; migrate the SDK explicitly')
+          if (recorded?.coreHash && pinnedSdk.coreHash && pinnedSdk.coreHash !== recorded.coreHash) fail('Source was built against a different Moss Core snapshot; migrate the SDK explicitly')
           await linkSdk()
         } else if (!workspaceSdk) await catalog.exportTo(directory)
         await copySource(directory, frozenSource, input.sourceHash, { includeSdk: true })

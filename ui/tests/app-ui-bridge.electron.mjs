@@ -31,6 +31,10 @@ app.whenReady().then(async () => {
     active++
     return () => { active-- }
   } })
+  ipcMain.handle('app-ui:get-info', () => ({ appearance: {
+    themeMode: 'light', cssThemeId: 'codex', separateLightDark: false,
+    lightProfile: { themeId: 'codex', accent: '#FF0000', background: '#ABCDEF', foreground: '#123456', uiFont: 'serif', uiFontSize: 16, codeFont: 'menlo', codeFontSize: 15 },
+  } }))
   const window = new BrowserWindow({ show: false, webPreferences: {
     preload: fileURLToPath(new URL('../src/apps/app-preload.mjs', import.meta.url)),
     sandbox: false, contextIsolation: true, nodeIntegration: false,
@@ -55,7 +59,9 @@ app.whenReady().then(async () => {
       const timeout = await client.host.request('moss.fixture/v1', 'wait', {}, { timeoutMs: 100 }).catch(error => error.code)
       await client.host.request('moss.fixture/v1', 'beginUpdate')
       const updateDenied = await client.actions.invoke('echo', {}).catch(error => error.code)
-      return { action, business, denied, cancelled: cancelledCode, timeout, updateDenied }
+      const style = getComputedStyle(document.documentElement)
+      return { action, business, denied, cancelled: cancelledCode, timeout, updateDenied,
+        appearance: { theme: document.documentElement.dataset.theme, cssTheme: document.documentElement.dataset.cssTheme, backgroundStyle: document.documentElement.dataset.backgroundStyle, background: style.getPropertyValue('--background').trim(), foreground: style.getPropertyValue('--foreground').trim(), primary: style.getPropertyValue('--primary').trim(), font: style.getPropertyValue('--font-sans').trim(), codeSize: style.getPropertyValue('--moss-code-size').trim(), codeString: style.getPropertyValue('--color-code-string').trim(), diffAdded: style.getPropertyValue('--color-diff-added-bg').trim() } }
       } catch (error) { return { error: error.message, stack: error.stack } }
     })()`)
     assert.deepEqual(result, {
@@ -64,9 +70,19 @@ app.whenReady().then(async () => {
       denied: { code: 'APP_PERMISSION_DENIED', details: { permission: 'fixture:read' } },
       cancelled: 'APP_ACTION_CANCELED', timeout: 'APP_HOST_TIMEOUT',
       updateDenied: 'UPDATE_IN_PROGRESS',
+      appearance: { theme: 'light', cssTheme: 'codex', backgroundStyle: 'default', background: '#ABCDEF', foreground: '#123456', primary: '#FF0000', font: 'Georgia, "Songti SC", serif', codeSize: '15px', codeString: '#008000', diffAdded: 'color-mix(in srgb, #46A758 12%, #ABCDEF)' },
     })
     assert.equal(stopped, 2)
     assert.equal(active, 0)
+    window.webContents.send('app-ui:event:appearance', {
+      themeMode: 'dark', cssThemeId: 'codex', separateLightDark: true,
+      darkProfile: { themeId: 'codex', accent: '#00FF00', background: '#101010', foreground: '#F0F0F0', uiFont: 'mono', uiFontSize: 12, codeFont: 'courier', codeFontSize: 10 },
+    })
+    await new Promise(resolve => setTimeout(resolve, 30))
+    const darkAppearance = await window.webContents.executeJavaScript(`(() => { const style = getComputedStyle(document.documentElement); return {
+      theme: document.documentElement.dataset.theme, cssTheme: document.documentElement.dataset.cssTheme, backgroundStyle: document.documentElement.dataset.backgroundStyle, background: style.getPropertyValue('--background').trim(), foreground: style.getPropertyValue('--foreground').trim(), primary: style.getPropertyValue('--primary').trim(), font: style.getPropertyValue('--font-sans').trim(), codeSize: style.getPropertyValue('--moss-code-size').trim(), codeString: style.getPropertyValue('--color-code-string').trim()
+    } })()`)
+    assert.deepEqual(darkAppearance, { theme: 'dark', cssTheme: 'codex', backgroundStyle: 'default', background: '#101010', foreground: '#F0F0F0', primary: '#00FF00', font: 'ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace', codeSize: '10px', codeString: '#85DF7B' })
     console.log('Electron bridge verified: bound identity, structured errors, AbortSignal and timeout.')
   } catch (error) { console.error(error); process.exitCode = 1 }
   finally {
