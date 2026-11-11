@@ -62,6 +62,7 @@ test('cache cleanup keeps current App packages and removes rebuildable artifacts
   await f.write('apps/demo/sources/1.0.0.tar.gz', 'old source');
   await f.write('apps/demo/sources/2.0.0.tar.gz', 'current source');
   await f.write('generated-apps/demo.zip', 'generated');
+  await f.write('cloud-transfers/pending-upload.bin', 'transfer');
   await f.write('app-market/catalog-v1.json', 'catalog');
   const result = await f.service.clearCaches();
   assert.ok(result.deletedBytes > 0);
@@ -70,6 +71,7 @@ test('cache cleanup keeps current App packages and removes rebuildable artifacts
   await assert.rejects(fs.access(path.join(f.root, 'apps/demo/sources/1.0.0.tar.gz')));
   assert.equal(await fs.readFile(path.join(f.root, 'apps/demo/sources/2.0.0.tar.gz'), 'utf8'), 'current source');
   await assert.rejects(fs.access(path.join(f.root, 'generated-apps')));
+  await assert.rejects(fs.access(path.join(f.root, 'cloud-transfers')));
   await assert.rejects(fs.access(path.join(f.root, 'app-market/catalog-v1.json')));
 });
 
