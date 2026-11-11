@@ -8,7 +8,7 @@ const groups = [
   { id: 'projects', label: '项目与工作区', roots: ['projects', 'workspace', 'workspaces', 'app-authoring', 'minimal-go-agent'] },
   // App packages are downloaded/rebuildable artifacts. Keep them in the cache
   // category so storage users can distinguish them from App-owned data.
-  { id: 'app-data', label: '应用数据', roots: ['apps-data', 'apps-runtime', 'app-tasks', 'browser-profiles', 'dbx-mcp'] },
+  { id: 'app-data', label: '应用数据', roots: ['apps-data', 'apps-runtime', 'app-tasks', 'browser-profiles', 'db', 'dbx-mcp'] },
   // App installation and policy state is small, durable Core state. It is
   // separate from App-owned data and from rebuildable package/cache content.
   // These entries are currently kept at the Moss root for compatibility; the
@@ -50,6 +50,7 @@ function classify(relative, sessionKinds) {
   if (knownGroup) {
     if (top === 'sessions' && parts[1] && sessionKinds.has(parts[1])) return { id: sessionKinds.get(parts[1]), entry: `sessions/${parts[1]}` };
     if (top === 'dbx-mcp') return { id: knownGroup, entry: 'moss.dbx (dbx-mcp)' };
+    if (top === 'db') return { id: knownGroup, entry: 'moss.trace (legacy db)' };
     if (['apps', 'apps-data', 'apps-runtime', 'app-tasks', 'browser-profiles'].includes(top) && parts[1]) {
       return { id: knownGroup, entry: `${top}/${parts[1]}` };
     }

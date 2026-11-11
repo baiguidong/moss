@@ -57,17 +57,17 @@ test('permission errors identify only affected categories; vanished caches are n
   assert.equal(result.categories.find(item => item.id === 'logs').complete, true);
 });
 
-test('keeps app-owned DBX data with the app and exposes legacy roots separately', async t => {
+test('keeps app-owned DBX and Trace data with Apps and exposes legacy roots separately', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-usage-roots-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
-  for (const [name, size] of [['dbx-mcp/dbx.db', 4096], ['minimal-go-agent/main.go', 1024], ['server_bgd/moss-server.db', 2048]]) {
+  for (const [name, size] of [['dbx-mcp/dbx.db', 4096], ['db/trace-index-v1.sqlite', 2048], ['minimal-go-agent/main.go', 1024], ['server_bgd/moss-server.db', 2048]]) {
     const target = path.join(root, name);
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.writeFile(target, Buffer.alloc(size));
   }
   const result = await measureStorage(root);
   const appData = result.categories.find(item => item.id === 'app-data');
-  assert.deepEqual(appData.entries.map(item => item.path), ['moss.dbx (dbx-mcp)']);
+  assert.deepEqual(appData.entries.map(item => item.path), ['moss.dbx (dbx-mcp)', 'moss.trace (legacy db)']);
   assert.equal(result.categories.find(item => item.id === 'projects').entries[0].path, 'minimal-go-agent');
   assert.equal(result.categories.find(item => item.id === 'other').entries[0].path, 'server_bgd');
 });

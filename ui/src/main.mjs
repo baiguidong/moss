@@ -513,6 +513,7 @@ const MOSS_PROJECTS_DIR = DESKTOP_DATA_PATHS.projectsRoot;
 const MOSS_SESSIONS_DIR = DESKTOP_DATA_PATHS.sessionsRoot;
 const workspaceCatalog = createWorkspaceCatalog(DESKTOP_DATA_PATHS.workspacesRoot);
 const MOSS_APP_DATA_DIR = path.join(MOSS_HOME, 'apps-data');
+const APP_TRACE_SCOPE = path.join(MOSS_APP_DATA_DIR, 'moss.trace');
 const DESKTOP_SETTINGS_PATH = path.join(MOSS_HOME, 'settings.json');
 const WEB_SEARCH_CAPABILITIES_PATH = path.join(MOSS_HOME, 'web-search-capabilities.json');
 const DECISION_SIGNING_KEY_PATH = path.join(MOSS_HOME, 'decision-signing.key');
@@ -2814,7 +2815,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
       ? getSessionWorkspaceDirectories(sessionRecord)
       : [],
     environment: {
-      MOSS_TRACE_SCOPE: MOSS_HOME,
+      MOSS_TRACE_SCOPE: APP_TRACE_SCOPE,
       ...getConnectorCredentialEnv(getRuntimeSessionConnectorIds(sessionRecord)),
       ...connectorRuntimeCredentials,
       ...(sessionRecord && getTurnRewindSupport(sessionRecord).supported
@@ -7262,7 +7263,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     },
     clearAuth: async (name, config) => (await getClearDesktopMcpServerAuthFn())(name, config),
   });
-  appTraceHost = new AppTraceHost({ mossHome: MOSS_HOME, getRuntime: () => appRuntime, getCore: getClaudeRuntimeModule,
+  appTraceHost = new AppTraceHost({ mossHome: MOSS_HOME, traceScope: APP_TRACE_SCOPE, getRuntime: () => appRuntime, getCore: getClaudeRuntimeModule,
     getSessions: () => [...sessions.values(), ...subAgentSessions.values()], log: error => mossLog('warn', 'trace', error.message) });
   appSessionSourceHost = new AppSessionSourceHost({ mossHome: MOSS_HOME, getRuntime: () => appRuntime,
     getSessions: getLocalSessionSourceRecords,

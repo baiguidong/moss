@@ -9,8 +9,8 @@ export const TRACE_PROTOCOL = 'moss.trace/v1'
 export function createTraceProtocolDefinition() { return contractDefinition(TRACE_PROTOCOL) }
 
 export class AppTraceHost {
-  constructor({ mossHome, getRuntime, getCore, getSessions = () => [], log = () => {} }) {
-    Object.assign(this, { mossHome, getRuntime, getCore, getSessions, log })
+  constructor({ mossHome, traceScope = mossHome, getRuntime, getCore, getSessions = () => [], log = () => {} }) {
+    Object.assign(this, { mossHome, traceScope, getRuntime, getCore, getSessions, log })
     this.queue = Promise.resolve()
     this.output = null
     this.closed = false
@@ -36,7 +36,7 @@ export class AppTraceHost {
     const valid = pkg?.manifest.host?.protocols?.includes(TRACE_PROTOCOL)
       && pkg.manifest.permissions?.includes('trace:capture') && this.active(instance.id)
     if (!valid) {
-      if (this.output) { this.output = null; await (await this.getCore()).configureTraceOutput(this.mossHome, null) }
+      if (this.output) { this.output = null; await (await this.getCore()).configureTraceOutput(this.traceScope, null) }
       return
     }
     const directory = runtime.appDataPath(runtime.dataDir, TRACE_APP_ID, 'instances', instance.id, 'trace')
@@ -50,7 +50,7 @@ export class AppTraceHost {
     const expected = path.join(dataRoot, path.relative(runtime.dataDir, directory))
     if (relative.startsWith('..') || path.isAbsolute(relative) || actual !== expected) throw new Error('调用追踪 数据目录不能包含符号链接。')
     if (!this.active(instance.id)) return
-    await core.configureTraceOutput(this.mossHome, { directory, isEnabled: () => this.active(instance.id) })
+    await core.configureTraceOutput(this.traceScope, { directory, isEnabled: () => this.active(instance.id) })
     this.output = { directory, instanceId: instance.id }
   }
   async recordSession(record) {
@@ -67,7 +67,7 @@ export class AppTraceHost {
             try {
               const core = await this.getCore()
               if (this.output !== pending.output || !this.active(pending.output.instanceId) || pending.record.deleted) continue
-              await core.writeTraceSessionSnapshot(this.mossHome, identity, {
+              await core.writeTraceSessionSnapshot(this.traceScope, identity, {
                 schemaVersion: 1,
                 session: { id: pending.record.id, title: pending.record.title || '未命名会话', projectPath: pending.record.workspace || '',
                   workDir: pending.record.workspace || null, parentSessionId: pending.record.parentSessionId || null },
@@ -111,7 +111,7 @@ export class AppTraceHost {
     if (context.appId !== TRACE_APP_ID || !this.active(context.instanceId)) throw new Error('请先启用 调用追踪。')
     await this.refresh()
     const core = await this.getCore()
-    return core.traceOutputStatus(this.mossHome)
+    return core.traceOutputStatus(this.traceScope)
   }
   async beforeDeactivation(appId) {
     if (appId !== TRACE_APP_ID) return
@@ -119,7 +119,7 @@ export class AppTraceHost {
     if (!this.output && !this.snapshotTask) return
     this.output = null
     this.pendingSessions.clear()
-    await (await this.getCore()).configureTraceOutput(this.mossHome, null)
+    await (await this.getCore()).configureTraceOutput(this.traceScope, null)
     await this.snapshotTask
   }
   async close() {
