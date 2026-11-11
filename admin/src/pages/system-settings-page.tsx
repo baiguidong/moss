@@ -26,6 +26,8 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { getSystemModels, getSystemSettings, updateSystemSettings } from '@/lib/api/settings'
+import { hasScope } from '@/lib/api/client'
+import { useAuth } from '@/lib/hooks/use-auth'
 import type {
   SystemSettings,
   UpdateSystemSettingsRequest,
@@ -209,6 +211,8 @@ function SettingsSkeleton() {
 }
 
 export default function SystemSettingsPage() {
+  const { scopes } = useAuth()
+  const canManageSettings = hasScope(scopes, 'admin:settings')
   const [settings, setSettings] = useState<SystemSettings | null>(null)
   const [draft, setDraft] = useState<EditableSystemSettings | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -231,6 +235,7 @@ export default function SystemSettingsPage() {
   }, [draft])
 
   const loadSettings = useCallback(async () => {
+    if (!canManageSettings) return
     setLoadError('')
     try {
       const response = await getSystemSettings()
@@ -246,10 +251,10 @@ export default function SystemSettingsPage() {
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [canManageSettings])
 
   useEffect(() => {
-    void loadSettings()
+    if (canManageSettings) void loadSettings()
   }, [loadSettings])
 
   const serializedDraft = useMemo(
@@ -364,6 +369,16 @@ export default function SystemSettingsPage() {
 
     return () => window.clearTimeout(timer)
   }, [draft, serializedDraft, serializedSettings, settings, isSaving])
+
+  if (!canManageSettings) {
+    return (
+      <DashboardLayout title="系统设置" description="管理服务端模型、集成和会话运行时。">
+        <div className="rounded-xl border border-dashed px-6 py-16 text-center text-sm text-muted-foreground">
+          当前账号没有“管理系统设置”权限，无法访问此页面。
+        </div>
+      </DashboardLayout>
+    )
+  }
 
   if (isLoading && !draft) {
     return (

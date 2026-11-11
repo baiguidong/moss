@@ -5,12 +5,10 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   Users,
-  MessageSquare,
+  Laptop,
   Settings,
   LogOut,
-  Shield,
-  Bot,
-  ChartNoAxesCombined,
+  KeyRound,
 } from 'lucide-react'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -34,15 +32,9 @@ const roleLabels: Record<string, string> = {
 
 const menuItems: NavItem[] = [
   {
-    title: '数据看板',
+    title: '工作台',
     url: '/',
     icon: LayoutDashboard,
-  },
-  {
-    title: '个人用量',
-    url: '/usage',
-    icon: ChartNoAxesCombined,
-    requiredAnyScopes: ['sessions:list', 'sessions:list:any', 'admin:users'],
   },
   {
     title: '用户与组织',
@@ -53,12 +45,18 @@ const menuItems: NavItem[] = [
   {
     title: '工作电脑',
     url: '/computers',
-    icon: MessageSquare,
+    icon: Laptop,
     requiredAnyScopes: ['sessions:list', 'sessions:list:any'],
   },
 ]
 
 const systemItems: NavItem[] = [
+  {
+    title: 'API Key 管理',
+    url: '/api-keys',
+    icon: KeyRound,
+    requiredScope: 'admin:api_keys',
+  },
   {
     title: '系统设置',
     url: '/settings',
@@ -98,22 +96,23 @@ export function AppSidebar() {
   }
 
   return (
-    <aside className="w-64 border-r bg-card flex flex-col h-full">
+    <aside className="flex h-full w-[248px] flex-col border-r border-border/70 bg-[var(--sidebar)]">
       {/* Header */}
-      <div className="h-14 border-b px-4 flex items-center gap-3">
-        <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-          <Shield className="size-5" />
+      <div className="flex h-[68px] items-center gap-3 border-b border-border/70 px-4">
+        <div className="flex size-9 items-center justify-center overflow-hidden rounded-xl bg-white shadow-[0_5px_14px_rgba(52,118,80,0.18)]">
+          <img src={`${import.meta.env.BASE_URL}moss-m-icon.png`} alt="moss" className="size-9" />
         </div>
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold">moss 中控平台</span>
+        <div className="min-w-0">
+          <span className="block truncate text-[15px] font-semibold tracking-tight">moss</span>
+          <span className="block text-[11px] text-muted-foreground">控制平面</span>
         </div>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-4">
+      <nav className="flex-1 overflow-y-auto px-3 py-5">
         <div className="mb-6">
-          <p className="text-xs font-medium text-muted-foreground mb-2 px-3">主菜单</p>
-          <ul className="space-y-1">
+          <p className="mb-2 px-3 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/80">工作区</p>
+          <ul className="space-y-0.5">
             {visibleMenuItems.map((item) => {
               const isActive =
                 item.url === '/'
@@ -123,9 +122,9 @@ export function AppSidebar() {
                 <li key={item.title}>
                   <Link
                     to={item.url}
-                    className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                    className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors ${
                       isActive
-                        ? 'bg-primary/10 text-primary font-medium'
+                        ? 'bg-primary/10 font-medium text-primary'
                         : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
                     }`}
                   >
@@ -139,8 +138,8 @@ export function AppSidebar() {
         </div>
 
         <div>
-          <p className="text-xs font-medium text-muted-foreground mb-2 px-3">系统</p>
-          <ul className="space-y-1">
+          <p className="mb-2 px-3 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/80">管理</p>
+          <ul className="space-y-0.5">
             {visibleSystemItems.map((item) => {
               const isActive =
                 item.url === '/settings'
@@ -150,7 +149,7 @@ export function AppSidebar() {
                 <li key={item.title}>
                   <Link
                     to={item.url}
-                    className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                    className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors ${
                       isActive
                         ? 'bg-primary/10 text-primary font-medium'
                         : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
@@ -167,21 +166,22 @@ export function AppSidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="border-t p-4">
+      <div className="border-t border-border/70 p-3">
         <div className="flex items-center gap-3">
-          <Avatar className="size-8">
+          <Avatar className="size-9">
             <AvatarFallback className="bg-primary/10 text-primary text-xs">
               {user?.name?.slice(0, 1) || 'U'}
             </AvatarFallback>
           </Avatar>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium truncate">{user?.name || 'User'}</p>
+            <p className="truncate text-sm font-medium">{user?.name || 'User'}</p>
+            <p className="truncate text-[11px] text-muted-foreground">{user?.role ? roleLabels[user.role] : '已登录'}</p>
           </div>
           <Button
             variant="ghost"
             size="icon"
             onClick={() => void handleLogout()}
-            className="shrink-0"
+            className="shrink-0 rounded-lg text-muted-foreground hover:text-foreground"
           >
             <LogOut className="size-4" />
           </Button>

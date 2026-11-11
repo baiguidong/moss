@@ -4,8 +4,8 @@ import { Loader2 } from 'lucide-react'
 import { DashboardShell } from './layouts/dashboard-shell'
 
 const LoginPage = lazy(() => import('./pages/login-page'))
-const DashboardPage = lazy(() => import('./pages/computers-page'))
-const SessionsPage = DashboardPage
+const DashboardPage = lazy(() => import('./pages/dashboard-page'))
+const SessionsPage = lazy(() => import('./pages/computers-page'))
 const UsersPage = lazy(() => import('./pages/users-page'))
 const UsagePage = lazy(() => import('./pages/usage-page'))
 const ApiKeysPage = lazy(() => import('./pages/api-keys-page'))

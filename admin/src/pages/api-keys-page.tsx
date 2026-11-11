@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -42,6 +42,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { getApiKeys, createApiKey, getUsers } from '@/lib/api/auth'
+import { hasScope } from '@/lib/api/client'
+import { useAuth } from '@/lib/hooks/use-auth'
 import type { ApiKey, AuthUser } from '@/lib/api/types'
 import { Plus, Copy, Key, Loader2, MoreHorizontal } from 'lucide-react'
 import {
@@ -63,12 +65,16 @@ type ApiKeyFormData = z.infer<typeof apiKeySchema>
 const scopeOptions = [
   { value: 'cloud-storage:read', label: '读取云端空间' },
   { value: 'cloud-storage:write', label: '写入云端空间' },
+  { value: 'cloud-storage:share', label: '分享云端文件' },
   { value: 'cloud-storage:delete', label: '删除云端文件' },
   { value: 'sessions:create', label: '创建会话' },
   { value: 'sessions:attach', label: '接入会话' },
   { value: 'sessions:list', label: '列出会话' },
   { value: 'sessions:list:any', label: '查看所有会话' },
   { value: 'sessions:attach:any', label: '接入任何会话' },
+  { value: 'im:use', label: '使用即时消息' },
+  { value: 'directory:read', label: '查看组织通讯录' },
+  { value: 'im:group:create', label: '创建群聊' },
   { value: 'agent-mail:send', label: '发送 Agent Mail' },
   { value: 'agent-mail:receive', label: '接收 Agent Mail' },
   { value: 'admin:users', label: '管理用户' },
@@ -80,6 +86,18 @@ const scopeOptions = [
 ]
 
 export default function ApiKeysPage() {
+  const { scopes } = useAuth()
+  const canManageApiKeys = hasScope(scopes, 'admin:api_keys')
+  const canIssueAnyScope = hasScope(scopes, '*')
+  const assignableUserScopes = new Set([
+    'cloud-storage:read', 'cloud-storage:write', 'cloud-storage:share', 'cloud-storage:delete',
+    'sessions:create', 'sessions:attach', 'sessions:list', 'im:use', 'directory:read',
+    'im:group:create', 'agent-mail:send', 'agent-mail:receive', 'ragflow:read',
+  ])
+  const availableScopeOptions = useMemo(
+    () => scopeOptions.filter(option => canIssueAnyScope || assignableUserScopes.has(option.value)),
+    [canIssueAnyScope],
+  )
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([])
   const [users, setUsers] = useState<AuthUser[]>([])
   const [searchQuery, setSearchQuery] = useState('')
@@ -99,8 +117,8 @@ export default function ApiKeysPage() {
   })
 
   useEffect(() => {
-    fetchData()
-  }, [])
+    if (canManageApiKeys) void fetchData()
+  }, [canManageApiKeys])
 
   const fetchData = async () => {
     try {
@@ -152,6 +170,16 @@ export default function ApiKeysPage() {
   const getUserName = (userId: string) => {
     const user = users.find((u) => u.id === userId)
     return user?.name || userId.slice(0, 8)
+  }
+
+  if (!canManageApiKeys) {
+    return (
+      <DashboardLayout title="API Key 管理" description="创建和撤销 Moss API Key。">
+        <div className="rounded-xl border border-dashed px-6 py-16 text-center text-sm text-muted-foreground">
+          当前账号没有“管理 API Keys”权限，无法访问此页面。
+        </div>
+      </DashboardLayout>
+    )
   }
 
   if (isLoading) {
@@ -260,7 +288,7 @@ export default function ApiKeysPage() {
           form.reset()
         }
       }}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>{newApiKey ? 'API Key 已创建' : '创建 API Key'}</DialogTitle>
             <DialogDescription>
@@ -349,8 +377,8 @@ export default function ApiKeysPage() {
                           选择此 Key 拥有的权限
                         </FormDescription>
                       </div>
-                      <div className="flex flex-col gap-2">
-                        {scopeOptions.map((scope) => (
+                      <div className="max-h-[min(46vh,420px)] space-y-2 overflow-y-auto rounded-lg border border-border/60 bg-muted/20 p-3 pr-2">
+                        {availableScopeOptions.map((scope) => (
                           <FormField
                             key={scope.value}
                             control={form.control}

@@ -154,11 +154,18 @@ const ROOT_VALUE = '__root__'
 
 const SCOPE_LABELS: Record<string, string> = {
   '*': '全部权限',
+  'cloud-storage:read': '读取云端空间',
+  'cloud-storage:write': '写入云端空间',
+  'cloud-storage:share': '分享云端文件',
+  'cloud-storage:delete': '删除云端文件',
   'sessions:create': '创建会话',
   'sessions:attach': '接入会话',
   'sessions:list': '查看自己的会话',
   'sessions:list:any': '查看所有会话',
   'sessions:attach:any': '接入任意会话',
+  'sessions:terminate:any': '终止任意会话（内部能力）',
+  'im:use': '使用即时消息',
+  'im:group:create': '创建群聊',
   'directory:read': '查看组织通讯录',
   'admin:users': '管理用户与部门',
   'admin:api_keys': '管理 API Keys',
@@ -451,6 +458,7 @@ function DepartmentTreeRow({
 export default function UsersPage() {
   const { user: currentUser, scopes } = useAuth()
   const canManageUsers = hasScope(scopes, 'admin:users')
+  const canManageApiKeys = hasScope(scopes, 'admin:api_keys')
   const isOrgAdmin = currentUser?.roles?.some(role => role.systemKey === 'admin')
     || currentUser?.role === 'admin'
   const canManageRagflowCredentials = hasScope(scopes, 'ragflow:credentials')
@@ -601,7 +609,7 @@ export default function UsersPage() {
       const [usersRes, departmentsRes, apiKeysRes, rolesRes, permissionsRes, ragflowRes] = await Promise.all([
         getUsers(),
         getDepartments(),
-        getApiKeys(),
+        canManageApiKeys ? getApiKeys() : Promise.resolve({ api_keys: [] }),
         getRoles(),
         getPermissions(),
         getRagflowStatus().catch(() => null),
@@ -626,7 +634,7 @@ export default function UsersPage() {
       setIsLoading(false)
       setIsRefreshing(false)
     }
-  }, [canManageUsers])
+  }, [canManageApiKeys, canManageUsers])
 
   useEffect(() => {
     void fetchData()
@@ -1345,10 +1353,12 @@ export default function UsersPage() {
                                     <Pencil className="mr-2 size-4" />
                                     编辑用户
                                   </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => setApiKeyUser(user)}>
-                                    <KeyRound className="mr-2 size-4" />
-                                    生成 API Key
-                                  </DropdownMenuItem>
+                                  {canManageApiKeys ? (
+                                    <DropdownMenuItem onClick={() => setApiKeyUser(user)}>
+                                      <KeyRound className="mr-2 size-4" />
+                                      生成 API Key
+                                    </DropdownMenuItem>
+                                  ) : null}
                                   <DropdownMenuItem onClick={() => setResetPasswordUser(user)}>
                                     <LockKeyhole className="mr-2 size-4" />
                                     重置密码
@@ -1510,7 +1520,7 @@ export default function UsersPage() {
           }))
         }}
       >
-        <DialogContent>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>{userDialog.mode === 'create' ? '新建用户' : '编辑用户'}</DialogTitle>
             <DialogDescription>
@@ -1920,7 +1930,7 @@ export default function UsersPage() {
       </Dialog>
 
       <Dialog open={!!apiKeyUser} onOpenChange={(open) => !open && setApiKeyUser(null)}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>生成 API Key</DialogTitle>
             <DialogDescription>
@@ -1948,7 +1958,7 @@ export default function UsersPage() {
                 render={() => (
                   <FormItem>
                     <FormLabel>权限范围</FormLabel>
-                    <div className="grid gap-2 rounded-xl border p-4 sm:grid-cols-2">
+                    <div className="grid max-h-[min(46vh,420px)] gap-2 overflow-y-auto rounded-xl border bg-muted/20 p-4 sm:grid-cols-2">
                       {apiScopeOptions.map(option => (
                         <FormField
                           key={option.value}
@@ -2262,10 +2272,12 @@ export default function UsersPage() {
                       共 {getUserApiKeys(selectedUser.id).length} 个 Key
                     </CardDescription>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => setApiKeyUser(selectedUser)}>
-                    <Plus className="mr-2 size-4" />
-                    生成 Key
-                  </Button>
+                  {canManageApiKeys ? (
+                    <Button variant="outline" size="sm" onClick={() => setApiKeyUser(selectedUser)}>
+                      <Plus className="mr-2 size-4" />
+                      生成 Key
+                    </Button>
+                  ) : null}
                 </CardHeader>
                 <CardContent>
                   {getUserApiKeys(selectedUser.id).length > 0 ? (
