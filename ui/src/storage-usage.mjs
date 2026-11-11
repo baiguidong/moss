@@ -5,7 +5,7 @@ const groups = [
   { id: 'sessions', label: '会话与文件', roots: ['sessions', 'history.jsonl', 'sessions.db'] },
   { id: 'subagents', label: '子会话', roots: [] },
   { id: 'archived', label: '已归档会话', roots: [] },
-  { id: 'projects', label: '项目与工作区', roots: ['projects', 'workspace', 'workspaces', 'app-authoring', 'bundled-apps-workspace'] },
+  { id: 'projects', label: '项目与工作区', roots: ['projects', 'workspace', 'workspaces', 'app-authoring'] },
   // App packages are downloaded/rebuildable artifacts. Keep them in the cache
   // category so storage users can distinguish them from App-owned data.
   { id: 'app-data', label: '应用数据', roots: ['apps-data', 'apps-runtime', 'app-tasks', 'browser-profiles', 'dbx-mcp'] },
