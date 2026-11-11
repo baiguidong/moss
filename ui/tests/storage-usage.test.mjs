@@ -95,3 +95,13 @@ test('classifies the Expert Hub download cache as rebuildable cache', async t =>
   assert.deepEqual(result.categories.find(item => item.id === 'cache').entries.map(item => item.path), ['expert-hub']);
   assert.equal(result.categories.find(item => item.id === 'resources').entries.length, 0);
 });
+
+test('classifies the retired local Server profile as rebuildable cache', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-usage-server-cache-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.mkdir(path.join(root, 'server'), { recursive: true });
+  await fs.writeFile(path.join(root, 'server', 'server.db'), 'legacy');
+  const result = await measureStorage(root);
+  assert.deepEqual(result.categories.find(item => item.id === 'cache').entries.map(item => item.path), ['server']);
+  assert.equal(result.categories.find(item => item.id === 'runtimes').entries.length, 0);
+});

@@ -64,6 +64,7 @@ test('cache cleanup keeps current App packages and removes rebuildable artifacts
   await f.write('generated-apps/demo.zip', 'generated');
   await f.write('cloud-transfers/pending-upload.bin', 'transfer');
   await f.write('expert-hub/cache/bundles/expert.tar.gz', 'bundle');
+  await f.write('server/moss-server.db', 'legacy server');
   await f.write('app-market/catalog-v1.json', 'catalog');
   const result = await f.service.clearCaches();
   assert.ok(result.deletedBytes > 0);
@@ -74,6 +75,7 @@ test('cache cleanup keeps current App packages and removes rebuildable artifacts
   await assert.rejects(fs.access(path.join(f.root, 'generated-apps')));
   await assert.rejects(fs.access(path.join(f.root, 'cloud-transfers')));
   await assert.rejects(fs.access(path.join(f.root, 'expert-hub')));
+  await assert.rejects(fs.access(path.join(f.root, 'server')));
   await assert.rejects(fs.access(path.join(f.root, 'app-market/catalog-v1.json')));
 });
 
