@@ -10,8 +10,8 @@ const groups = [
   // category so storage users can distinguish them from App-owned data.
   { id: 'app-data', label: '应用数据', roots: ['apps-data', 'apps-runtime', 'app-tasks', 'browser-profiles', 'dbx-mcp'] },
   { id: 'runtimes', label: '运行环境', roots: ['runtimes', 'server'] },
-  { id: 'resources', label: '资源与记忆', roots: ['skills', 'assistants', 'agents', 'expert-hub', 'library', 'knowledge', 'local-kb', 'memory', 'workflows', 'plans', 'teams', 'tasks'] },
-  { id: 'cache', label: '缓存与可重建内容', roots: ['cache', '.cache', 'caches', 'apps', 'generated-apps', 'app-authoring-previews', 'cloud-transfers', 'app-market', 'mcp', 'browser-binaries', 'whisper-models'] },
+  { id: 'resources', label: '资源与记忆', roots: ['skills', 'assistants', 'agents', 'expert-hub', 'library', 'memory', 'workflows', 'plans', 'teams', 'tasks'] },
+  { id: 'cache', label: '缓存与可重建内容', roots: ['cache', '.cache', 'caches', 'apps', 'app-authoring-previews', 'cloud-transfers', 'app-market', 'mcp', 'browser-binaries', 'whisper-models'] },
   { id: 'history', label: '历史版本', roots: ['backups'] },
   { id: 'logs', label: '日志', roots: ['logs', 'debug', 'startup-perf', 'desktop-dev.log'] },
   { id: 'other', label: '数据库与其他', roots: [] },
@@ -27,7 +27,7 @@ function classify(relative, sessionKinds) {
   if (knownGroup) {
     if (top === 'sessions' && parts[1] && sessionKinds.has(parts[1])) return { id: sessionKinds.get(parts[1]), entry: `sessions/${parts[1]}` };
     if (top === 'dbx-mcp') return { id: knownGroup, entry: 'moss.dbx (dbx-mcp)' };
-    if (['apps', 'generated-apps', 'apps-data', 'apps-runtime', 'app-tasks', 'browser-profiles'].includes(top) && parts[1]) {
+    if (['apps', 'apps-data', 'apps-runtime', 'app-tasks', 'browser-profiles'].includes(top) && parts[1]) {
       return { id: knownGroup, entry: `${top}/${parts[1]}` };
     }
     return { id: knownGroup, entry: top || '.' };
