@@ -1,4 +1,5 @@
 import memoize from 'lodash-es/memoize.js'
+import { getSessionRuntimeContext } from './utils/sessionIdContext.js'
 import { getAdditionalDirectoriesForMossMd } from './bootstrap/state.js'
 import { getLocalISODate } from './constants/common.js'
 import {
@@ -195,5 +196,5 @@ export const getUserContext = memoize(
   },
   // Profile and memory state are session-scoped in the embedded runtime.
   () =>
-    `${getMossConfigHomeDir()}:${getCwd()}:${getAutoMemEntrypointCacheKey()}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
+    `${getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId || ''}:${getMossConfigHomeDir()}:${getCwd()}:${getAutoMemEntrypointCacheKey()}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
 )

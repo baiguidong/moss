@@ -551,7 +551,7 @@ export function createAgentChannelController({
       const requested = Array.isArray(input.kinds) && input.kinds.length
         ? new Set(input.kinds)
         : null;
-      const result = await catalog(context);
+      const result = await catalog(context, input);
       return Object.fromEntries(Object.entries(result || {}).filter(([kind]) => !requested || requested.has(kind)));
     }
     if (method === 'binding.get') {

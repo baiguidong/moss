@@ -25,7 +25,6 @@
     "moss.computer-use": "0.2.3"
   },
   "toolDefaults": {
-    "moss.buddy": { "scope": "global", "loading": "on-demand" },
     "moss.browser-use": { "scope": "global", "loading": "on-demand" },
     "moss.computer-use": { "scope": "global", "loading": "on-demand" }
   }

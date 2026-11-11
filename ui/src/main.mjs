@@ -11,6 +11,7 @@ import { connectorIdFromApp, getAppDiscovery } from '../../packages/app-sdk/src/
 import { setConnectorAppLifecycle, saveConnectorCredentials, provisionConnectorCredentials, refreshConnectorCliStatus, isConnectorAppActivationCurrent } from './connector-hub-ipc.mjs';
 import { createRestoreState } from './web/restore-state.mjs';
 import { resolveAppSkills } from './apps/app-skills.mjs';
+import { isAppScopedSession, normalizeAppScopedPolicy, isolateAppSession } from './apps/app-session-policy.mjs';
 import { createAppSessionStorage } from './apps/app-session-storage.mjs';
 import { registerAppUiRequests } from './apps/app-ui-requests.mjs';
 import { defaultInstanceId as appDefaultInstanceId } from '../../packages/app-runtime/src/state/index.mjs';
@@ -1887,14 +1888,15 @@ async function getDesktopAgentCatalog(payload = {}, extra = {}) {
   };
 }
 
-async function getAgentChannelCatalog() {
+async function getAgentChannelCatalog(context = null, options = {}) {
+  const appScoped = options.contextScope === 'app' && Boolean(context?.appId);
   const runtime = await getClaudeRuntimeModule();
   const [agentCatalog, skills, connectors, contributions] = await Promise.all([
-    getDesktopAgentCatalog({ workspace: MOSS_SESSIONS_DIR }),
-    getInstalledSkills(),
-    listInstalledConnectors(),
+    appScoped ? { agents: [] } : getDesktopAgentCatalog({ workspace: MOSS_SESSIONS_DIR }),
+    appScoped ? [] : getInstalledSkills(),
+    appScoped ? [] : listInstalledConnectors(),
     appRuntime
-      ? appRuntime.listContributions({ kinds: ['tools'], loadSchemas: false }).catch(() => ({ tools: [] }))
+      ? appRuntime.listContributions({ ...(appScoped ? { appId: context.appId } : {}), kinds: ['tools'], loadSchemas: false }).catch(() => ({ tools: [] }))
       : Promise.resolve({ tools: [] }),
   ]);
   const builtInTools = typeof runtime.listDesktopTools === 'function'
@@ -1964,8 +1966,8 @@ function filterAgentChannelResourceSelection(requested, available, aliases = new
 }
 
 async function authorizeAgentChannelPolicy(policy, context = null) {
-  const requestedPolicy = policy;
-  const catalog = await getAgentChannelCatalog();
+  const requestedPolicy = policy?.contextScope === 'app' ? normalizeAppScopedPolicy(policy) : policy;
+  const catalog = await getAgentChannelCatalog(context, requestedPolicy);
   const agent = requestedPolicy.agentId
     ? catalog.agents.find((entry) => entry.id === requestedPolicy.agentId)
     : null;
@@ -2034,6 +2036,7 @@ async function applyAgentChannelSessionPolicy(sessionId, policy, context = {}) {
   if (!sessionRecord || sessionRecord.isSubAgent) {
     throw new Error('The selected Moss session is no longer writable.');
   }
+  if (policy?.contextScope === 'app') policy = normalizeAppScopedPolicy(policy);
   const next = {
     ...policy,
     resources: {
@@ -2056,10 +2059,11 @@ async function applyAgentChannelSessionPolicy(sessionId, policy, context = {}) {
     !== JSON.stringify(nextConnectorIds);
   sessionRecord.channelRuntimePolicy = next;
   sessionRecord.connectorIds = nextConnectorIds;
+  const appResourcesChanged = isolateAppSession(sessionRecord);
   sessionRecord.permissionMode = ['default', 'acceptEdits', 'dontAsk', 'bypassPermissions'].includes(next.permissionMode)
     ? next.permissionMode
     : 'default';
-  if (sessionRecord.runtime && (previousFingerprint !== nextFingerprint || connectorsChanged)) {
+  if (sessionRecord.runtime && (previousFingerprint !== nextFingerprint || connectorsChanged || appResourcesChanged)) {
     if (sessionRecord.busy || sessionRecord.preparingPrompt || hasActiveAgentTeam(sessionRecord)) sessionRecord.pendingMcpRuntimeReload = true;
     else disposeRuntime(sessionRecord);
   }
@@ -2130,7 +2134,7 @@ async function sendPromptFromAgentChannel(sessionId, prompt, options = {}) {
   if (!toAgentChannelSessionOption(sessionRecord, context)) {
     throw new Error('The selected Moss session is not writable by this Channel App.');
   }
-  const installedSkills = await getInstalledSkills();
+  const installedSkills = isAppScopedSession(sessionRecord) ? [] : await getInstalledSkills();
   const skillsById = new Map(installedSkills.flatMap((skill) => [
     [String(skill.id || skill.name), skill],
     [String(skill.name || skill.id), skill],
@@ -2139,7 +2143,7 @@ async function sendPromptFromAgentChannel(sessionId, prompt, options = {}) {
     const skill = skillsById.get(id);
     return skill ? [{ name: skill.name, displayName: skill.displayName || skill.name }] : [];
   });
-  const selectedAgent = typeof options.agentId === 'string' ? options.agentId.trim() : '';
+  const selectedAgent = !isAppScopedSession(sessionRecord) && typeof options.agentId === 'string' ? options.agentId.trim() : '';
   const result = await sendAgentPrompt(null, {
     sessionId,
     prompt,
@@ -2516,6 +2520,7 @@ function getSessionConnectorIds(sessionRecord) {
 }
 
 function getRuntimeSessionConnectorIds(sessionRecord) {
+  if (isAppScopedSession(sessionRecord)) return [];
   return resolveAgentChannelConnectorIds(
     sessionRecord?.channelRuntimePolicy,
     getSessionConnectorIds(sessionRecord),
@@ -2523,6 +2528,7 @@ function getRuntimeSessionConnectorIds(sessionRecord) {
 }
 
 function getSessionMcpServers(sessionRecord, runtimeCredentialValues = {}, appIds = normalizeStringList(sessionRecord?.appIds), appServiceIds = normalizeStringList(sessionRecord?.appServiceIds)) {
+  if (isAppScopedSession(sessionRecord)) return {};
   if (sessionRecord?.appTestRunId) return sessionRecord.appTestMcpServers || {};
   const connectorIds = getRuntimeSessionConnectorIds(sessionRecord);
   if (sessionRecord?.channelRuntimePolicy && Array.isArray(
@@ -2565,6 +2571,7 @@ async function resolveSessionConnectorRuntimeCredentials(sessionRecord) {
 }
 
 function getSessionAddDirs(sessionRecord) {
+  if (isAppScopedSession(sessionRecord)) return [];
   const dirs = [
     ...(Array.isArray(sessionRecord?.runtimeAddDirs) ? sessionRecord.runtimeAddDirs : []),
     ...getConnectorAddDirs(getRuntimeSessionConnectorIds(sessionRecord)),
@@ -2681,6 +2688,7 @@ function recordUsageForSession(event, sessionRecord) {
 }
 
 function getRuntimeSessionAppSelection(sessionRecord) {
+  if (isAppScopedSession(sessionRecord)) return { connectorAppIds: [], selectedAppIds: [sessionRecord.channelAppId], selectedAppServiceIds: [] };
   const connectorIds = new Set(getRuntimeSessionConnectorIds(sessionRecord));
   const connectorAppIds = listAllStoredApps().flatMap(app => {
     const appId = app.id || app.name;
@@ -2696,14 +2704,17 @@ function getRuntimeSessionAppSelection(sessionRecord) {
 async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt = '') {
   restoreTestController(sessionRecord);
   applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
-  await sessionApps.migrateRecord(sessionRecord);
+  const appScoped = isAppScopedSession(sessionRecord);
+  if (appScoped) {
+    if (isolateAppSession(sessionRecord)) schedulePersistSession(sessionRecord, true);
+  } else await sessionApps.migrateRecord(sessionRecord);
   const { connectorAppIds, selectedAppIds, selectedAppServiceIds } = getRuntimeSessionAppSelection(sessionRecord);
-  if (sessionRecord?.agentMode !== 'remote-direct') await appMcpHost?.prepareForSession(selectedAppIds, selectedAppServiceIds);
+  if (!appScoped && sessionRecord?.agentMode !== 'remote-direct') await appMcpHost?.prepareForSession(selectedAppIds, selectedAppServiceIds);
   const [connectorRuntimeCredentials, appTools] = await Promise.all([
     resolveSessionConnectorRuntimeCredentials(sessionRecord),
     sessionRecord?.agentMode === 'remote-direct' || !appRuntime
       ? []
-      : appRuntime.listContributions({ kinds: ['tools'], loadSchemas: true, selectedAppIds, selectedAppServiceIds })
+      : appRuntime.listContributions({ ...(appScoped ? { appId: sessionRecord.channelAppId } : {}), kinds: ['tools'], loadSchemas: true, selectedAppIds, selectedAppServiceIds })
         .then((contributions) => contributions.tools || [])
         .catch((error) => {
           mossLog('error', 'app-runtime', 'Unable to load App Tool contributions', {
@@ -2712,13 +2723,13 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
           return [];
         }),
   ]);
-  const appSkills = sessionRecord?.agentMode === 'remote-direct' ? { skills: [], directories: [], prompt: '' } : await resolveAppSkills(appRuntime, selectedAppIds);
+  const appSkills = appScoped || sessionRecord?.agentMode === 'remote-direct' ? { skills: [], directories: [], prompt: '' } : await resolveAppSkills(appRuntime, selectedAppIds);
   const connectorOwners = Object.fromEntries(connectorAppIds.flatMap(appId =>
     Object.keys(getConnectorMcpServers([getStoredConnectorId(appId)], connectorRuntimeCredentials))
       .map(name => [name, {
         appId, toolScope: 'session', toolSelection: 'app', serviceId: `mcp/${appId}--default/connector-${getStoredConnectorId(appId)}-${name}`,
       }])));
-  const appToolPolicy = { appIds: selectedAppIds, appServiceIds: selectedAppServiceIds, mcpServers: { ...(appMcpHost?.serverOwners() || {}), ...connectorOwners } };
+  const appToolPolicy = { appIds: selectedAppIds, appServiceIds: selectedAppServiceIds, ...(appScoped ? { isolatedAppId: sessionRecord.channelAppId } : {}), mcpServers: appScoped ? {} : { ...(appMcpHost?.serverOwners() || {}), ...connectorOwners } };
   const appNames = new Map(listAllStoredApps().map(app => [app.id || app.name, app.displayName || app.title || app.name]));
   for (const owner of Object.values(appToolPolicy.mcpServers)) {
     const name = appNames.get(owner.appId);
@@ -2731,14 +2742,14 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     sessionRecord.runtimeAppIds = [...appToolPolicy.appIds];
     sessionRecord.runtimeAppServiceIds = [...appToolPolicy.appServiceIds];
   }
-  const projectContextPrompt = buildProjectSystemPrompt(sessionRecord);
+  const projectContextPrompt = appScoped ? {} : buildProjectSystemPrompt(sessionRecord);
   const connectorSystemPrompt = buildConnectorSystemPrompt(sessionRecord);
   const customSystemPrompt = typeof sessionRecord?.assistantSystemPrompt === 'string'
     ? sessionRecord.assistantSystemPrompt.trim()
     : '';
   const projectCreationPrompt = sessionRecord?.projectCreationMode ? `${PROJECT_CREATION_SYSTEM_PROMPT}\n当前草稿：${JSON.stringify(await projectCreationService.get({ sessionId: sessionRecord.id }))}` : '';
   const appendSystemPrompt = [
-    desktopSettings.appendSystemPrompt,
+    appScoped ? undefined : desktopSettings.appendSystemPrompt,
     projectContextPrompt.appendSystemPrompt,
     connectorSystemPrompt,
     runtimeSystemPrompt,
@@ -2821,7 +2832,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
       ...(sessionRecord && getTurnRewindSupport(sessionRecord).supported
         ? { CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1' }
         : {}),
-      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: !sessionRecord?.projectCreationMode && (hostPolicy.agentTeamsEnabled ?? sessionRecord?.projectDefaults?.agentTeamsEnabled ?? desktopSettings.agentTeamsEnabled) === true ? '1' : '0',
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: !sessionRecord?.projectCreationMode && (!appScoped && (hostPolicy.agentTeamsEnabled ?? sessionRecord?.projectDefaults?.agentTeamsEnabled ?? desktopSettings.agentTeamsEnabled) === true) ? '1' : '0',
       MOSS_RUNTIME_ADVANCED_SETTINGS: JSON.stringify({
         ...desktopSettings.advanced,
         moss_response_language: desktopSettings.language,
@@ -2868,7 +2879,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
       ? (event) => recordUsageForSession(event, sessionRecord)
       : undefined,
     agentMailEnabled:
-      (isWebHost || desktopSettings.enterpriseEnabled === true) && desktopSettings.agentMail?.enabled === true,
+      !appScoped && (isWebHost || desktopSettings.enterpriseEnabled === true) && desktopSettings.agentMail?.enabled === true,
   };
 }
 
@@ -4107,7 +4118,7 @@ function buildAskUserQuestionUpdatedInput(input, answers, annotations) {
 function validateSessionToolUse(sessionRecord, toolName, input) {
   if (sessionRecord?.projectCreationMode && !PROJECT_CREATION_TOOLS.includes(toolName)) return { behavior: 'deny', message: '项目创建会话仅支持查找资源、提问和更新方案。' };
   if (sessionRecord?.appTestRunId) return validateTestToolUse(sessionRecord, appTestingHost.isControllerActive(sessionRecord), toolName, input);
-  const channelPolicy = sessionRecord?.channelRuntimePolicy;
+  const channelPolicy = isAppScopedSession(sessionRecord) ? normalizeAppScopedPolicy(sessionRecord.channelRuntimePolicy) : sessionRecord?.channelRuntimePolicy;
   if (channelPolicy) {
     const delegationViolation = validateAgentChannelDelegation(channelPolicy, toolName, input);
     if (delegationViolation) {

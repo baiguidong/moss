@@ -1,3 +1,4 @@
+import { getSessionRuntimeContext } from '../utils/sessionIdContext.js'
 import { init } from '../entrypoints/init.js'
 import {
   setAdditionalDirectoriesForMossMd,
@@ -132,10 +133,12 @@ export async function bootstrapHeadless(
     setAdditionalDirectoriesForMossMd(addDirs)
   }
 
+  const isolated = Boolean(getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId)
+
   // 3. Load MCP configurations and prefetch resources
   const { servers: mcpConfigs } = await withDiagnosticsTiming(
     'bootstrap_headless_mcp_configs',
-    () => getAllMcpConfigs(dynamicMcpConfig),
+    () => isolated ? Promise.resolve({ servers: {} }) : getAllMcpConfigs(dynamicMcpConfig),
     result => ({ server_count: result.servers.length }),
   )
   const mcpResources = await withDiagnosticsTiming(
@@ -151,7 +154,7 @@ export async function bootstrapHeadless(
   // 4. Load agent definitions (supports .moss/agents/*.md)
   const agentDefinitions = await withDiagnosticsTiming(
     'bootstrap_headless_agent_definitions',
-    () => getAgentDefinitionsWithOverrides(cwd),
+    () => isolated ? Promise.resolve({ activeAgents: [], allAgents: [] }) : getAgentDefinitionsWithOverrides(cwd),
     result => ({
       active_agent_count: result.activeAgents.length,
       all_agent_count: result.allAgents.length,

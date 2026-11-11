@@ -1,3 +1,4 @@
+import { getSessionRuntimeContext } from './utils/sessionIdContext.js'
 import { mergeBuiltinSkills } from './skills/mergeBuiltinSkills.js'
 import addDir from './commands/add-dir/index.js'
 import btw from './commands/btw/index.js'
@@ -216,6 +217,7 @@ const loadAllCommands = memoize(async (cwd: string): Promise<Command[]> => {
  * auth changes take effect immediately.
  */
 export async function getCommands(cwd: string): Promise<Command[]> {
+  if (getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId) return []
   const allCommands = await loadAllCommands(cwd)
 
   // Get dynamic skills discovered during file operations

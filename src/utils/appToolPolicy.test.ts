@@ -14,6 +14,18 @@ const tools = [native, global, mcp]
 const owners = { shared: { appId: 'builder', toolScope: 'session' as const } }
 
 describe('App tool scope', () => {
+  test('isolated assistants exclude resident, deferred and cached MCP tools before search expansion', () => {
+    const core = { name: 'Read' } as Tool
+    const own = { ...native, name: 'settings_read', appInfo: { appId: 'moss.buddy' } } as Tool
+    const resident = { ...global, alwaysLoad: true } as Tool
+    const pool = [core, own, native, resident, mcp]
+    const policy = { appIds: ['moss.buddy', 'builder', 'global'], mcpServers: owners, isolatedAppId: 'moss.buddy' }
+    const result = applyAppToolPolicy(pool, policy)
+    expect(result.map(tool => tool.name)).toEqual(['Read', 'settings_read'])
+    expect(expandMatchesWithConfiguredGroups(['global', 'mcp', 'native'], result)).toEqual([])
+    expect(applyAppToolPolicy(pool, { appIds: ['builder'], mcpServers: owners }).map(tool => tool.name))
+      .toContain('mcp')
+  })
   test('defaults to session and excludes both native and MCP tools before group expansion', () => {
     const result = applyAppToolPolicy(tools, { appIds: [], mcpServers: owners })
     expect(result.map(t => t.name)).toEqual(['global'])

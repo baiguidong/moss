@@ -136,6 +136,8 @@ export interface AgentBindingResources {
 }
 
 export interface AgentBindingPolicy {
+  /** App-owned context excludes inherited plugins, skills, memory and prompts. */
+  contextScope?: 'default' | 'app'
   inheritDefault?: boolean
   replyMode: AgentReplyMode
   agentId: string | null
@@ -146,6 +148,7 @@ export interface AgentBindingPolicy {
 }
 
 export interface AgentBindingPatch {
+  contextScope?: 'default' | 'app'
   inheritDefault?: boolean
   replyMode?: AgentReplyMode
   agentId?: string | null
@@ -177,7 +180,7 @@ export interface AgentEffectiveBinding extends AgentBindingPolicy {
 }
 
 export interface AgentHostRequestMap {
-  'catalog.list': { kinds?: AgentCatalogKind[] }
+  'catalog.list': { kinds?: AgentCatalogKind[]; contextScope?: 'default' | 'app' }
   'binding.get': { externalConversationId: string; externalMemberId?: string; defaultConversationId?: string }
   'binding.update': {
     externalConversationId: string

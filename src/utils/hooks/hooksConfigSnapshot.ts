@@ -3,7 +3,7 @@ import { resetSdkInitState } from '../../bootstrap/state.js'
 import * as settingsModule from '../settings/settings.js'
 import { resetSettingsCache } from '../settings/settingsCache.js'
 import type { HooksSettings } from '../settings/types.js'
-import { getSessionIdContext } from '../sessionIdContext.js'
+import { getSessionIdContext, getSessionRuntimeContext } from '../sessionIdContext.js'
 
 let initialHooksConfig: HooksSettings | null = null
 const sessionHooksConfig = new Map<string, HooksSettings | null>()
@@ -45,9 +45,9 @@ function getHooksFromAllowedSources(): HooksSettings {
     return {}
   }
 
-  // If allowManagedHooksOnly is set in managed settings, only use managed hooks
-  if (policySettings?.allowManagedHooksOnly === true) {
-    return policySettings.hooks ?? {}
+  // App-owned assistants do not inherit user/plugin hooks. Managed policy still applies.
+  if (getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId || policySettings?.allowManagedHooksOnly === true) {
+    return policySettings?.hooks ?? {}
   }
 
   const mergedSettings = settingsModule.getSettings_DEPRECATED()
@@ -70,6 +70,7 @@ function getHooksFromAllowedSources(): HooksSettings {
  *   cannot disable managed hooks, so they effectively become managed-only)
  */
 export function shouldAllowManagedHooksOnly(): boolean {
+  if (getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId) return true
   const policySettings = settingsModule.getSettingsForSource('policySettings')
   if (policySettings?.allowManagedHooksOnly === true) {
     return true

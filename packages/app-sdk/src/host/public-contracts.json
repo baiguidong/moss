@@ -460,6 +460,16 @@
                   }
                 ]
               }
+            },
+            "contextScope": {
+              "anyOf": [
+                {
+                  "const": "default"
+                },
+                {
+                  "const": "app"
+                }
+              ]
             }
           },
           "required": [],
@@ -552,6 +562,16 @@
                     "policy": {
                       "type": "object",
                       "properties": {
+                        "contextScope": {
+                          "anyOf": [
+                            {
+                              "const": "default"
+                            },
+                            {
+                              "const": "app"
+                            }
+                          ]
+                        },
                         "inheritDefault": {
                           "anyOf": [
                             {
@@ -597,10 +617,10 @@
                               "type": "null"
                             },
                             {
-                              "const": "bypassPermissions"
+                              "const": "default"
                             },
                             {
-                              "const": "default"
+                              "const": "bypassPermissions"
                             },
                             {
                               "const": "acceptEdits"
@@ -810,6 +830,16 @@
                     }
                   ]
                 },
+                "contextScope": {
+                  "anyOf": [
+                    {
+                      "const": "default"
+                    },
+                    {
+                      "const": "app"
+                    }
+                  ]
+                },
                 "inheritDefault": {
                   "anyOf": [
                     {
@@ -852,10 +882,10 @@
                 "permissionMode": {
                   "anyOf": [
                     {
-                      "const": "bypassPermissions"
+                      "const": "default"
                     },
                     {
-                      "const": "default"
+                      "const": "bypassPermissions"
                     },
                     {
                       "const": "acceptEdits"
@@ -1023,6 +1053,16 @@
             "patch": {
               "type": "object",
               "properties": {
+                "contextScope": {
+                  "anyOf": [
+                    {
+                      "const": "default"
+                    },
+                    {
+                      "const": "app"
+                    }
+                  ]
+                },
                 "inheritDefault": {
                   "anyOf": [
                     {
@@ -1068,10 +1108,10 @@
                       "type": "null"
                     },
                     {
-                      "const": "bypassPermissions"
+                      "const": "default"
                     },
                     {
-                      "const": "default"
+                      "const": "bypassPermissions"
                     },
                     {
                       "const": "acceptEdits"
@@ -1233,6 +1273,16 @@
                 "policy": {
                   "type": "object",
                   "properties": {
+                    "contextScope": {
+                      "anyOf": [
+                        {
+                          "const": "default"
+                        },
+                        {
+                          "const": "app"
+                        }
+                      ]
+                    },
                     "inheritDefault": {
                       "anyOf": [
                         {
@@ -1278,10 +1328,10 @@
                           "type": "null"
                         },
                         {
-                          "const": "bypassPermissions"
+                          "const": "default"
                         },
                         {
-                          "const": "default"
+                          "const": "bypassPermissions"
                         },
                         {
                           "const": "acceptEdits"
@@ -1489,6 +1539,16 @@
                     }
                   ]
                 },
+                "contextScope": {
+                  "anyOf": [
+                    {
+                      "const": "default"
+                    },
+                    {
+                      "const": "app"
+                    }
+                  ]
+                },
                 "inheritDefault": {
                   "anyOf": [
                     {
@@ -1531,10 +1591,10 @@
                 "permissionMode": {
                   "anyOf": [
                     {
-                      "const": "bypassPermissions"
+                      "const": "default"
                     },
                     {
-                      "const": "default"
+                      "const": "bypassPermissions"
                     },
                     {
                       "const": "acceptEdits"
@@ -1780,6 +1840,16 @@
                     }
                   ]
                 },
+                "contextScope": {
+                  "anyOf": [
+                    {
+                      "const": "default"
+                    },
+                    {
+                      "const": "app"
+                    }
+                  ]
+                },
                 "inheritDefault": {
                   "anyOf": [
                     {
@@ -1822,10 +1892,10 @@
                 "permissionMode": {
                   "anyOf": [
                     {
-                      "const": "bypassPermissions"
+                      "const": "default"
                     },
                     {
-                      "const": "default"
+                      "const": "bypassPermissions"
                     },
                     {
                       "const": "acceptEdits"

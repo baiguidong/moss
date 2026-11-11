@@ -171,9 +171,12 @@ function rejectUnknownFields(input, fields, method) {
 
 function validateBindingPatch(value) {
   const patch = record(value, 'binding.update patch')
-  const allowed = new Set(['inheritDefault', 'replyMode', 'agentId', 'permissionMode', 'resources', 'session', 'proactive'])
+  const allowed = new Set(['contextScope', 'inheritDefault', 'replyMode', 'agentId', 'permissionMode', 'resources', 'session', 'proactive'])
   for (const key of Object.keys(patch)) {
     if (!allowed.has(key)) fail(`binding.update patch contains an unknown field: ${key}`)
+  }
+  if (patch.contextScope !== undefined && !['app', 'default'].includes(patch.contextScope)) {
+    fail('binding.update patch has an invalid contextScope')
   }
   if (patch.inheritDefault !== undefined && typeof patch.inheritDefault !== 'boolean') {
     fail('binding.update patch.inheritDefault must be a boolean')
@@ -260,7 +263,8 @@ export function validateAgentHostInput(method, value) {
   }
   switch (normalizedMethod) {
     case 'catalog.list':
-      rejectUnknownFields(input, ['kinds'], normalizedMethod)
+      rejectUnknownFields(input, ['kinds', 'contextScope'], normalizedMethod)
+      if (input.contextScope !== undefined && !['app', 'default'].includes(input.contextScope)) fail('catalog.list has an invalid contextScope')
       if (input.kinds !== undefined) {
         validateStringList(input.kinds, 'catalog.list kinds', { nullable: false, maxItems: AGENT_CATALOG_KINDS.length })
         if (input.kinds.some((kind) => !AGENT_CATALOG_KINDS.includes(kind))) fail('catalog.list contains an unknown kind')
@@ -475,7 +479,7 @@ function validateEffectiveBindingShape(value, label) {
   const effective = outputRecord(value, label)
   rejectUnknownOutputFields(effective, [
     'appId', 'instanceId', 'externalConversationId', 'externalMemberId', 'replyMode',
-    'agentId', 'permissionMode', 'resources', 'session', 'proactive', 'inheritDefault',
+    'agentId', 'permissionMode', 'resources', 'session', 'proactive', 'inheritDefault', 'contextScope',
     'revision', 'sourceRevisions', 'inherited', 'agentAvailable', 'unavailableResources',
   ], label)
 }

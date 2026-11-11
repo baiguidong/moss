@@ -1,3 +1,4 @@
+import { getSessionRuntimeContext } from './sessionIdContext.js'
 import {
   logEvent,
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -1895,6 +1896,7 @@ function hasToolResultContent(content: unknown): boolean {
 async function getDynamicSkillAttachments(
   toolUseContext: ToolUseContext,
 ): Promise<Attachment[]> {
+  if (getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId) return []
   const attachments: Attachment[] = []
 
   if (
@@ -2009,6 +2011,7 @@ export function filterToBundledAndMcp(commands: Command[]): Command[] {
 async function getSkillListingAttachments(
   toolUseContext: ToolUseContext,
 ): Promise<Attachment[]> {
+  if (getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId) return []
   if (process.env.NODE_ENV === 'test') {
     return []
   }

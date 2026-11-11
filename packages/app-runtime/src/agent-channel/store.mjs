@@ -69,6 +69,10 @@ function boundedInteger(value, field, minimum, maximum) {
 function normalizeBindingPatch(value, { member = false } = {}) {
   if (!isRecord(value)) throw new Error('Agent Channel binding patch must be an object.');
   const result = {};
+  if (Object.hasOwn(value, 'contextScope')) {
+    if (!['app', 'default'].includes(value.contextScope)) throw new Error('Invalid Agent Channel context scope.');
+    result.contextScope = value.contextScope;
+  }
   if (Object.hasOwn(value, 'inheritDefault')) {
     if (typeof value.inheritDefault !== 'boolean') throw new Error('Invalid Agent Channel inheritance mode.');
     result.inheritDefault = value.inheritDefault;
@@ -219,6 +223,7 @@ function mergePolicy(defaults, conversation, member) {
   const apply = (base, source, isMember) => {
     if (!isRecord(source)) return base;
     const next = { ...base };
+    if (source.contextScope) next.contextScope = isMember && base.contextScope === 'app' ? 'app' : source.contextScope;
     if (source.replyMode && (!isMember || source.replyMode !== 'inherit')) next.replyMode = source.replyMode;
     if (Object.hasOwn(source, 'agentId') && source.agentId !== null) next.agentId = source.agentId;
     if (Object.hasOwn(source, 'permissionMode') && source.permissionMode !== null) {

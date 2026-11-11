@@ -34,6 +34,12 @@ function request(protocol: string, method: string, input: Record<string, unknown
 }
 
 describe('Account and Agent Host protocols', () => {
+  it('accepts explicit App context boundaries and rejects unknown scope values', () => {
+    expect(validateAgentHostInput('catalog.list', { kinds: ['tools'], contextScope: 'app' })).toMatchObject({ contextScope: 'app' })
+    expect(validateAgentHostInput('binding.update', { externalConversationId: 'chat', patch: { contextScope: 'app' } })).toMatchObject({ patch: { contextScope: 'app' } })
+    expect(() => validateAgentHostInput('binding.update', { externalConversationId: 'chat', patch: { contextScope: 'unknown' } })).toThrow(/contextScope/)
+  })
+
   it('validates bounded Account directory requests', () => {
     expect(validateAccountHostInput('directory.search', { query: ' Alice ', limit: 20 }))
       .toEqual({ query: ' Alice ', limit: 20 })

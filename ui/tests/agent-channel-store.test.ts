@@ -16,6 +16,18 @@ function runStoreScenario(source: string) {
 }
 
 describe('Agent Channel store', () => {
+  it('persists App-owned context opt-in without changing other conversations or allowing a member to widen it', () => {
+    const result = runStoreScenario(`
+      const store = createAgentChannelStore(db);
+      const scope = { appId: 'example.assistant', instanceId: 'one', externalConversationId: 'chat' };
+      store.updateBinding({ ...scope, patch: { contextScope: 'app', resources: { tools: ['Read'], skills: [], connectors: [] } } });
+      store.updateBinding({ ...scope, externalMemberId: 'member', patch: { contextScope: 'default' } });
+      console.log(JSON.stringify({ selected: store.resolveBinding({ ...scope, externalMemberId: 'member' }), ordinary: store.resolveBinding({ ...scope, externalConversationId: 'other' }) }));
+    `)
+    expect(result.selected.contextScope).toBe('app')
+    expect(result.ordinary.contextScope).toBeUndefined()
+  })
+
   it('resolves conversation defaults and member overrides without widening unrelated fields', () => {
     const result = runStoreScenario(`
       const store = createAgentChannelStore(db, { now: () => 100 });

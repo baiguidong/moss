@@ -28,6 +28,7 @@
 
 import ignore from 'ignore'
 import memoize from 'lodash-es/memoize.js'
+import { getSessionRuntimeContext } from './sessionIdContext.js'
 import { Lexer } from 'marked'
 import {
   basename,
@@ -799,6 +800,7 @@ export async function processMdRules({
 
 export const getMemoryFiles = memoize(
   async (forceIncludeExternal: boolean = false): Promise<MemoryFileInfo[]> => {
+    if (getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId) return []
     const startTime = Date.now()
     logForDiagnosticsNoPII('info', 'memory_files_started')
 
@@ -1046,7 +1048,7 @@ export const getMemoryFiles = memoize(
     return result
   },
   (forceIncludeExternal: boolean = false) =>
-    `${forceIncludeExternal}:${getMossConfigHomeDir()}:${getOriginalCwd()}:${getAutoMemEntrypointCacheKey()}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
+    `${getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId || ''}:${forceIncludeExternal}:${getMossConfigHomeDir()}:${getOriginalCwd()}:${getAutoMemEntrypointCacheKey()}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
 )
 
 function isInstructionsMemoryType(
@@ -1150,6 +1152,7 @@ export async function getManagedAndUserConditionalRules(
   targetPath: string,
   processedPaths: Set<string>,
 ): Promise<MemoryFileInfo[]> {
+  if (getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId) return []
   const result: MemoryFileInfo[] = []
 
   // Process Managed conditional .moss/rules/*.md files
@@ -1195,6 +1198,7 @@ export async function getMemoryFilesForNestedDirectory(
   targetPath: string,
   processedPaths: Set<string>,
 ): Promise<MemoryFileInfo[]> {
+  if (getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId) return []
   const result: MemoryFileInfo[] = []
 
   // Process project instruction files

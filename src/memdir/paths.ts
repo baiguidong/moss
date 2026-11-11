@@ -7,6 +7,7 @@ import {
 } from '../services/autoMemorySettings.js'
 import { getMossConfigHomeDir, isEnvTruthy } from '../utils/envUtils.js'
 import { getSettingsForSource } from '../utils/settings/settings.js'
+import { getSessionRuntimeContext } from '../utils/sessionIdContext.js'
 
 /**
  * Whether auto-memory features are enabled (memdir, agent memory, past session search).
@@ -14,6 +15,7 @@ import { getSettingsForSource } from '../utils/settings/settings.js'
  * use the resolved Moss autoMemory.enabled setting.
  */
 export function isAutoMemoryEnabled(): boolean {
+  if (getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId) return false
   // --bare / SIMPLE: prompts.ts already drops the memory section from the
   // system prompt via its SIMPLE early-return; this gate stops the other half
   // (extractMemories turn-end fork, autoDream, and team sync).
@@ -35,6 +37,7 @@ export function isAutoMemoryEnabled(): boolean {
  * whether it runs for the current local or server session.
  */
 export function isExtractModeActive(): boolean {
+  if (getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId) return false
   return isAutoMemoryExtractionEnabled()
 }
 
