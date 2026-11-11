@@ -685,6 +685,7 @@ const workspaceVersionService = createWorkspaceVersionService({
 });
 const turnObservationService = createTurnObservationService({
   storageRoot: path.join(MOSS_HOME, 'turn-observations'), versions: workspaceVersionService, getSessionRecord,
+  getSessionStorageRoot: record => record ? getLocalSessionDir(record.storageRootSessionId || record.id) : path.join(MOSS_HOME, 'sessions'),
   async getTurnBindings(sessionId) {
     const snapshot = await presentationService.snapshot(sessionId);
     return snapshot.resources.flatMap(resource => resource.bindings || []);
@@ -1052,11 +1053,13 @@ const presentationResolver = createPresentationResolver({
 });
 const presentationService = createPresentationService({
   storageRoot: path.join(MOSS_HOME, 'presentations'), getSessionRecord, emit: emitToRenderer,
+  getSessionStorageRoot: record => getLocalSessionDir(record.storageRootSessionId || record.id),
   ...presentationResolver,
 });
 
 const previewOwnership = createPreviewOwnership({
   storageRoot: path.join(MOSS_HOME, 'preview-drafts'), getSessionRecord,
+  getSessionStorageRoot: record => getLocalSessionDir(record.storageRootSessionId || record.id),
   readFile: readWorkspaceFile, writeFile: writeWorkspaceFile,
   emit(channel, payload) {
     if (channel === 'preview-document:changed') void presentationService.documentChanged(payload).catch(() => {});
@@ -2348,7 +2351,7 @@ function snapshotLegacyProjectDefaults(sessionRecord) {
   if (!sessionRecord?.projectId || sessionRecord.projectDefaults) return;
   const project = getSessionProject(sessionRecord);
   if (!project) return;
-  const manifest = sessionRecord.projectResourceManifest || readJsonFile(getLocalSessionResourceManifestPath(sessionRecord.id), {});
+  const manifest = sessionRecord.projectResourceManifest || readJsonFile(getLocalSessionResourceManifestPath(sessionRecord.id, sessionRecord.storageRootSessionId), {});
   sessionRecord.projectDefaults = { version: 1,
     instructions: manifest.instructions ?? project.instructions ?? '',
     skillIds: manifest.skills?.map(skill => skill.id) || project.skillIds || [],
@@ -2483,7 +2486,7 @@ async function buildProjectResourceManifest(sessionRecord) {
   sessionRecord.projectExpertInfos = expertInfos;
   sessionRecord.projectResourceManifest = manifest;
   try {
-    await writeJsonFileAtomicAsync(getLocalSessionResourceManifestPath(sessionRecord.id), manifest);
+    await writeJsonFileAtomicAsync(getLocalSessionResourceManifestPath(sessionRecord.id, sessionRecord.storageRootSessionId), manifest);
   } catch (error) {
     mossLog('warn', 'project', 'Unable to persist session resource manifest snapshot', {
       projectId: project.id,
@@ -2825,7 +2828,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
       }),
       MOSS_RUNTIME_AUTO_MEMORY_SETTINGS: JSON.stringify(desktopSettings.autoMemory),
     },
-    projectDir: sessionRecord?.id ? getLocalSessionEngineDir(sessionRecord.id) : undefined,
+    projectDir: sessionRecord?.id ? getLocalSessionEngineDir(sessionRecord.id, sessionRecord.storageRootSessionId) : undefined,
     taskScope: sessionRecord
       ? (sessionRecord.projectId
         ? {
@@ -5073,12 +5076,14 @@ function createSessionRecord({
   if (requestedAgentMode === 'remote-direct') throw new Error('服务端会话已退役，请从左上角连接我的云电脑。');
   const now = Date.now();
   const id = randomUUID();
-  const sessionDir = getLocalSessionDir(id);
+  const parentRecord = parentSessionId ? (sessions.get(parentSessionId) || subAgentSessions.get(parentSessionId)) : null;
+  const storageRootSessionId = parentRecord?.storageRootSessionId || parentRecord?.id || id;
+  const sessionDir = getLocalSessionDir(id, storageRootSessionId);
   const normalizedWorkspace = normalizeWorkspace(workspace, id);
   const normalizedProjectId = normalizeOptionalProjectId(projectId);
   fs.mkdirSync(normalizedWorkspace, { recursive: true });
   fs.mkdirSync(sessionDir, { recursive: true });
-  fs.mkdirSync(getLocalSessionEngineDir(id), { recursive: true });
+  fs.mkdirSync(getLocalSessionEngineDir(id, storageRootSessionId), { recursive: true });
   if (isPathInsideDirectory(sessionDir, normalizedWorkspace)) {
     for (const directory of getProjectSessionWorkspaceDirectories(normalizedProjectId)) {
       fs.mkdirSync(path.join(normalizedWorkspace, directory), { recursive: true });
@@ -5094,6 +5099,7 @@ function createSessionRecord({
     agentMode,
     permissionMode: normalizePermissionMode(permissionMode, desktopSettings.permissionMode),
     sessionDir,
+    storageRootSessionId,
     isCoordinatorMode: mode === 'boss',
     projectDefaults,
     createdAt: now,
@@ -5454,7 +5460,7 @@ async function findSessionSubagentDir(sessionRecord) {
   const underlyingSessionId = sessionRecord?.underlyingSessionId;
   if (!sessionRecord?.id || !underlyingSessionId) return null;
   const candidate = path.join(
-    getLocalSessionEngineDir(sessionRecord.id),
+    getLocalSessionEngineDir(sessionRecord.id, sessionRecord.storageRootSessionId),
     underlyingSessionId,
     'subagents',
   );
@@ -5475,7 +5481,7 @@ async function removeMirroredAgentTeamSidechain(id) {
   closeWorkspaceWatcher(existing);
   subAgentSessions.delete(id);
   deletePersistedSession(id);
-  await fsp.rm(getLocalSessionDir(id), { recursive: true, force: true });
+  await fsp.rm(getLocalSessionDir(id, existing.storageRootSessionId), { recursive: true, force: true });
   emitToRenderer('agent:session-removed', { sessionId: id });
   return true;
 }
@@ -5517,7 +5523,7 @@ async function syncSubAgentSessionsForParentNow(parentSession) {
   }
   if (!isLiveParent()) return [];
   const inheritedResourceManifest = parentSession.projectResourceManifest || await readJsonFileAsync(
-    getLocalSessionResourceManifestPath(parentSession.id),
+    getLocalSessionResourceManifestPath(parentSession.id, parentSession.storageRootSessionId),
     null,
   );
   const synced = [];
@@ -5605,17 +5611,17 @@ async function syncSubAgentSessionsForParentNow(parentSession) {
     const workspaceDirectories = getProjectSessionWorkspaceDirectories(parentSession.projectId);
     await Promise.all([
       fsp.mkdir(workspace, { recursive: true }),
-      fsp.mkdir(getLocalSessionEngineDir(id), { recursive: true }),
+      fsp.mkdir(getLocalSessionEngineDir(id, parentSession.storageRootSessionId), { recursive: true }),
       ...workspaceDirectories.map((directory) => (
         fsp.mkdir(path.join(workspace, directory), { recursive: true })
       )),
     ]);
-    const childTranscriptPath = DESKTOP_DATA_PATHS.sessionTranscriptPath(id, agentId);
+    const childTranscriptPath = DESKTOP_DATA_PATHS.sessionTranscriptPath(id, agentId, parentSession.storageRootSessionId);
     if (transcriptChanged || existing?.workspace !== workspace) {
       await fsp.copyFile(transcriptPath, childTranscriptPath);
     }
     if (!isLiveParent()) {
-      await fsp.rm(getLocalSessionDir(id), { recursive: true, force: true });
+      await fsp.rm(getLocalSessionDir(id, parentSession.storageRootSessionId), { recursive: true, force: true });
       return synced;
     }
     if (inheritedResourceManifest && typeof inheritedResourceManifest === 'object') {
@@ -5625,7 +5631,7 @@ async function syncSubAgentSessionsForParentNow(parentSession) {
         inheritedResourceManifest,
         meta?.projectResources,
       );
-      await writeJsonFileAtomicAsync(getLocalSessionResourceManifestPath(id), {
+      await writeJsonFileAtomicAsync(getLocalSessionResourceManifestPath(id, parentSession.storageRootSessionId), {
         ...scopedResourceManifest,
         sessionId: id,
         parentSessionId: parentSession.id,
@@ -5642,7 +5648,7 @@ async function syncSubAgentSessionsForParentNow(parentSession) {
       });
     }
     if (!isLiveParent()) {
-      await fsp.rm(getLocalSessionDir(id), { recursive: true, force: true });
+      await fsp.rm(getLocalSessionDir(id, parentSession.storageRootSessionId), { recursive: true, force: true });
       return synced;
     }
     const record = {
@@ -5651,7 +5657,8 @@ async function syncSubAgentSessionsForParentNow(parentSession) {
       id,
       remoteWorkspace: null,
       agentMode: 'local',
-      sessionDir: getLocalSessionDir(id),
+      storageRootSessionId: parentSession.storageRootSessionId || parentSession.id,
+      sessionDir: getLocalSessionDir(id, parentSession.storageRootSessionId || parentSession.id),
       isCoordinatorMode: false,
       createdAt: existing?.createdAt || stat.birthtimeMs || stat.ctimeMs || Date.now(),
       updatedAt: stat.mtimeMs || Date.now(),
@@ -8001,6 +8008,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     ipcMain,
     service: workspaceVersionService,
     getSessionRecord,
+    getSessionStorageRoot: record => getLocalSessionDir(record.storageRootSessionId || record.id),
     readWorkspaceFile,
     busyReason: workspaceVersionBusyReason,
     onChanged: async (workspace, reason, result) => {
@@ -9430,7 +9438,7 @@ ipcMain.handle('agent:fork-session', async (_event, { sessionId } = {}) => {
       await appSessionStorage.removeSessionFiles(forked.id);
       sessions.delete(forked.id);
       deletePersistedSession(forked.id);
-      await fsp.rm(getLocalSessionDir(forked.id), { recursive: true, force: true });
+      await fsp.rm(getLocalSessionDir(forked.id, forked.storageRootSessionId), { recursive: true, force: true });
       emitToRenderer('agent:session-removed', { sessionId: forked.id });
       throw error;
     }
@@ -9798,8 +9806,16 @@ ipcMain.handle('agent:set-session-permission-mode', async (_event, { sessionId, 
 });
 
 async function removeSubAgentSessionRecords(parentSessionId) {
-  const children = Array.from(subAgentSessions.values())
-    .filter((record) => record.parentSessionId === parentSessionId);
+  const children = [];
+  const pending = [parentSessionId];
+  while (pending.length) {
+    const parentId = pending.shift();
+    for (const record of subAgentSessions.values()) {
+      if (record.parentSessionId !== parentId || children.includes(record)) continue;
+      children.push(record);
+      pending.push(record.id);
+    }
+  }
   await Promise.all(children.map(async (record) => {
     record.deleted = true;
     await appSessionStorage.closeSession(record.id);
@@ -9812,7 +9828,7 @@ async function removeSubAgentSessionRecords(parentSessionId) {
     subAgentSessions.delete(record.id);
     deletePersistedSession(record.id);
     sessionArchives.forget(record.id);
-    await fsp.rm(getLocalSessionDir(record.id), { recursive: true, force: true });
+    await fsp.rm(getLocalSessionDir(record.id, record.storageRootSessionId), { recursive: true, force: true });
     emitToRenderer('agent:session-removed', { sessionId: record.id });
   }));
   return children.length;
@@ -9928,7 +9944,7 @@ async function deleteSessionRecordById(sessionId, guard) {
   sessionArchives.forget(sessionId);
   if (!activeProjectTaskRun) projectTaskCancellationRequests.delete(sessionId);
   try {
-    await fsp.rm(getLocalSessionDir(sessionRecord.id), { recursive: true, force: true });
+    await fsp.rm(getLocalSessionDir(sessionRecord.id, sessionRecord.storageRootSessionId), { recursive: true, force: true });
   } catch (err) {
     console.warn('[session] failed to remove session directory:', err?.message || err);
   }

@@ -3,7 +3,6 @@ import fs from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 import path from 'node:path'
-import { constants } from 'node:fs'
 
 export const TRACE_APP_ID = 'moss.trace'
 export const TRACE_PROTOCOL = 'moss.trace/v1'
@@ -53,22 +52,6 @@ export class AppTraceHost {
     if (!this.active(instance.id)) return
     await core.configureTraceOutput(this.mossHome, { directory, isEnabled: () => this.active(instance.id) })
     this.output = { directory, instanceId: instance.id }
-  }
-  async importLegacy(directory) {
-    const marker = path.join(directory, 'legacy-import-v1.json')
-    if (await fs.stat(marker).catch(() => null)) return
-    const source = path.join(this.mossHome, 'traces')
-    const entries = await fs.readdir(source, { withFileTypes: true }).catch(error => {
-      if (error.code === 'ENOENT') return []
-      throw error
-    })
-    await fs.mkdir(path.join(directory, 'traces'), { recursive: true, mode: 0o700 })
-    for (const entry of entries) {
-      if (!entry.isFile() || !/^[a-zA-Z0-9._-]+\.jsonl$/.test(entry.name)) continue
-      await fs.copyFile(path.join(source, entry.name), path.join(directory, 'traces', entry.name), constants.COPYFILE_EXCL)
-        .catch(error => { if (error.code !== 'EEXIST') throw error })
-    }
-    await fs.writeFile(marker, JSON.stringify({ importedAt: new Date().toISOString() }), { mode: 0o600 })
   }
   async recordSession(record) {
     if (!this.output || !this.active(this.output.instanceId) || !record || record.agentMode === 'remote-direct' || record.deleted) return
@@ -127,7 +110,6 @@ export class AppTraceHost {
   async status(context) {
     if (context.appId !== TRACE_APP_ID || !this.active(context.instanceId)) throw new Error('请先启用 调用追踪。')
     await this.refresh()
-    if (this.output) await this.importLegacy(this.output.directory).catch(error => this.log(error))
     const core = await this.getCore()
     return core.traceOutputStatus(this.mossHome)
   }

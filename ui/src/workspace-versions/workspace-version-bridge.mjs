@@ -17,7 +17,7 @@ export function workspacePathsOverlap(left, right) {
   return contains(a, b) || contains(b, a);
 }
 
-export function registerWorkspaceVersionIpcHandlers({ ipcMain, service, getSessionRecord, readWorkspaceFile, busyReason, onChanged }) {
+export function registerWorkspaceVersionIpcHandlers({ ipcMain, service, getSessionRecord, getSessionStorageRoot = record => record.sessionDir, readWorkspaceFile, busyReason, onChanged }) {
   const local = sessionId => {
     const record = getSessionRecord(sessionId);
     if (record.agentMode === 'remote-direct') throw new Error('远程工作区暂不支持版本管理。');
@@ -27,26 +27,26 @@ export function registerWorkspaceVersionIpcHandlers({ ipcMain, service, getSessi
   ipcMain.handle('workspace-versions:status', async (_event, { sessionId }) => {
     const record = getSessionRecord(sessionId);
     if (record.agentMode === 'remote-direct') return { supported: false, reason: '远程工作区暂不支持版本管理。' };
-    return { ...await service.status(local(sessionId).workspace), supported: true, busyReason: busyReason(record.workspace) };
+    return { ...await service.status(local(sessionId).workspace, getSessionStorageRoot(record)), supported: true, busyReason: busyReason(record.workspace) };
   });
   ipcMain.handle('workspace-versions:save', async (_event, { sessionId, label }) => {
     const record = local(sessionId);
-    const result = await service.save(record.workspace, label);
+    const result = await service.save(record.workspace, label, getSessionStorageRoot(record));
     if (result.created) await onChanged(record.workspace, 'version-saved', result);
     return result;
   });
-  ipcMain.handle('workspace-versions:files', async (_event, { sessionId, versionId }) => service.listFiles(local(sessionId).workspace, versionId));
+  ipcMain.handle('workspace-versions:files', async (_event, { sessionId, versionId }) => { const record = local(sessionId); return service.listFiles(record.workspace, versionId, getSessionStorageRoot(record)); });
   ipcMain.handle('workspace-versions:preview-file', async (_event, { sessionId, versionId, filePath }) => {
     const record = local(sessionId);
-    const preview = await service.previewFile(record.workspace, versionId, filePath);
+    const preview = await service.previewFile(record.workspace, versionId, filePath, getSessionStorageRoot(record));
     const file = await readWorkspaceFile({ ...record, workspace: preview.root }, preview.path);
     return { ...file, metadata: { ...file.metadata, workspace: preview.root, previewEditable: false, previewSaveable: false, workspaceVersionId: versionId } };
   });
-  ipcMain.handle('workspace-versions:preview-restore', async (_event, { sessionId, versionId }) => service.previewRestore(local(sessionId).workspace, versionId));
+  ipcMain.handle('workspace-versions:preview-restore', async (_event, { sessionId, versionId }) => { const record = local(sessionId); return service.previewRestore(record.workspace, versionId, getSessionStorageRoot(record)); });
   ipcMain.handle('workspace-versions:restore', async (_event, { sessionId, versionId, token }) => {
     const record = local(sessionId);
     try {
-      const result = await service.restore(record.workspace, versionId, token);
+      const result = await service.restore(record.workspace, versionId, token, getSessionStorageRoot(record));
       await onChanged(record.workspace, 'version-restored', result);
       return result;
     } catch (error) {

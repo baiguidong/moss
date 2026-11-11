@@ -39,6 +39,11 @@ export function createDesktopDataPaths(mossHome) {
     sessionsRoot,
     normalizePathComponent(sessionId, 'session id'),
   );
+  const sessionRecordDir = (sessionId, rootSessionId = sessionId) => {
+    const root = sessionDir(rootSessionId);
+    const id = normalizePathComponent(sessionId, 'session id');
+    return id === rootSessionId ? root : path.join(root, 'children', id);
+  };
 
   return Object.freeze({
     home,
@@ -50,16 +55,17 @@ export function createDesktopDataPaths(mossHome) {
     projectRuntimeDir: (projectId) => path.join(projectDir(projectId), 'runtime'),
     projectRunsDir: (projectId) => path.join(projectDir(projectId), 'runtime', 'runs'),
     sessionDir,
-    sessionWorkspaceDir: (sessionId) => path.join(sessionDir(sessionId), 'workspace'),
-    sessionRuntimeDir: (sessionId) => path.join(sessionDir(sessionId), 'runtime'),
-    sessionEngineDir: (sessionId) => path.join(sessionDir(sessionId), 'runtime', 'engine'),
-    sessionResourceManifestPath: (sessionId) => path.join(
-      sessionDir(sessionId),
+    sessionRecordDir,
+    sessionWorkspaceDir: (sessionId, rootSessionId = sessionId) => path.join(sessionRecordDir(sessionId, rootSessionId), 'workspace'),
+    sessionRuntimeDir: (sessionId, rootSessionId = sessionId) => path.join(sessionRecordDir(sessionId, rootSessionId), 'runtime'),
+    sessionEngineDir: (sessionId, rootSessionId = sessionId) => path.join(sessionRecordDir(sessionId, rootSessionId), 'runtime', 'engine'),
+    sessionResourceManifestPath: (sessionId, rootSessionId = sessionId) => path.join(
+      sessionRecordDir(sessionId, rootSessionId),
       'runtime',
       'resource-manifest.json',
     ),
-    sessionTranscriptPath: (sessionId, engineSessionId) => path.join(
-      sessionDir(sessionId),
+    sessionTranscriptPath: (sessionId, engineSessionId, rootSessionId = sessionId) => path.join(
+      sessionRecordDir(sessionId, rootSessionId),
       'runtime',
       'engine',
       `${normalizePathComponent(engineSessionId, 'engine session id')}.jsonl`,

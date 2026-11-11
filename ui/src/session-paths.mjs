@@ -10,27 +10,29 @@ export function normalizeSessionDirName(sessionId) {
 export function createSessionPaths({
   DESKTOP_DATA_PATHS,
 }) {
-  function getLocalSessionDir(sessionId) {
-    return DESKTOP_DATA_PATHS.sessionDir(normalizeSessionDirName(sessionId));
+  function getLocalSessionDir(sessionId, rootSessionId = sessionId) {
+    return DESKTOP_DATA_PATHS.sessionRecordDir(normalizeSessionDirName(sessionId), normalizeSessionDirName(rootSessionId));
   }
 
-  function getLocalSessionRuntimeDir(sessionId) {
-    return DESKTOP_DATA_PATHS.sessionRuntimeDir(normalizeSessionDirName(sessionId));
+  function getLocalSessionRuntimeDir(sessionId, rootSessionId = sessionId) {
+    return DESKTOP_DATA_PATHS.sessionRuntimeDir(normalizeSessionDirName(sessionId), normalizeSessionDirName(rootSessionId));
   }
 
-  function getLocalSessionEngineDir(sessionId) {
-    return DESKTOP_DATA_PATHS.sessionEngineDir(normalizeSessionDirName(sessionId));
+  function getLocalSessionEngineDir(sessionId, rootSessionId = sessionId) {
+    return DESKTOP_DATA_PATHS.sessionEngineDir(normalizeSessionDirName(sessionId), normalizeSessionDirName(rootSessionId));
   }
 
-  function getLocalSessionResourceManifestPath(sessionId) {
-    return DESKTOP_DATA_PATHS.sessionResourceManifestPath(normalizeSessionDirName(sessionId));
+  function getLocalSessionResourceManifestPath(sessionId, rootSessionId = sessionId) {
+    return DESKTOP_DATA_PATHS.sessionResourceManifestPath(normalizeSessionDirName(sessionId), normalizeSessionDirName(rootSessionId));
   }
 
   function getLocalSessionTranscriptPath(sessionRecord) {
     if (!sessionRecord?.id || !sessionRecord?.underlyingSessionId) return null;
+    const rootSessionId = normalizeSessionDirName(sessionRecord.storageRootSessionId || sessionRecord.id);
     return DESKTOP_DATA_PATHS.sessionTranscriptPath(
       normalizeSessionDirName(sessionRecord.id),
       normalizeSessionDirName(sessionRecord.underlyingSessionId),
+      rootSessionId,
     );
   }
 

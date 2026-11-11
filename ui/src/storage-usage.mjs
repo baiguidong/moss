@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const groups = [
-  { id: 'sessions', label: '会话与文件', roots: ['sessions', 'session-env', 'shell-snapshots', 'presentations', 'history.jsonl', 'sessions.db'] },
+  { id: 'sessions', label: '会话与文件', roots: ['sessions', 'history.jsonl', 'sessions.db'] },
   { id: 'subagents', label: '子会话', roots: [] },
   { id: 'archived', label: '已归档会话', roots: [] },
   { id: 'projects', label: '项目与工作区', roots: ['projects', 'workspace', 'workspaces', 'app-projects', 'app-authoring', 'app-build', 'bundled-apps-workspace', 'artifacts', 'self-tests', 'minimal-go-agent'] },
@@ -11,9 +11,9 @@ const groups = [
   { id: 'app-data', label: '应用数据', roots: ['apps-data', 'apps-runtime', 'app-tasks', 'browser-profiles', 'dbx-mcp'] },
   { id: 'runtimes', label: '运行环境', roots: ['runtimes', 'server'] },
   { id: 'resources', label: '资源与记忆', roots: ['skills', 'assistants', 'agents', 'expert-hub', 'library', 'knowledge', 'local-kb', 'memory', 'workflows', 'plans', 'teams', 'tasks'] },
-  { id: 'cache', label: '缓存与可重建内容', roots: ['cache', '.cache', 'caches', 'apps', 'generated-apps', 'generated-app-data', 'app-authoring-previews', 'cloud-transfers', 'app-market', 'mcp', 'browser-binaries', 'whisper-models'] },
-  { id: 'history', label: '历史版本', roots: ['workspace-versions', 'turn-observations', 'preview-drafts', 'backups', 'file-history'] },
-  { id: 'logs', label: '日志', roots: ['logs', 'debug', 'traces', 'startup-perf', 'desktop-dev.log'] },
+  { id: 'cache', label: '缓存与可重建内容', roots: ['cache', '.cache', 'caches', 'apps', 'generated-apps', 'app-authoring-previews', 'cloud-transfers', 'app-market', 'mcp', 'browser-binaries', 'whisper-models'] },
+  { id: 'history', label: '历史版本', roots: ['backups'] },
+  { id: 'logs', label: '日志', roots: ['logs', 'debug', 'startup-perf', 'desktop-dev.log'] },
   { id: 'other', label: '数据库与其他', roots: [] },
 ];
 const rootGroups = new Map(groups.flatMap(group => group.roots.map(root => [root, group.id])));

@@ -6,19 +6,20 @@ const digest = value => createHash('sha256').update(value).digest('hex');
 const within = (root, file) => { const rel = path.relative(root, file); return !path.isAbsolute(rel) && rel !== '..' && !rel.startsWith('..' + path.sep); };
 
 // One draft and one writer per physical file, independent of conversation/window.
-export function createPreviewOwnership({ storageRoot, getSessionRecord, readFile, writeFile, emit, transferMs = 2000 }) {
+export function createPreviewOwnership({ storageRoot, getSessionRecord, getSessionStorageRoot = record => record?.sessionDir || storageRoot, readFile, writeFile, emit, transferMs = 2000 }) {
   const documents = new Map(), queues = new Map(), transfers = new Map(), retiredSenders = new Set();
   const binding = session => JSON.stringify([session?.id, session?.workspace, session?.agentMode, Boolean(session?.deleted)]);
   const connected = client => !retiredSenders.has(client.slice(0, client.indexOf(':')));
   const serial = (id, fn) => { const next = (queues.get(id) || Promise.resolve()).catch(() => {}).then(fn); queues.set(id, next); return next; };
-  const draftPath = id => path.join(storageRoot, id + '.json');
+  const draftPath = (sessionId, id) => path.join(getSessionStorageRoot(getSessionRecord(sessionId)), 'runtime', 'preview-drafts', id + '.json');
   const publicState = doc => ({ id: doc.id, path: doc.path, content: doc.content, originalContent: doc.originalContent,
     dirty: doc.content !== doc.originalContent, owner: doc.owner, generation: doc.generation, sequence: doc.sequence });
   async function persist(doc) {
-    await fs.mkdir(storageRoot, { recursive: true, mode: 0o700 });
-    if (doc.content === doc.originalContent) { await fs.rm(draftPath(doc.id), { force: true }); return; }
-    const temp = draftPath(doc.id) + '.' + randomUUID();
-    try { await fs.writeFile(temp, JSON.stringify({ ...publicState(doc), baseHash: doc.baseHash }), { mode: 0o600 }); await fs.rename(temp, draftPath(doc.id)); }
+    const file = draftPath(doc.ownerSessionId, doc.id);
+    await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    if (doc.content === doc.originalContent) { await fs.rm(file, { force: true }); return; }
+    const temp = file + '.' + randomUUID();
+      try { await fs.writeFile(temp, JSON.stringify({ ...publicState(doc), baseHash: doc.baseHash }), { mode: 0o600 }); await fs.rename(temp, file); }
     finally { await fs.rm(temp, { force: true }); }
   }
   const notify = doc => emit?.('preview-document:changed', publicState(doc));
@@ -56,7 +57,7 @@ export function createPreviewOwnership({ storageRoot, getSessionRecord, readFile
       await serial(id, async () => {
         if (!documents.has(id)) {
           const file = await readStable(session, target);
-          let saved; try { saved = JSON.parse(await fs.readFile(draftPath(id), 'utf8')); } catch {}
+          let saved; try { saved = JSON.parse(await fs.readFile(draftPath(sessionId, id), 'utf8')); } catch {}
           const doc = { id, path: target, content: file.content, originalContent: file.content, baseHash: file.baseHash, owner: null, generation: 0, sequence: 0 };
           if (saved?.path === target && typeof saved.content === 'string' && typeof saved.originalContent === 'string' && typeof saved.baseHash === 'string') Object.assign(doc, { content: saved.content, originalContent: saved.originalContent, baseHash: saved.baseHash });
           documents.set(id, doc);
@@ -110,8 +111,9 @@ export function createPreviewOwnership({ storageRoot, getSessionRecord, readFile
         const bytes = await fs.readFile(target);
         if (digest(bytes) !== doc.baseHash) throw new Error('文件已在外部修改。草稿已保留，请先比较磁盘内容后再保存。');
         // A recovery copy survives a failed/non-atomic filesystem write.
-        await fs.mkdir(path.join(storageRoot, 'backups'), { recursive: true, mode: 0o700 });
-        await fs.writeFile(path.join(storageRoot, 'backups', doc.id), bytes, { mode: 0o600 });
+        const backupRoot = path.join(getSessionStorageRoot(session), 'runtime', 'preview-drafts', 'backups');
+        await fs.mkdir(backupRoot, { recursive: true, mode: 0o700 });
+        await fs.writeFile(path.join(backupRoot, doc.id), bytes, { mode: 0o600 });
         validBinding(doc.ownerSessionId, doc.ownerBinding, client);
         const file = await writeFile(session, target, doc.content);
         doc.originalContent = doc.content; doc.baseHash = digest(Buffer.from(doc.content, 'utf8')); doc.sequence++;

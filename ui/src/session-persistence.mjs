@@ -159,6 +159,7 @@ export function createSessionPersistence({
       kind: DESKTOP_SESSION_KIND,
       layoutVersion: DESKTOP_SESSION_LAYOUT_VERSION,
       id: sessionRecord.id,
+      storageRootSessionId: sessionRecord.storageRootSessionId || sessionRecord.id,
       title: sessionRecord.sessionKind === 'agent-mail' && sessionRecord.title === 'Agent Mail'
         ? '协作邮箱'
         : sessionRecord.title,
@@ -212,9 +213,10 @@ export function createSessionPersistence({
 
   function persistSessionManifest(sessionRecord, isSubAgent = false) {
     try {
-      const sessionDir = getLocalSessionDir(sessionRecord.id);
+      const rootSessionId = sessionRecord.storageRootSessionId || sessionRecord.id;
+      const sessionDir = getLocalSessionDir(sessionRecord.id, rootSessionId);
       fs.mkdirSync(sessionDir, { recursive: true });
-      fs.mkdirSync(getLocalSessionEngineDir(sessionRecord.id), { recursive: true });
+      fs.mkdirSync(getLocalSessionEngineDir(sessionRecord.id, rootSessionId), { recursive: true });
       const manifestPath = path.join(sessionDir, 'session.json');
       const contents = `${JSON.stringify(toSessionManifest(sessionRecord, isSubAgent), null, 2)}\n`;
       if (!fs.existsSync(manifestPath) || fs.readFileSync(manifestPath, 'utf8') !== contents) fs.writeFileSync(manifestPath, contents, 'utf8');
@@ -316,6 +318,13 @@ export function createSessionPersistence({
   function hydratePersistedSessions() {
     const projections = new Map((loadSessionProjectionsStmt?.all() || []).map(row => [row.session_id, parsePersistedObject(row.projection_json)]));
     const rows = loadSessionsStmt.all();
+    const allRows = [...rows, ...(loadSubAgentSessionsStmt?.all?.() || [])];
+    const parentById = new Map(allRows.map(row => [row.id, row.parent_session_id || null]));
+    const rootFor = id => {
+      const seen = new Set(); let current = id;
+      while (parentById.get(current) && !seen.has(current)) { seen.add(current); current = parentById.get(current); }
+      return current || id;
+    };
     for (const row of rows) {
       const agentMode = inferPersistedSessionAgentMode(row);
       if (agentMode === 'remote-direct' && remoteSessionDeletions.has(row.underlying_session_id)) continue;
@@ -333,7 +342,8 @@ export function createSessionPersistence({
           : null,
         agentMode,
         permissionMode: normalizePermissionMode(row.permission_mode, getSettings().permissionMode),
-        sessionDir: getLocalSessionDir(row.id),
+        storageRootSessionId: rootFor(row.id),
+        sessionDir: getLocalSessionDir(row.id, rootFor(row.id)),
         isCoordinatorMode: Boolean(row.is_coordinator_mode),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -417,7 +427,8 @@ export function createSessionPersistence({
           : null,
         agentMode,
         permissionMode: normalizePermissionMode(row.permission_mode, getSettings().permissionMode),
-        sessionDir: getLocalSessionDir(row.id),
+        storageRootSessionId: rootFor(row.id),
+        sessionDir: getLocalSessionDir(row.id, rootFor(row.id)),
         isCoordinatorMode: false,
         createdAt: row.created_at,
         updatedAt: row.updated_at,

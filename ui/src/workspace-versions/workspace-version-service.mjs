@@ -43,18 +43,19 @@ export function createWorkspaceVersionService({ rootDir, gitPath = () => process
   const queues = new Map();
   const active = new Set();
 
-  async function context(workspace) {
+  async function context(workspace, ownerRoot) {
     if (typeof workspace !== 'string' || !workspace) throw new Error('当前会话没有工作区。');
     const root = await fsp.realpath(workspace);
     if (!(await fsp.stat(root)).isDirectory()) throw new Error('工作区不是目录。');
-    if (inside(storageRoot, root)) throw new Error('版本存储目录不能用作工作区。');
+    const ownerStorageRoot = path.resolve(ownerRoot || storageRoot);
+    if (inside(ownerStorageRoot, root)) throw new Error('版本存储目录不能用作工作区。');
     const key = process.platform === 'win32' ? root.toLowerCase() : root;
-    const directory = path.join(storageRoot, hash(key));
+    const directory = path.join(ownerRoot ? ownerStorageRoot : ownerStorageRoot, ...(ownerRoot ? ['versions'] : []), hash(key));
     return { root, key, directory, repo: path.join(directory, 'repository.git'), journal: path.join(directory, 'restore.json') };
   }
 
-  async function run(workspace, operation, mutation = false) {
-    const ctx = await context(workspace);
+  async function run(workspace, operation, mutation = false, ownerRoot) {
+    const ctx = await context(workspace, ownerRoot);
     const previous = queues.get(ctx.key) || Promise.resolve();
     const next = previous.catch(() => {}).then(async () => {
       if (mutation) active.add(ctx.key);
@@ -384,7 +385,7 @@ export function createWorkspaceVersionService({ rootDir, gitPath = () => process
   }
 
   return {
-    captureObservation: (workspace, { signal } = {}) => run(workspace, async ctx => {
+    captureObservation: (workspace, { signal, ownerRoot } = {}) => run(workspace, async ctx => {
       ctx.signal = signal; ctx.timeoutMs = 5000;
       signal?.throwIfAborted();
       await initialize(ctx);
@@ -413,8 +414,8 @@ export function createWorkspaceVersionService({ rootDir, gitPath = () => process
         await fsp.rm(index, { force: true });
         await fsp.rm(snapshot.staging, { recursive: true, force: true });
       }
-    }),
-    observationStats: (workspace, before, after) => run(workspace, async ctx => {
+    }, false, ownerRoot),
+    observationStats: (workspace, before, after, ownerRoot) => run(workspace, async ctx => {
       ctx.timeoutMs = 5000;
       if (!/^[a-f0-9]{40}$/.test(before) || !/^[a-f0-9]{40}$/.test(after)) throw new Error('Invalid observation');
       const raw = (await git(ctx, ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--numstat', '-z', before, after])).toString('utf8');
@@ -423,29 +424,29 @@ export function createWorkspaceVersionService({ rootDir, gitPath = () => process
         const added = record.slice(0, first), removed = record.slice(first + 1, second);
         return { path: record.slice(second + 1), additions: Number(added) || 0, deletions: Number(removed) || 0, binary: added === '-' || removed === '-' };
       });
-    }),
-    readObservationBlob: (workspace, oid) => run(workspace, async ctx => {
+    }, false, ownerRoot),
+    readObservationBlob: (workspace, oid, ownerRoot) => run(workspace, async ctx => {
       if (!/^[a-f0-9]{40}$/.test(oid)) throw new Error('Invalid observation object');
       return git(ctx, ['cat-file', 'blob', oid], { maxBytes: 1024 * 1024 });
-    }),
-    collectObservationGarbage: workspace => run(workspace, async ctx => { ctx.timeoutMs = 5000; await git(ctx, ['gc', '--auto']); }),
-    releaseObservation: (workspace, ref) => run(workspace, async ctx => {
+    }, false, ownerRoot),
+    collectObservationGarbage: (workspace, ownerRoot) => run(workspace, async ctx => { ctx.timeoutMs = 5000; await git(ctx, ['gc', '--auto']); }, false, ownerRoot),
+    releaseObservation: (workspace, ref, ownerRoot) => run(workspace, async ctx => {
       if (!/^refs\/moss\/observations\/[a-f0-9-]+$/.test(ref)) throw new Error('Invalid observation reference');
       await git(ctx, ['update-ref', '-d', ref]);
-    }),
+    }, false, ownerRoot),
     isActive(workspace) {
       try { const real = fs.realpathSync(workspace); const key = process.platform === 'win32' ? real.toLowerCase() : real; return [...active].some(root => inside(root, key) || inside(key, root)); } catch { return false; }
     },
-    status: workspace => run(workspace, status),
-    save: (workspace, label = '') => run(workspace, async ctx => {
+    status: (workspace, ownerRoot) => run(workspace, status, false, ownerRoot),
+    save: (workspace, label = '', ownerRoot) => run(workspace, async ctx => {
       if (typeof label !== 'string' || label.length > 100) throw new Error('版本名称不能超过 100 个字符。');
       const snapshot = await scan(ctx, true);
       try { await verifySnapshot(ctx, snapshot); return await storeSnapshot(ctx, snapshot, label.trim(), 'manual'); }
       finally { await fsp.rm(snapshot.staging, { recursive: true, force: true }); }
-    }, true),
-    listFiles: (workspace, id) => run(workspace, async ctx => { await requireVersion(ctx, id); return files(ctx, id); }),
-    previewRestore: (workspace, id) => run(workspace, async ctx => makePlan(ctx, id, await scan(ctx))),
-    restore: (workspace, id, token) => run(workspace, async ctx => {
+    }, true, ownerRoot),
+    listFiles: (workspace, id, ownerRoot) => run(workspace, async ctx => { await requireVersion(ctx, id); return files(ctx, id); }, false, ownerRoot),
+    previewRestore: (workspace, id, ownerRoot) => run(workspace, async ctx => makePlan(ctx, id, await scan(ctx)), false, ownerRoot),
+    restore: (workspace, id, token, ownerRoot) => run(workspace, async ctx => {
       const snapshot = await scan(ctx, true);
       try {
         const plan = await makePlan(ctx, id, snapshot);
@@ -490,14 +491,14 @@ export function createWorkspaceVersionService({ rootDir, gitPath = () => process
           throw new Error(`恢复失败，已还原恢复前的文件：${error.message}`);
         }
       } finally { await fsp.rm(snapshot.staging, { recursive: true, force: true }); }
-    }, true),
-    contextNote: workspace => run(workspace, async ctx => {
+    }, true, ownerRoot),
+    contextNote: (workspace, ownerRoot) => run(workspace, async ctx => {
       const latest = (await versions(ctx))[0];
       if (!latest) return '';
       return `工作区最近保存的版本是 ${latest.tag}${latest.alias ? `「${latest.alias}」` : ''}。当前磁盘文件可能还有后续修改。${latest.kind === 'restore' ? '用户已通过工作区版本管理恢复文件，之前对话中的文件内容可能过期；继续修改前请重新读取相关文件。' : ''}`;
-    }),
+    }, false, ownerRoot),
     // Materialize an immutable revision outside the live workspace for the existing read-only viewers.
-    previewFile: (workspace, id, filePath) => run(workspace, async ctx => {
+    previewFile: (workspace, id, filePath, ownerRoot) => run(workspace, async ctx => {
       await requireVersion(ctx, id);
       const entries = await files(ctx, id);
       if (!entries.some(file => file.path === filePath)) throw new Error('该版本中没有此文件。');
@@ -515,6 +516,6 @@ export function createWorkspaceVersionService({ rootDir, gitPath = () => process
         } finally { await fsp.rm(staging, { recursive: true, force: true }); }
       }
       return { root: previewRoot, path: path.join(previewRoot, safePath(filePath)) };
-    }),
+    }, false, ownerRoot),
   };
 }

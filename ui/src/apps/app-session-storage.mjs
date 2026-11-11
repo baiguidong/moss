@@ -16,13 +16,17 @@ export function createAppSessionStorage({ getSession, getSessions = () => [], cr
   }
   async function resolveScope(appId, instanceId, sessionId, { create = false, allowClosing = false } = {}) {
     if (![appId, instanceId, sessionId].every(safe)) throw new Error('会话存储标识无效')
-    const session = record(sessionId, allowClosing), workspace = await fs.realpath(session.workspace)
-    let directory = workspace
-    for (const part of ['artifacts', appId, sessionId]) {
+    const session = record(sessionId, allowClosing)
+    const workspace = session.workspace ? await fs.realpath(session.workspace) : null
+    const requestedRoot = session.sessionDir || path.join(workspace, '.moss-session', sessionId)
+    if (create) await fs.mkdir(requestedRoot, { recursive: true, mode: 0o700 })
+    const sessionRoot = await fs.realpath(requestedRoot)
+    let directory = sessionRoot
+    for (const part of ['apps', appId, instanceId]) {
       directory = path.join(directory, part)
       if (create) await fs.mkdir(directory, { mode: 0o700 }).catch(error => { if (error.code !== 'EEXIST') throw error })
       const resolved = await fs.realpath(directory)
-      if (!inside(workspace, resolved) || resolved !== directory) throw new Error('会话产物目录不能指向工作区以外或符号链接')
+      if (!inside(sessionRoot, resolved) || resolved !== directory) throw new Error('会话产物目录不能指向会话目录以外或符号链接')
     }
     const marker = path.join(directory, '.moss-session.json')
     if (create) await fs.writeFile(marker, JSON.stringify({ sessionId, appId, instanceId }), { flag: 'wx', mode: 0o600 }).catch(error => { if (error.code !== 'EEXIST') throw error })
@@ -45,20 +49,24 @@ export function createAppSessionStorage({ getSession, getSessions = () => [], cr
     scope,
     async forkSession(sourceId, targetId) {
       const source = record(sourceId), target = record(targetId)
-      const parent = path.join(source.workspace, 'artifacts')
+      const parent = path.join(source.sessionDir || path.join(source.workspace, '.moss-session', sourceId), 'apps')
       const apps = await fs.readdir(parent, { withFileTypes: true }).catch(error => { if (error.code === 'ENOENT') return []; throw error })
       const pairs = []
       for (const app of apps) {
         if (!app.isDirectory() || !safe(app.name)) continue
-        const owner = await fs.readFile(path.join(parent, app.name, sourceId, '.moss-session.json'), 'utf8').then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return null; throw error })
-        if (!owner || owner.sessionId !== sourceId || owner.appId !== app.name) continue
-        const original = await scope(app.name, owner.instanceId, sourceId)
-        const pending = await fs.readdir(path.join(original.directory, 'jobs', '.pending')).catch(error => { if (error.code === 'ENOENT') return []; throw error })
-        const state = await fs.readFile(path.join(original.directory, 'workspace.json'), 'utf8').then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return null; throw error })
-        if (pending.length || state?.tasks?.some(task => ['queued', 'running', 'canceling'].includes(task.status))) throw new Error('创作任务仍在运行，请完成后再分叉会话')
-        const copy = await scope(app.name, owner.instanceId, targetId, { create: true })
-        if ((await fs.readdir(copy.directory)).some(name => name !== '.moss-session.json')) throw new Error('分叉会话的产物目录已存在')
-        pairs.push({ original, copy, appId: app.name })
+        const instances = await fs.readdir(path.join(parent, app.name), { withFileTypes: true })
+        for (const instance of instances) {
+          if (!instance.isDirectory() || !safe(instance.name)) continue
+          const owner = await fs.readFile(path.join(parent, app.name, instance.name, '.moss-session.json'), 'utf8').then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return null; throw error })
+          if (!owner || owner.sessionId !== sourceId || owner.appId !== app.name) continue
+          const original = await scope(app.name, owner.instanceId, sourceId)
+          const pending = await fs.readdir(path.join(original.directory, 'jobs', '.pending')).catch(error => { if (error.code === 'ENOENT') return []; throw error })
+          const state = await fs.readFile(path.join(original.directory, 'workspace.json'), 'utf8').then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return null; throw error })
+          if (pending.length || state?.tasks?.some(task => ['queued', 'running', 'canceling'].includes(task.status))) throw new Error('创作任务仍在运行，请完成后再分叉会话')
+          const copy = await scope(app.name, owner.instanceId, targetId, { create: true })
+          if ((await fs.readdir(copy.directory)).some(name => name !== '.moss-session.json')) throw new Error('分叉会话的产物目录已存在')
+          pairs.push({ original, copy, appId: app.name })
+        }
       }
       const rewrite = value => {
         if (typeof value === 'string') {
@@ -90,11 +98,6 @@ export function createAppSessionStorage({ getSession, getSessions = () => [], cr
         } })
         await rewriteMetadata(copy.directory)
         // The ordinary managed-workspace copy also copied the old namespace.
-        const oldCopy = path.join(await fs.realpath(target.workspace), 'artifacts', appId, sourceId)
-        if (oldCopy !== original.directory) {
-          const oldOwner = await fs.readFile(path.join(oldCopy, '.moss-session.json'), 'utf8').then(JSON.parse).catch(() => null)
-          if (oldOwner?.sessionId === sourceId && oldOwner.appId === appId) await fs.rm(oldCopy, { recursive: true, force: true })
-        }
       }
       return rewrite
     },
@@ -115,14 +118,17 @@ export function createAppSessionStorage({ getSession, getSessions = () => [], cr
     },
     async removeSessionFiles(sessionId) {
       if (getSession(sessionId)?.agentMode === 'remote-direct') return
-      const session = record(sessionId, true), parent = path.join(session.workspace, 'artifacts')
+      const session = record(sessionId, true), parent = path.join(session.sessionDir || path.join(session.workspace, '.moss-session', sessionId), 'apps')
       const apps = await fs.readdir(parent, { withFileTypes: true }).catch(error => { if (error.code === 'ENOENT') return []; throw error })
       for (const app of apps) {
         if (!app.isDirectory() || !safe(app.name)) continue
-        const owner = await fs.readFile(path.join(parent, app.name, sessionId, '.moss-session.json'), 'utf8').then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return null; throw error })
-        if (!owner || owner.sessionId !== sessionId || owner.appId !== app.name) continue
-        const storage = await scope(app.name, owner.instanceId, sessionId, { allowClosing: true })
-        if (storage) await fs.rm(storage.directory, { recursive: true, force: true })
+        const instances = await fs.readdir(path.join(parent, app.name), { withFileTypes: true }).catch(() => [])
+        for (const instance of instances) {
+          if (!instance.isDirectory() || !safe(instance.name)) continue
+          const owner = await fs.readFile(path.join(parent, app.name, instance.name, '.moss-session.json'), 'utf8').then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return null; throw error })
+          if (!owner || owner.sessionId !== sessionId || owner.appId !== app.name) continue
+          await fs.rm(path.join(parent, app.name, instance.name), { recursive: true, force: true })
+        }
       }
     },
     assertSession(sessionId) { record(sessionId) },

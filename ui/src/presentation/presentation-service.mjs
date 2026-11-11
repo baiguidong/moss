@@ -10,10 +10,10 @@ const retryableResolveError = error => error?.code === 'ENOENT' || error?.code =
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 /** Host-owned resources. A transcript is never used as an imperative UI command log. */
-export function createPresentationService({ storageRoot, getSessionRecord, resolveItem, loadResource, emit, waitMs = 300 }) {
+export function createPresentationService({ storageRoot, getSessionRecord, getSessionStorageRoot = record => record?.sessionDir || storageRoot, resolveItem, loadResource, emit, waitMs = 300 }) {
   const sessions = new Map(), loading = new Map(), requests = new Map(), waiters = new Map();
   let foreground = null;
-  const fileFor = id => path.join(storageRoot, hash(id) + '.json');
+  const fileFor = id => path.join(getSessionStorageRoot(getSessionRecord(id)), 'runtime', 'presentation.json');
   const signature = record => JSON.stringify([record.agentMode, record.workspace || '', record.remoteWorkspace || '', record.agentMode === 'remote-direct' ? record.underlyingSessionId || '' : '']);
   const sourceIdentity = source => source.type === 'file' ? { type: source.type, path: source.path, remote: Boolean(source.remote) } : source;
 
@@ -66,7 +66,7 @@ export function createPresentationService({ storageRoot, getSessionRecord, resol
     // Serialize the snapshot now, not after awaiting another writer.
     const body = JSON.stringify({ schema: 'moss.presentation-session/v1', signature: value.signature, seq: value.seq, state: value.state, resources: [...value.resources.values()], results: [...value.results.values()] });
     value.writes = value.writes.catch(() => {}).then(async () => {
-      await fs.mkdir(storageRoot, { recursive: true, mode: 0o700 });
+      await fs.mkdir(path.dirname(fileFor(value.id)), { recursive: true, mode: 0o700 });
       const temporary = fileFor(value.id) + '.' + randomUUID();
       try { await fs.writeFile(temporary, body, { mode: 0o600 }); await fs.rename(temporary, fileFor(value.id)); }
       finally { await fs.rm(temporary, { force: true }); }

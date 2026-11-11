@@ -121,7 +121,7 @@ export function createSessionHistoryService({
 
     let entries;
     try {
-      entries = await fsp.readdir(getLocalSessionEngineDir(sessionRecord.id), {
+      entries = await fsp.readdir(getLocalSessionEngineDir(sessionRecord.id, sessionRecord.storageRootSessionId), {
         withFileTypes: true,
       });
     } catch {
@@ -137,6 +137,7 @@ export function createSessionHistoryService({
           const transcriptPath = DESKTOP_DATA_PATHS.sessionTranscriptPath(
             normalizeSessionDirName(sessionRecord.id),
             engineSessionId,
+            sessionRecord.storageRootSessionId,
           );
           const stats = await fsp.stat(transcriptPath);
           return { engineSessionId, modifiedAt: stats.mtimeMs };
