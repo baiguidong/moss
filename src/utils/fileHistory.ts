@@ -17,6 +17,7 @@ import { dirname, isAbsolute, join, relative } from 'path'
 import {
   getIsNonInteractiveSession,
   getOriginalCwd,
+  getSessionEngineDir,
   getSessionId,
 } from 'src/bootstrap/state.js'
 import { logEvent } from 'src/services/analytics/index.js'
@@ -827,6 +828,15 @@ function getBackupFileName(filePath: string, version: number): string {
 
 function resolveBackupPath(backupFileName: string, sessionId?: string): string {
   const configDir = getMossConfigHomeDir()
+  const sessionEngineDir = getSessionEngineDir()
+  if (sessionEngineDir) {
+    return join(
+      sessionEngineDir,
+      'file-history',
+      sessionId || getSessionId(),
+      backupFileName,
+    )
+  }
   return join(
     configDir,
     'file-history',
@@ -1043,13 +1053,10 @@ export async function copyFileHistoryForResume(log: LogOption): Promise<void> {
   }
 
   try {
-    // All backups share the same directory: {configDir}/file-history/{sessionId}/
+    // Backups are scoped to the current session runtime; the global path is
+    // retained only for non-desktop CLI sessions without a session engine.
     // Create it once upfront instead of once per backup file
-    const newBackupDir = join(
-      getMossConfigHomeDir(),
-      'file-history',
-      sessionId,
-    )
+    const newBackupDir = dirname(resolveBackupPath('__directory_probe__', sessionId))
     await mkdir(newBackupDir, { recursive: true })
 
     // Migrate all backup files from the previous session to current session.
