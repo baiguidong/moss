@@ -6,7 +6,7 @@ import { isWebUI } from '@/lib/host-environment';
 import { cleanIpcErrorMessage } from '@/lib/app-notifications';
 import type { ArchivedChat, StorageCacheCleanupResult, StorageCleanupResult, StorageOverview, StorageReview } from '../types';
 
-const colors: Record<string, string> = { sessions: 'bg-blue-400', subagents: 'bg-cyan-400', archived: 'bg-sky-600', projects: 'bg-indigo-400', apps: 'bg-violet-400', 'app-data': 'bg-fuchsia-400', runtimes: 'bg-teal-400', resources: 'bg-emerald-400', cache: 'bg-amber-400', history: 'bg-orange-400', logs: 'bg-slate-400', other: 'bg-zinc-300 dark:bg-zinc-600' };
+const colors: Record<string, string> = { sessions: 'bg-blue-400', subagents: 'bg-cyan-400', archived: 'bg-sky-600', projects: 'bg-indigo-400', apps: 'bg-violet-400', 'app-data': 'bg-fuchsia-400', 'app-state': 'bg-purple-400', runtimes: 'bg-teal-400', resources: 'bg-emerald-400', cache: 'bg-amber-400', history: 'bg-orange-400', logs: 'bg-slate-400', other: 'bg-zinc-300 dark:bg-zinc-600' };
 const selectClass = 'h-9 rounded-lg border border-border bg-background px-3 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring';
 function bytes(value: number) {
   if (!value) return '0 B';

@@ -9,6 +9,20 @@ const groups = [
   // App packages are downloaded/rebuildable artifacts. Keep them in the cache
   // category so storage users can distinguish them from App-owned data.
   { id: 'app-data', label: '应用数据', roots: ['apps-data', 'apps-runtime', 'app-tasks', 'browser-profiles', 'dbx-mcp'] },
+  // App installation and policy state is small, durable Core state. It is
+  // separate from App-owned data and from rebuildable package/cache content.
+  // These entries are currently kept at the Moss root for compatibility; the
+  // storage view groups them together so the layout remains understandable.
+  { id: 'app-state', label: '应用状态', roots: [
+    'app-preferences',
+    'app-registry.json',
+    'app-installation-revisions.json',
+    'app-runtime-state.json',
+    'app-tool-call-policies.json',
+    'app-tool-scopes.json',
+    'app-capability-key',
+    'builtin-apps.json',
+  ] },
   { id: 'runtimes', label: '运行环境', roots: ['runtimes', 'server'] },
   { id: 'resources', label: '资源与记忆', roots: ['skills', 'assistants', 'agents', 'expert-hub', 'library', 'memory', 'workflows', 'plans', 'teams', 'tasks'] },
   { id: 'cache', label: '缓存与可重建内容', roots: ['cache', '.cache', 'caches', 'apps', 'app-authoring-previews', 'cloud-transfers', 'app-market', 'mcp', 'browser-binaries', 'whisper-models'] },
@@ -17,6 +31,15 @@ const groups = [
   { id: 'other', label: '数据库与其他', roots: [] },
 ];
 const rootGroups = new Map(groups.flatMap(group => group.roots.map(root => [root, group.id])));
+const rootFiles = new Set([
+  'app-registry.json',
+  'app-installation-revisions.json',
+  'app-runtime-state.json',
+  'app-tool-call-policies.json',
+  'app-tool-scopes.json',
+  'app-capability-key',
+  'builtin-apps.json',
+]);
 
 function classify(relative, sessionKinds) {
   const parts = relative.split(path.sep), top = parts[0];
@@ -49,7 +72,9 @@ export async function measureStorage(root, { fileSystem = fs, concurrency = 32, 
     // The category total includes directory metadata, but the UI should show
     // concrete children rather than an extra aggregate row such as `apps` or
     // `apps-data`.
-    if (!relative.includes(path.sep) && rootGroups.has(relative)) return { category, entry: null };
+    // Top-level directories are represented by their concrete children. A
+    // top-level state file is itself a concrete entry and must remain visible.
+    if (!relative.includes(path.sep) && rootGroups.has(relative) && !rootFiles.has(relative)) return { category, entry: null };
     if (!category.entries.has(entry)) category.entries.set(entry, { path: entry, bytes: 0, complete: true });
     return { category, entry: category.entries.get(entry) };
   }

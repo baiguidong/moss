@@ -71,3 +71,17 @@ test('keeps app-owned DBX data with the app and exposes legacy roots separately'
   assert.equal(result.categories.find(item => item.id === 'projects').entries[0].path, 'minimal-go-agent');
   assert.equal(result.categories.find(item => item.id === 'other').entries[0].path, 'server_bgd');
 });
+
+test('groups durable App state files and preferences separately from App data', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-usage-state-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.mkdir(path.join(root, 'app-preferences'), { recursive: true });
+  await fs.writeFile(path.join(root, 'app-preferences', 'desktop.json'), 'prefs');
+  await fs.writeFile(path.join(root, 'app-registry.json'), 'registry');
+  await fs.writeFile(path.join(root, 'app-runtime-state.json'), 'runtime');
+  await fs.writeFile(path.join(root, 'settings.json'), 'core settings');
+  const result = await measureStorage(root);
+  const state = result.categories.find(item => item.id === 'app-state');
+  assert.deepEqual(state.entries.map(item => item.path), ['app-preferences', 'app-registry.json', 'app-runtime-state.json']);
+  assert.equal(result.categories.find(item => item.id === 'other').entries[0].path, 'settings.json');
+});
