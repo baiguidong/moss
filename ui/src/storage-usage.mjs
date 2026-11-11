@@ -40,6 +40,10 @@ const rootFiles = new Set([
   'app-capability-key',
   'builtin-apps.json',
 ]);
+// Finder metadata is not Moss-owned content. Counting it makes every folder
+// touched in Finder look like an App data entry and adds noise to storage
+// review, especially below apps-data and sessions.
+const ignoredFiles = new Set(['.DS_Store']);
 
 function classify(relative, sessionKinds) {
   const parts = relative.split(path.sep), top = parts[0];
@@ -76,7 +80,7 @@ export async function measureStorage(root, { fileSystem = fs, concurrency = 32, 
     // Top-level directories are represented by their concrete children. A
     // top-level state file is itself a concrete entry and must remain visible.
     if (!relative.includes(path.sep) && rootGroups.has(relative) && !rootFiles.has(relative)) return { category, entry: null };
-    if (!category.entries.has(entry)) category.entries.set(entry, { path: entry, bytes: 0, complete: true });
+    if (!category.entries.has(entry)) category.entries.set(entry, { path: entry, bytes: 0, complete: true, hasContent: false });
     return { category, entry: category.entries.get(entry) };
   }
   await new Promise(resolve => {
@@ -86,6 +90,7 @@ export async function measureStorage(root, { fileSystem = fs, concurrency = 32, 
         active++;
         void (async () => {
           try {
+            if (ignoredFiles.has(path.basename(target))) return;
             const stat = await fileSystem.lstat(target);
             const { category, entry } = entryFor(target);
             let bytes = typeof stat.blocks === 'number' ? stat.blocks * 512 : stat.size;
@@ -95,6 +100,7 @@ export async function measureStorage(root, { fileSystem = fs, concurrency = 32, 
               if (inodes.has(identity)) bytes = 0;
               else inodes.add(identity);
             }
+            if (entry && (!stat.isDirectory() || stat.isSymbolicLink())) entry.hasContent = true;
             category.bytes += bytes; if (entry) entry.bytes += bytes;
             if (stat.isDirectory() && !stat.isSymbolicLink()) {
               const names = await fileSystem.readdir(target);
@@ -117,7 +123,10 @@ export async function measureStorage(root, { fileSystem = fs, concurrency = 32, 
     pump();
   });
   const result = [...categories.values()].map(category => ({ ...category,
-    entries: [...category.entries.values()].sort((a, b) => b.bytes - a.bytes || a.path.localeCompare(b.path)),
+    // Directory allocation alone is not useful when reviewing storage. Keep
+    // category totals intact, but omit empty App/runtime/session entries.
+    entries: [...category.entries.values()].filter(entry => entry.hasContent).map(({ hasContent, ...entry }) => entry)
+      .sort((a, b) => b.bytes - a.bytes || a.path.localeCompare(b.path)),
   }));
   return { root, categories: result, totalBytes: result.reduce((sum, item) => sum + item.bytes, 0),
     complete: errorCount === 0, errorCount, sizeKind: allocated ? 'allocated' : 'logical' };

@@ -9,10 +9,11 @@ import { measureStorage } from '../src/storage-usage.mjs';
 test('complete allocation agrees with du, includes hidden directories, excludes external links and deduplicates hardlinks', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-usage-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
-  const names = ['apps/demo/node_modules/cache/index.js', 'apps-data/demo/Cache/data', 'apps-data/large/file', 'apps-data/small/file', '.cache/index', 'runtimes/python/bin', 'sessions/normal/transcript', 'sessions/child/transcript', 'sessions/archived/transcript'];
+  const names = ['apps/demo/node_modules/cache/index.js', 'apps-data/demo/Cache/data', 'apps-data/large/file', 'apps-data/small/file', 'apps-data/empty/.keep-dir', '.cache/index', 'runtimes/python/bin', 'sessions/normal/transcript', 'sessions/child/transcript', 'sessions/archived/transcript'];
   for (const name of names) { await fs.mkdir(path.dirname(path.join(root, name)), { recursive: true }); await fs.writeFile(path.join(root, name), Buffer.alloc(4096)); }
   await fs.writeFile(path.join(root, 'apps-data/large/file'), Buffer.alloc(8192));
   await fs.writeFile(path.join(root, 'apps-data/small/file'), Buffer.alloc(1024));
+  await fs.rm(path.join(root, 'apps-data/empty/.keep-dir'));
   await fs.link(path.join(root, names[0]), path.join(root, 'apps/demo/hardlink'));
   await fs.symlink(os.homedir(), path.join(root, 'external'));
   const result = await measureStorage(root, { sessionKinds: new Map([['normal', 'sessions'], ['child', 'subagents'], ['archived', 'archived']]) });
@@ -23,6 +24,18 @@ test('complete allocation agrees with du, includes hidden directories, excludes 
   assert.deepEqual(caches.entries.map(item => item.path).sort(), ['.cache', 'apps/demo']);
   assert.deepEqual(result.categories.find(item => item.id === 'app-data').entries.map(item => item.path), ['apps-data/large', 'apps-data/demo', 'apps-data/small']);
   for (const id of ['cache', 'runtimes', 'sessions', 'subagents', 'archived']) assert.ok(result.categories.find(item => item.id === id).bytes >= 4096);
+});
+
+test('omits empty App directories and Finder metadata from concrete entries', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-usage-empty-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.mkdir(path.join(root, 'apps-data', 'empty'), { recursive: true });
+  await fs.mkdir(path.join(root, 'apps-data', 'real'), { recursive: true });
+  await fs.writeFile(path.join(root, 'apps-data', 'real', 'state.json'), 'state');
+  await fs.writeFile(path.join(root, '.DS_Store'), 'finder');
+  const result = await measureStorage(root);
+  assert.deepEqual(result.categories.find(item => item.id === 'app-data').entries.map(item => item.path), ['apps-data/real']);
+  assert.equal(result.categories.find(item => item.id === 'other').entries.length, 0);
 });
 
 test('large app trees do not exhaust a scan budget before later categories', async () => {
