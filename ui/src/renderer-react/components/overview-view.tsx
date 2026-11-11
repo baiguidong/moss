@@ -16,8 +16,7 @@ import { Button } from "@/components/ui/button";
 import { MemoryOverview, type MemoryScope } from "@/components/memory-overview";
 import { ResourceMonitorView } from "@/components/resource-monitor-view";
 import { cn } from "@/lib/utils";
-import { mergeUsageDaily } from "@/lib/usage-overview";
-import type { CloudUsageOverview, UsageDailySummary, UsageOverview } from "../types";
+import type { UsageDailySummary, UsageOverview } from "../types";
 
 type ActivityMode = "daily" | "weekly" | "cumulative";
 type OverviewTab = "usage" | "resources" | MemoryScope;
@@ -309,13 +308,11 @@ function UsageStatsRow({
   title,
   totalLabel,
   source,
-  description,
   onRefresh,
 }: {
   title: string;
   totalLabel: string;
-  source: UsageSource<Pick<CloudUsageOverview, "totals">>;
-  description?: string;
+  source: UsageSource<UsageOverview>;
   onRefresh: () => void;
 }) {
   const totals = source.data?.totals;
@@ -362,7 +359,7 @@ function UsageStatsRow({
             <span>{title}用量暂时不可用</span>
             <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" disabled={source.loading} onClick={onRefresh}>重试</Button>
           </div>
-        ) : description ? <p className="text-xs text-muted-foreground" role="status">{description}</p> : null}
+        ) : null}
       </div>
       {source.loading && !source.data ? (
         <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5" aria-label={`正在加载${title}用量`}>
@@ -379,66 +376,39 @@ function UsageStatsRow({
   );
 }
 
-export function UsageOverviewContent({ local, cloud, cloudEnabled = true, onRefresh }: {
+export function UsageOverviewContent({ local, onRefresh }: {
   local: UsageSource<UsageOverview>;
-  cloud: UsageSource<CloudUsageOverview>;
-  cloudEnabled?: boolean;
   onRefresh: () => void;
 }) {
-  const showCloud = cloudEnabled;
-  const daily = React.useMemo(() => mergeUsageDaily(local.data?.daily ?? [], showCloud ? cloud.data?.daily ?? [] : []), [local.data, cloud.data, showCloud]);
-  const generatedAt = Math.max(local.data?.generatedAt ?? 0, showCloud ? cloud.data?.generatedAt ?? 0 : 0);
-  // Keep the cloud's current day visible even when its timezone is ahead of this computer.
-  const now = Math.max(generatedAt, showCloud && cloud.data ? Date.parse(`${cloud.data.today}T12:00:00`) : 0);
-  const sources = [local.data && "本机", showCloud && cloud.data && "云端"].filter(Boolean).join(" + ");
-  const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const timezoneNote = showCloud && local.data && cloud.data && localTimezone !== cloud.data.timezone
-    ? ` · 按各自日期合并（本机 ${localTimezone}，云端 ${cloud.data.timezone}）`
-    : "";
-
   return (
     <>
       <UsageStatsRow title="本地电脑" totalLabel="本机累计 Token" source={local} onRefresh={onRefresh} />
-      {showCloud && <UsageStatsRow
-        title="云端"
-        totalLabel="云端累计 Token"
-        source={cloud}
-        description={cloud.data ? `当前账号 · 按 ${cloud.data.timezone} 统计` : cloud.loading ? "正在获取当前账号的用量…" : "连接 Moss Server 后查看当前账号的用量"}
-        onRefresh={onRefresh}
-      />}
-      {(local.data || showCloud && cloud.data) && <ActivityChart data={daily} now={now} description={`${sources}${timezoneNote}`} />}
+      {local.data && <ActivityChart data={local.data.daily} now={local.data.generatedAt} description="本机" />}
     </>
   );
 }
 
-export function OverviewView({ cloudEnabled = false }: { cloudEnabled?: boolean }) {
+export function OverviewView() {
   const [activeTab, setActiveTab] = React.useState<OverviewTab>("usage");
   const [local, setLocal] = React.useState<UsageSource<UsageOverview>>({ data: null, loading: true, error: "" });
-  const [cloud, setCloud] = React.useState<UsageSource<CloudUsageOverview>>({ data: null, loading: true, error: "" });
   const requestVersion = React.useRef(0);
 
-  const loadOverview = React.useCallback(async (resetCloud = false) => {
+  const loadOverview = React.useCallback(async () => {
     const version = ++requestVersion.current;
-    const load = async <T,>(request: () => Promise<T | null>, setSource: React.Dispatch<React.SetStateAction<UsageSource<T>>>, reset = false) => {
-      setSource(previous => ({ data: reset ? null : previous.data, loading: true, error: "" }));
-      try {
-        const data = await request();
-        if (version === requestVersion.current) setSource({ data, loading: false, error: "" });
-      } catch (error) {
-        if (version === requestVersion.current) setSource({ data: null, loading: false, error: error instanceof Error ? error.message : String(error) });
-      }
-    };
-    await Promise.all([
-      load(() => window.agentDesktop.usage.getOverview(), setLocal),
-      ...(cloudEnabled ? [load(() => window.agentDesktop.usage.getCloudOverview(), setCloud, resetCloud)] : []),
-    ]);
-  }, [cloudEnabled]);
+    setLocal(previous => ({ ...previous, loading: true, error: "" }));
+    try {
+      const data = await window.agentDesktop.usage.getOverview();
+      if (version === requestVersion.current) setLocal({ data, loading: false, error: "" });
+    } catch (error) {
+      if (version === requestVersion.current) setLocal({ data: null, loading: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  }, []);
 
   React.useEffect(() => {
     if (activeTab !== 'usage') return;
     void loadOverview();
     const interval = window.setInterval(() => void loadOverview(), 60_000);
-    const offSettingsChanged = window.agentDesktop.onSettingsChanged(() => void loadOverview(true));
+    const offSettingsChanged = window.agentDesktop.onSettingsChanged(() => void loadOverview());
     return () => {
       requestVersion.current += 1;
       window.clearInterval(interval);
@@ -446,8 +416,8 @@ export function OverviewView({ cloudEnabled = false }: { cloudEnabled?: boolean 
     };
   }, [activeTab, loadOverview]);
 
-  const loading = local.loading || (cloudEnabled && cloud.loading);
-  const generatedAt = Math.max(local.data?.generatedAt ?? 0, cloudEnabled ? cloud.data?.generatedAt ?? 0 : 0);
+  const loading = local.loading;
+  const generatedAt = local.data?.generatedAt ?? 0;
 
   return (
     <main className="h-full min-h-0 overflow-y-auto bg-background">
@@ -485,7 +455,7 @@ export function OverviewView({ cloudEnabled = false }: { cloudEnabled?: boolean 
 
         {activeTab === "resources" ? <ResourceMonitorView /> : activeTab !== "usage" ? (
           <MemoryOverview scope={activeTab} />
-        ) : <UsageOverviewContent local={local} cloud={cloud} cloudEnabled={cloudEnabled} onRefresh={() => void loadOverview()} />}
+        ) : <UsageOverviewContent local={local} onRefresh={() => void loadOverview()} />}
       </div>
     </main>
   );

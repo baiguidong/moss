@@ -7,7 +7,6 @@ import {
   ChevronDown,
   ChevronRight,
   Clock3,
-  Cloud,
   FileText,
   FolderKanban,
   HardDrive,
@@ -27,13 +26,12 @@ import type {
   MemoryGlobalEntry,
   MemoryProjectEntry,
   MemoryProjectHistoryEntry,
-  MemorySource,
 } from "../types";
 
 export type MemoryScope = "global" | "project";
 
 type MemorySelection =
-  | { scope: "global"; path: string; source?: MemorySource }
+  | { scope: "global"; path: string; source: "local" }
   | { scope: "project"; projectId: string; kind: "overview" }
   | { scope: "project"; projectId: string; kind: "history"; sessionId: string };
 
@@ -46,13 +44,8 @@ const TYPE_LABELS: Record<string, string> = {
   memory: "长期记忆",
 };
 
-const SOURCE_LABELS: Record<MemorySource, string> = {
-  local: "本地全局记忆",
-  remote: "云端全局记忆",
-};
-
-function entriesForSource(entries: MemoryGlobalEntry[], source: MemorySource): MemoryGlobalEntry[] {
-  return entries.filter((entry) => (entry.source || "local") === source);
+function localEntries(entries: MemoryGlobalEntry[]): MemoryGlobalEntry[] {
+  return entries.filter((entry) => (entry.source || "local") === "local");
 }
 
 function selectionKey(selection: MemorySelection | null): string {
@@ -63,13 +56,13 @@ function selectionKey(selection: MemorySelection | null): string {
     : `project:${selection.projectId}:history:${selection.sessionId}`;
 }
 
-export function defaultSelection(catalog: MemoryCatalog, scope: MemoryScope, source: MemorySource = "local"): MemorySelection | null {
+export function defaultSelection(catalog: MemoryCatalog, scope: MemoryScope): MemorySelection | null {
   if (scope === "global") {
-    const entries = entriesForSource(catalog.global.files, source).filter((entry) => entry.readable !== false);
+    const entries = localEntries(catalog.global.files).filter((entry) => entry.readable !== false);
     const first = entries.find((entry) => entry.isIndex)
       || entries.find((entry) => entry.indexed)
       || entries[0];
-    return first ? { scope: "global", path: first.path, source } : null;
+    return first ? { scope: "global", path: first.path, source: "local" } : null;
   }
   if (scope === "project") {
     const withOverview = catalog.projects.find((project) => project.hasOverview);
@@ -85,11 +78,10 @@ export function defaultSelection(catalog: MemoryCatalog, scope: MemoryScope, sou
   return null;
 }
 
-function selectionExists(catalog: MemoryCatalog, selection: MemorySelection | null, scope: MemoryScope, source: MemorySource): boolean {
+function selectionExists(catalog: MemoryCatalog, selection: MemorySelection | null, scope: MemoryScope): boolean {
   if (!selection || selection.scope !== scope) return false;
   if (selection.scope === "global") {
-    if ((selection.source || "local") !== source) return false;
-    return catalog.global.files.some((entry) => (
+    return localEntries(catalog.global.files).some((entry) => (
       entry.readable !== false
       && entry.path === selection.path
       && (entry.source || "local") === (selection.source || "local")
@@ -191,23 +183,20 @@ function CatalogEmpty({ icon, title }: { icon: React.ReactNode; title: string })
 
 export function GlobalList({
   entries,
-  source,
   selected,
   queryActive = false,
-  emptyTitle,
   onSelect,
 }: {
   entries: MemoryGlobalEntry[];
-  source: MemorySource;
   selected: string;
   queryActive?: boolean;
-  emptyTitle?: string;
   onSelect: (selection: MemorySelection) => void;
 }) {
   const [showUnindexed, setShowUnindexed] = React.useState(false);
-  const sourceEntries = entriesForSource(entries, source);
+  const source = "local";
+  const sourceEntries = localEntries(entries);
   if (sourceEntries.length === 0) {
-    return <CatalogEmpty icon={source === "remote" ? <Cloud className="h-4 w-4" /> : <HardDrive className="h-4 w-4" />} title={emptyTitle || (queryActive ? "没有匹配的记忆" : `暂无${SOURCE_LABELS[source]}`)} />;
+    return <CatalogEmpty icon={<HardDrive className="h-4 w-4" />} title={queryActive ? "没有匹配的记忆" : "暂无本地全局记忆"} />;
   }
   const indexEntries = sourceEntries.filter((entry) => entry.isIndex);
   const indexedEntries = sourceEntries.filter((entry) => entry.indexed && !entry.isIndex);
@@ -217,14 +206,14 @@ export function GlobalList({
 
   return (
     <div className="space-y-3">
-      <section className="border-b border-border/70 pb-3" aria-label={`${SOURCE_LABELS[source]}索引`}>
+      <section className="border-b border-border/70 pb-3" aria-label="本地全局记忆索引">
         {indexEntries.map((entry) => (
           <MemoryListButton
             key={entry.id}
             active={selected === `global:${source}:${entry.path}`}
             icon={<BookOpenText className="h-4 w-4" />}
             title={entry.path}
-            description={`${SOURCE_LABELS[source]}索引`}
+            description="本地全局记忆索引"
             meta="记忆索引"
             disabled={!entry.readable}
             onClick={() => onSelect({ scope: "global", path: entry.path, source })}
@@ -288,37 +277,6 @@ export function GlobalList({
           ) : null}
         </section>
       ) : null}
-    </div>
-  );
-}
-
-export function GlobalMemorySourceTabs({ source, onChange }: {
-  source: MemorySource;
-  onChange: (source: MemorySource) => void;
-}) {
-  return (
-    <div className="mt-6 inline-flex max-w-full gap-1 overflow-x-auto rounded-md border border-border/80 bg-muted/40 p-1" role="tablist" aria-label="全局记忆来源">
-      {(["local", "remote"] as const).map((value) => {
-        const Icon = value === "remote" ? Cloud : HardDrive;
-        return (
-          <button
-            key={value}
-            type="button"
-            role="tab"
-            aria-selected={source === value}
-            onClick={() => onChange(value)}
-            className={cn(
-              "flex h-10 shrink-0 items-center gap-2 rounded-md border px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-              source === value
-                ? "border-primary/50 bg-primary/10 font-semibold text-primary shadow-sm"
-                : "border-transparent text-muted-foreground hover:bg-muted/70 hover:text-foreground",
-            )}
-          >
-            <Icon className="h-4 w-4" aria-hidden="true" />
-            {SOURCE_LABELS[value]}
-          </button>
-        );
-      })}
     </div>
   );
 }
@@ -389,7 +347,6 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState("");
   const [query, setQuery] = React.useState("");
-  const [globalSource, setGlobalSource] = React.useState<MemorySource>("local");
   const [requestedSelection, setSelection] = React.useState<MemorySelection | null>(null);
   const [detail, setDetail] = React.useState<MemoryEntryContent | null>(null);
   const [detailLoading, setDetailLoading] = React.useState(false);
@@ -397,10 +354,10 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
   const detailRequestRef = React.useRef(0);
   const selection = React.useMemo(() => {
     if (!catalog) return null;
-    return selectionExists(catalog, requestedSelection, scope, globalSource)
+    return selectionExists(catalog, requestedSelection, scope)
       ? requestedSelection
-      : defaultSelection(catalog, scope, globalSource);
-  }, [catalog, requestedSelection, scope, globalSource]);
+      : defaultSelection(catalog, scope);
+  }, [catalog, requestedSelection, scope]);
 
   const loadCatalog = React.useCallback(async () => {
     setLoading(true);
@@ -421,7 +378,7 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
 
   React.useEffect(() => {
     setQuery("");
-  }, [scope, globalSource]);
+  }, [scope]);
 
   React.useEffect(() => {
     const requestId = ++detailRequestRef.current;
@@ -451,8 +408,8 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
 
   const normalizedQuery = query.trim();
   const sourceGlobalEntries = React.useMemo(() => (
-    entriesForSource(catalog?.global.files || [], globalSource)
-  ), [catalog, globalSource]);
+    localEntries(catalog?.global.files || [])
+  ), [catalog]);
   const globalEntries = React.useMemo(() => {
     if (!normalizedQuery) return sourceGlobalEntries;
     return sourceGlobalEntries.filter((entry) => entry.isIndex
@@ -487,18 +444,11 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
   const indexedGlobalEntries = sourceGlobalEntries.filter((entry) => entry.indexed && !entry.isIndex);
   const unindexedGlobalEntries = sourceGlobalEntries.filter((entry) => !entry.indexed && !entry.isIndex);
   const globalLatest = latestTimestamp(sourceGlobalEntries.filter((entry) => entry.indexed || entry.isIndex).map((entry) => entry.updatedAt));
-  const globalRootLabel = globalSource === "remote"
-    ? catalog?.global.remoteRootLabel || "Moss Server / memory"
-    : catalog?.global.rootLabel || "~/.moss/memory";
-  const remoteUnavailable = globalSource === "remote" && catalog?.global.remoteStatus
-    && catalog.global.remoteStatus !== "ready";
-  const globalEmptyTitle = remoteUnavailable
-    ? catalog.global.remoteStatus === "error" ? "云端记忆加载失败，请刷新重试" : "尚未连接云端记忆，请在设置中连接 Moss Server"
-    : undefined;
+  const globalRootLabel = catalog?.global.rootLabel || "~/.moss/memory";
   const projectLatest = latestTimestamp(catalog?.projects.map((entry) => entry.memoryUpdatedAt) || []);
   const metrics = scope === "global" ? [
-    { label: "有效记忆", value: remoteUnavailable ? "—" : String(indexedGlobalEntries.length), detail: "仅统计当前来源 MEMORY.md 已索引内容" },
-    { label: "未索引文件", value: remoteUnavailable ? "—" : String(unindexedGlobalEntries.length), detail: "当前来源中未被 MEMORY.md 引用的文件" },
+    { label: "有效记忆", value: String(indexedGlobalEntries.length), detail: "仅统计本地 MEMORY.md 已索引内容" },
+    { label: "未索引文件", value: String(unindexedGlobalEntries.length), detail: "本地未被 MEMORY.md 引用的文件" },
     { label: "最近更新", value: globalLatest ? formatDateTime(globalLatest) : "暂无", detail: globalRootLabel },
   ] : [
     { label: "已有沉淀的项目", value: String(catalog?.projects.filter((entry) => entry.hasOverview || entry.history.length > 0).length || 0), detail: `${catalog?.projects.length || 0} 个 Moss 项目` },
@@ -529,17 +479,6 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
 
   return (
     <div className="pb-8">
-      {scope === "global" ? (
-        <GlobalMemorySourceTabs source={globalSource} onChange={(source) => {
-          if (source === globalSource) return;
-          ++detailRequestRef.current;
-          setGlobalSource(source);
-          setQuery("");
-          setDetail(null);
-          setDetailError("");
-          setSelection(null);
-        }} />
-      ) : null}
       <div className="mt-6 grid gap-3 sm:grid-cols-3">
         {loading && !catalog
           ? Array.from({ length: 3 }, (_, index) => <div key={index} className="h-[104px] animate-pulse rounded-md border border-border/70 bg-muted/50" />)
@@ -555,7 +494,7 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
                 <Input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder={scope === "global" ? `搜索${SOURCE_LABELS[globalSource]}` : "搜索项目沉淀"}
+                  placeholder={scope === "global" ? "搜索本地全局记忆" : "搜索项目沉淀"}
                   aria-label="搜索记忆"
                   className="bg-background pl-9"
                 />
@@ -564,12 +503,9 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
             <div className="min-h-0 flex-1 overflow-y-auto p-2.5 lg:max-h-[650px]">
               {scope === "global" ? (
                 <GlobalList
-                  key={globalSource}
                   entries={globalEntries}
-                  source={globalSource}
                   selected={selectedKey}
                   queryActive={Boolean(normalizedQuery)}
-                  emptyTitle={globalEmptyTitle}
                   onSelect={setSelection}
                 />
               ) : (
@@ -584,7 +520,7 @@ export function MemoryOverview({ scope }: { scope: MemoryScope }) {
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <h2 className="truncate text-base font-semibold text-foreground">{detailTitle}</h2>
                   <Badge variant="outline">
-                    {scope === "global" ? SOURCE_LABELS[globalSource] : "项目记忆"}
+                    {scope === "global" ? "本地全局记忆" : "项目记忆"}
                   </Badge>
                   {selectedGlobal ? <Badge variant="secondary">{TYPE_LABELS[selectedGlobal.type] || selectedGlobal.type}</Badge> : null}
                   {selectedGlobal && !selectedGlobal.indexed ? <Badge variant="outline">未索引</Badge> : null}

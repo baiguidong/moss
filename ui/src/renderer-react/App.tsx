@@ -3300,7 +3300,7 @@ export default function App() {
               />
             )
           ) : activeView === 'overview' ? (
-            <OverviewView cloudEnabled={desktopSettings?.enterpriseEnabled === true && Boolean(desktopSettings.enterpriseAccountServerUrl?.trim())} />
+            <OverviewView />
           ) : activeView === 'cron' ? (
             <CronView onOpenSession={handleSelectSession} enterpriseEnabled={false} />
           ) : activeView === 'drafts' ? (
