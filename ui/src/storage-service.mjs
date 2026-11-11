@@ -252,7 +252,7 @@ export function createStorageService({ root, getRecords, isBusy, removeSession, 
       // These roots contain downloaded/generated material only. Current App
       // packages and App-owned data are deliberately excluded.
       await clearOldAppVersions(result);
-      for (const name of ['generated-apps', 'app-authoring-previews', 'cloud-transfers', 'cache', '.cache', 'caches', 'browser-binaries', 'whisper-models', 'mcp/python']) {
+      for (const name of ['generated-apps', 'app-authoring-previews', 'cloud-transfers', 'expert-hub', 'cache', '.cache', 'caches', 'browser-binaries', 'whisper-models', 'mcp/python']) {
         try { await removeCachePath(path.join(root, name), result); } catch { result.failed++; }
       }
       // The marketplace catalog is disposable; the bundled catalog remains in

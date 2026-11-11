@@ -85,3 +85,13 @@ test('groups durable App state files and preferences separately from App data', 
   assert.deepEqual(state.entries.map(item => item.path), ['app-preferences', 'app-registry.json', 'app-runtime-state.json']);
   assert.equal(result.categories.find(item => item.id === 'other').entries[0].path, 'settings.json');
 });
+
+test('classifies the Expert Hub download cache as rebuildable cache', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-usage-expert-cache-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.mkdir(path.join(root, 'expert-hub', 'cache', 'bundles'), { recursive: true });
+  await fs.writeFile(path.join(root, 'expert-hub', 'cache', 'bundles', 'expert.tar.gz'), 'bundle');
+  const result = await measureStorage(root);
+  assert.deepEqual(result.categories.find(item => item.id === 'cache').entries.map(item => item.path), ['expert-hub']);
+  assert.equal(result.categories.find(item => item.id === 'resources').entries.length, 0);
+});
