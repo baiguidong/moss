@@ -5,14 +5,14 @@ const groups = [
   { id: 'sessions', label: '会话与文件', roots: ['sessions', 'history.jsonl', 'sessions.db'] },
   { id: 'subagents', label: '子会话', roots: [] },
   { id: 'archived', label: '已归档会话', roots: [] },
-  { id: 'projects', label: '项目与工作区', roots: ['projects', 'workspace', 'workspaces', 'app-authoring'] },
+  { id: 'projects', label: '项目与工作区', roots: ['projects', 'workspace', 'workspaces', 'app-authoring', 'minimal-go-agent'] },
   // App packages are downloaded/rebuildable artifacts. Keep them in the cache
   // category so storage users can distinguish them from App-owned data.
   { id: 'app-data', label: '应用数据', roots: ['apps-data', 'apps-runtime', 'app-tasks', 'browser-profiles', 'dbx-mcp'] },
   { id: 'runtimes', label: '运行环境', roots: ['runtimes', 'server'] },
   { id: 'resources', label: '资源与记忆', roots: ['skills', 'assistants', 'agents', 'expert-hub', 'library', 'memory', 'workflows', 'plans', 'teams', 'tasks'] },
   { id: 'cache', label: '缓存与可重建内容', roots: ['cache', '.cache', 'caches', 'apps', 'app-authoring-previews', 'cloud-transfers', 'app-market', 'mcp', 'browser-binaries', 'whisper-models'] },
-  { id: 'history', label: '历史版本', roots: ['backups'] },
+  { id: 'history', label: '历史版本', roots: ['workspace-versions', 'turn-observations', 'presentations', 'preview-drafts', 'backups', 'file-history'] },
   { id: 'logs', label: '日志', roots: ['logs', 'debug', 'startup-perf', 'desktop-dev.log'] },
   { id: 'other', label: '数据库与其他', roots: [] },
 ];
