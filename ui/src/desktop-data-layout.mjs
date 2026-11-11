@@ -3,7 +3,7 @@ import path from 'node:path';
 export const DESKTOP_PROJECT_KIND = 'moss-project';
 export const DESKTOP_PROJECT_LAYOUT_VERSION = 3;
 export const DESKTOP_SESSION_KIND = 'moss-session';
-export const DESKTOP_SESSION_LAYOUT_VERSION = 2;
+export const DESKTOP_SESSION_LAYOUT_VERSION = 3;
 
 const PROJECT_SESSION_WORKSPACE_DIRECTORIES = Object.freeze([
   'inputs',
