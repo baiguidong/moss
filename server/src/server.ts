@@ -1202,7 +1202,11 @@ export function startServer(
         const hostIds = hostKind === 'cloud'
           ? (await new HostRepository(models.db).list(auth.orgId, userId)).filter(host => host.kind === 'cloud').map(host => host.hostId)
           : undefined
-        writeNoStoreJson(res, 200, { user, ...await models.usage.getOverview({ orgId: auth.orgId, userId }, Date.now(), hostIds) })
+        const usage = await models.usage.getOverview({ orgId: auth.orgId, userId }, Date.now(), hostIds)
+        const gateway = litellmService?.enabled()
+          ? await litellmService.userInfoById(userId, auth.orgId).catch(() => null)
+          : null
+        writeNoStoreJson(res, 200, { user, ...usage, ...(gateway ? { gateway } : {}) })
         return
       }
 

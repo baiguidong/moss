@@ -1100,7 +1100,10 @@ function getCurrentWebSearchCapabilityFingerprint(settings = desktopSettings) {
 }
 
 function getRuntimeModelSettings() {
-  return hostPolicy.useEnterpriseModel === true && hostManagedModel ? { ...desktopSettings, ...hostManagedModel } : desktopSettings;
+  // A complete local model connection remains the user's explicit choice.
+  // The control plane only fills the connection when the desktop has none.
+  const hasLocalModel = Boolean(desktopSettings.model?.trim() && desktopSettings.url?.trim());
+  return hostManagedModel && !hasLocalModel ? { ...desktopSettings, ...hostManagedModel } : desktopSettings;
 }
 
 function getHostPermissionMode(value, fallback = desktopSettings.permissionMode) {

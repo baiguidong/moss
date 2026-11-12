@@ -152,10 +152,14 @@ export const serverFileConfigSchema = lazySchema(() =>
       publicBaseUrl: z.string().url().optional(),
       masterKey: z.string().min(1).optional(),
       keyTtlSec: z.number().int().min(300).default(3600),
+      maxBudget: z.number().nonnegative().default(10),
+      budgetDuration: z.string().min(1).default('30d'),
+      rpmLimit: z.number().int().positive().default(60),
+      tpmLimit: z.number().int().positive().default(100000),
       defaultModel: z.string().min(1).default('moss-default'),
       fastModel: z.string().min(1).default('moss-fast'),
       requestTimeoutMs: z.number().int().min(1000).default(15000),
-    }).default({ enabled: false, keyTtlSec: 3600, defaultModel: 'moss-default', fastModel: 'moss-fast', requestTimeoutMs: 15000 }),
+    }).default({ enabled: false, keyTtlSec: 3600, maxBudget: 10, budgetDuration: '30d', rpmLimit: 60, tpmLimit: 100000, defaultModel: 'moss-default', fastModel: 'moss-fast', requestTimeoutMs: 15000 }),
   }),
 )
 
@@ -211,6 +215,10 @@ export type ServerConfig = {
     publicBaseUrl?: string
     masterKey?: string
     keyTtlSec: number
+    maxBudget: number
+    budgetDuration: string
+    rpmLimit: number
+    tpmLimit: number
     defaultModel: string
     fastModel: string
     requestTimeoutMs: number

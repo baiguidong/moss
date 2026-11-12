@@ -43,7 +43,15 @@ export class LiteLLMService {
     if (cached.key && Number(cached.expiresAt) > now + 60_000) return { url: this.config.publicBaseUrl || this.config.baseUrl!, apiKey: cached.key, model: this.config.defaultModel, fastModel: this.config.fastModel, expiresAt: Number(cached.expiresAt) }
     await this.request('/user/new', { method: 'POST', body: JSON.stringify({ user_id: userId }) }).catch(error => { if (Number(error?.statusCode) !== 409) throw error })
     const duration = `${Math.max(5, Math.ceil(this.config.keyTtlSec / 60))}m`
-    const generated = await this.request('/key/generate', { method: 'POST', body: JSON.stringify({ user_id: userId, models: [this.config.defaultModel, this.config.fastModel], duration }) })
+    const generated = await this.request('/key/generate', { method: 'POST', body: JSON.stringify({
+      user_id: userId,
+      models: [this.config.defaultModel, this.config.fastModel],
+      duration,
+      max_budget: this.config.maxBudget,
+      budget_duration: this.config.budgetDuration,
+      rpm_limit: this.config.rpmLimit,
+      tpm_limit: this.config.tpmLimit,
+    }) })
     const key = String(generated?.key || generated?.token || '').trim()
     if (!key) throw Object.assign(new Error('LiteLLM did not return a virtual key'), { statusCode: 502 })
     const expiresAt = now + this.config.keyTtlSec * 1000
@@ -52,6 +60,19 @@ export class LiteLLMService {
   }
 
   async userInfo(auth: AuthContext): Promise<LiteLLMUserInfo> {
-    return await this.request(`/user/info?user_id=${encodeURIComponent(this.userId(auth))}`)
+    return await this.userInfoById(this.userId(auth))
+  }
+
+  async userInfoById(userId: string, orgId?: string): Promise<LiteLLMUserInfo> {
+    const scoped = orgId ? `${orgId}:${userId}` : userId
+    const info = await this.request(`/user/info?user_id=${encodeURIComponent(scoped)}`)
+    if (Array.isArray(info?.keys)) {
+      info.keys = info.keys.map((entry: any) => {
+        if (!entry || typeof entry !== 'object') return entry
+        const { token: _token, key: _key, api_key: _apiKey, ...safe } = entry
+        return safe
+      })
+    }
+    return info
   }
 }
