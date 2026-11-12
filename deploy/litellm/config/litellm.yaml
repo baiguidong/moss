@@ -1,12 +1,12 @@
 model_list:
   - model_name: moss-default
     litellm_params:
-      model: openai/${UPSTREAM_MODEL}
+      model: os.environ/UPSTREAM_LITELLM_MODEL
       api_key: os.environ/UPSTREAM_API_KEY
       api_base: os.environ/UPSTREAM_API_BASE
   - model_name: moss-fast
     litellm_params:
-      model: openai/${UPSTREAM_MODEL}
+      model: os.environ/UPSTREAM_LITELLM_MODEL
       api_key: os.environ/UPSTREAM_API_KEY
       api_base: os.environ/UPSTREAM_API_BASE
 
