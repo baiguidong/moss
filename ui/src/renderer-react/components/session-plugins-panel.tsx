@@ -1,185 +1,81 @@
 import * as React from 'react';
-import { AppWindow, Blocks, Bot, Hammer, Wrench } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { getAppToolServices, parseAppServiceKey, toolAppId, toolAppTitle } from '@/lib/app-tool-selection';
+import { AppWindow, Bot, Hammer, Wrench } from 'lucide-react';
+import { AppIcon } from '@/components/app-icon';
+import { ResourceIcon } from '@/components/resource-icon';
+import { AssistantAvatar } from '@/components/assistant-selection-area';
+import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { InstalledAssistant, SessionDetail, StoredApp } from '@/types';
-import type { InstalledSkillOption } from '@/components/skill-selection-area';
 
-type PluginCard = {
-  id: string;
-  title: string;
-  description?: string;
-  meta?: string;
+type ModelTool = { id: string; name: string; title: string; description?: string; source?: string; appId?: string };
+type ModelSkill = { id: string; name: string; displayName?: string; description?: string; icon?: string; source?: string };
+type ModelExpert = { id: string; name: string; displayName?: string; description?: string; avatar?: string; emoji?: string };
+type ModelApp = { id: string; name?: string; displayName?: string; description?: string; icon?: string };
+export type SessionPluginCatalog = { tools: ModelTool[]; skills: ModelSkill[]; experts?: ModelExpert[]; apps?: ModelApp[] };
+
+type PluginCard = { id: string; title: string; subtitle?: string; description?: string; meta?: string; badges?: string[]; icon: React.ReactNode };
+type PluginSection = { id: 'tools' | 'skills' | 'experts' | 'apps'; title: string; icon: React.ComponentType<{ className?: string }>; items: PluginCard[] };
+
+const sectionMeta: Record<PluginSection['id'], { title: string; icon: PluginSection['icon'] }> = {
+  tools: { title: '工具', icon: Wrench }, skills: { title: '技能', icon: Hammer }, experts: { title: '专家', icon: Bot }, apps: { title: 'App', icon: AppWindow },
 };
 
-type PluginSection = {
-  id: 'tools' | 'skills' | 'experts' | 'apps';
-  title: string;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
-  tone: string;
-  items: PluginCard[];
-};
-
-const sectionMeta: Record<PluginSection['id'], { title: string; icon: PluginSection['icon']; tone: string }> = {
-  tools: { title: '工具', icon: Wrench, tone: 'text-sky-600 dark:text-sky-400' },
-  skills: { title: '技能', icon: Hammer, tone: 'text-amber-600 dark:text-amber-400' },
-  experts: { title: '专家', icon: Bot, tone: 'text-violet-600 dark:text-violet-400' },
-  apps: { title: 'App', icon: AppWindow, tone: 'text-emerald-600 dark:text-emerald-400' },
-};
-
-function historyToolNames(history: SessionDetail['history'] = []) {
-  const names = new Set<string>();
-  const visit = (value: unknown) => {
-    if (!value || typeof value !== 'object') return;
-    if (Array.isArray(value)) { value.forEach(visit); return; }
-    const record = value as Record<string, unknown>;
-    if (record.type === 'tool_use') {
-      const name = String(record.tool_name || record.name || record.display_name || '').trim();
-      if (name && name !== 'Tool') names.add(name);
-    }
-    Object.values(record).forEach(child => {
-      if (child && typeof child === 'object') visit(child);
-    });
-  };
-  visit(history);
-  return [...names];
+function firstText(...values: unknown[]) {
+  return values.map(value => typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '').find(Boolean) || '';
 }
 
-function selectedAppIds(session: SessionDetail | null, apps: StoredApp[]) {
-  if (!session) return [];
-  const ids = new Set(session.appIds || []);
-  for (const serviceKey of session.appServiceIds || []) {
-    const ref = parseAppServiceKey(serviceKey);
-    if (ref?.appId) ids.add(ref.appId);
-  }
-  const connectorIds = new Set(session.connectorIds || []);
-  for (const app of apps) {
-    if (app.connectorApp?.id && connectorIds.has(app.connectorApp.id)) ids.add(toolAppId(app));
-  }
-  return [...ids];
+export function hasSessionPlugins(session: SessionDetail | null, _apps: StoredApp[]) {
+  return Boolean(session && session.agentMode !== 'remote-direct');
 }
 
-function appToolCards(session: SessionDetail | null, apps: StoredApp[]): PluginCard[] {
-  if (!session) return [];
-  const serviceIds = new Set(session.appServiceIds || []);
-  const cards: PluginCard[] = [];
-  const seen = new Set<string>();
-  for (const appId of selectedAppIds(session, apps)) {
-    const app = apps.find(item => toolAppId(item) === appId);
-    if (!app) continue;
-    const selectedServices = new Set(getAppToolServices(app)
-      .filter(service => serviceIds.has(service.id))
-      .map(service => service.serviceId));
-    for (const tool of app.agentTools || []) {
-      if (app.toolSelection === 'services' && tool.serviceId && !selectedServices.has(tool.serviceId)) continue;
-      const id = `app:${appId}:${tool.id}`;
-      if (seen.has(id)) continue;
-      seen.add(id);
-      cards.push({ id, title: tool.title || tool.name || tool.id, description: tool.description, meta: toolAppTitle(app) });
-    }
-    for (const service of app.mcpServices || []) {
-      const selected = selectedServices.has(service.serviceId || '');
-      if ((app.toolSelection === 'services' && !selected) || (app.toolSelection !== 'services' && service.status === 'disabled')) continue;
-      for (const tool of service.tools || []) {
-        if (tool.disabled) continue;
-        const id = `mcp:${appId}:${service.serviceId || service.name}:${tool.name}`;
-        if (seen.has(id)) continue;
-        seen.add(id);
-        cards.push({ id, title: tool.name, description: tool.description, meta: `${toolAppTitle(app)} · ${service.name}` });
-      }
-    }
-  }
-  return cards;
-}
-
-export function hasSessionPlugins(session: SessionDetail | null, apps: StoredApp[]) {
-  if (!session) return false;
-  return Boolean(
-    session.skillIds?.length
-      || session.assistantName?.trim()
-      || selectedAppIds(session, apps).length
-      || historyToolNames(session.history).length,
-  );
+function toolIcon() {
+  return <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Wrench className="h-4 w-4" /></span>;
 }
 
 function PluginCardView({ item }: { item: PluginCard }) {
-  return <article className="flex min-w-0 flex-col gap-1 rounded-lg border border-border/70 bg-background/70 p-3 shadow-sm">
-    <h4 className="break-words text-xs font-medium text-foreground">{item.title}</h4>
-    {item.description && <p className="line-clamp-3 break-words text-[11px] leading-4 text-muted-foreground">{item.description}</p>}
-    {item.meta && <p className="truncate text-[10px] text-muted-foreground/80" title={item.meta}>{item.meta}</p>}
-  </article>;
+  return <Tooltip>
+    <TooltipTrigger asChild>
+      <div tabIndex={0} role="group" aria-label={`${item.title}，悬停或聚焦查看详情`} className="group flex h-12 min-w-0 items-center gap-2 rounded-xl border border-border/65 bg-card/70 px-2.5 text-left transition-colors hover:border-primary/35 hover:bg-card focus-visible:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25">
+        <span className="shrink-0">{item.icon}</span><span className="min-w-0 truncate text-xs font-medium text-foreground" title={item.title}>{item.title}</span>
+      </div>
+    </TooltipTrigger>
+    <TooltipContent side="top" align="start" sideOffset={8} collisionPadding={12} className="max-w-80 border border-border/80 bg-popover px-3 py-2.5 text-popover-foreground shadow-xl [&>svg]:bg-popover [&>svg]:fill-popover">
+      <div className="space-y-1.5"><div className="font-semibold leading-5">{item.title}</div>{item.subtitle ? <div className="text-[11px] text-muted-foreground">{item.subtitle}</div> : null}<p className="text-xs leading-5 text-muted-foreground">{item.description || '暂无描述'}</p>{item.badges?.length || item.meta ? <div className="flex min-w-0 flex-wrap items-center gap-1.5 pt-0.5">{(item.badges || []).map((badge, index) => <Badge key={`${badge}-${index}`} variant="outline" className="rounded-md text-[11px]">{badge}</Badge>)}{item.meta ? <span className="truncate text-[11px] text-muted-foreground">{item.meta}</span> : null}</div> : null}</div>
+    </TooltipContent>
+  </Tooltip>;
 }
 
 function PluginSectionView({ section }: { section: PluginSection }) {
   if (!section.items.length) return null;
   const Icon = section.icon;
   return <section aria-labelledby={`session-plugin-${section.id}`}>
-    <div className="mb-2 flex items-center gap-1.5">
-      <Icon size={14} className={section.tone} />
-      <h3 id={`session-plugin-${section.id}`} className="text-xs font-semibold">{section.title}</h3>
-      <span className="text-[10px] tabular-nums text-muted-foreground">{section.items.length}</span>
-    </div>
-    <div className="grid grid-cols-1 gap-2">{section.items.map(item => <PluginCardView key={item.id} item={item} />)}</div>
+    <div className="mb-2 flex items-center gap-2 px-1"><span className="flex h-6 w-6 items-center justify-center rounded-md bg-primary/10 text-primary"><Icon className="h-4 w-4" /></span><h2 id={`session-plugin-${section.id}`} className="text-sm font-semibold text-foreground">{section.title}</h2><span className="text-xs text-muted-foreground">{section.items.length}</span></div>
+    <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 132px), 1fr))' }}>{section.items.map(item => <PluginCardView key={item.id} item={item} />)}</div>
   </section>;
 }
 
-export function SessionPluginsPanel({ session, apps, installedAssistants }: {
+export function SessionPluginsPanel({ session, apps: _apps, installedAssistants: _installedAssistants, initialCatalog }: {
   session: SessionDetail;
   apps: StoredApp[];
   installedAssistants: InstalledAssistant[];
+  initialCatalog?: SessionPluginCatalog;
 }) {
-  const [skills, setSkills] = React.useState<InstalledSkillOption[]>([]);
-  const skillIds = session.skillIds || [];
-
+  const [catalog, setCatalog] = React.useState<SessionPluginCatalog>(initialCatalog || { tools: [], skills: [], experts: [], apps: [] });
   React.useEffect(() => {
     let active = true;
-    if (!skillIds.length) { setSkills([]); return () => { active = false; }; }
-    void window.agentDesktop.getInstalledSkills().then((result: any) => {
-      if (!active) return;
-      const entries = Array.isArray(result?.data) ? result.data : Array.isArray(result) ? result : [];
-      const wanted = new Set(skillIds);
-      const found = entries.filter((skill: InstalledSkillOption & { id?: string }) => wanted.has(skill.name) || (skill.id && wanted.has(skill.id)));
-      const known = new Set(found.flatMap((skill: InstalledSkillOption & { id?: string }) => [skill.name, skill.id].filter(Boolean) as string[]));
-      setSkills([...found, ...skillIds.filter(id => !known.has(id)).map(name => ({ name, displayName: name }))]);
-    }).catch(() => {
-      if (active) setSkills(skillIds.map(name => ({ name, displayName: name })));
-    });
+    void window.agentDesktop.getSessionPluginCatalog({ sessionId: session.id }).then(value => {
+      if (active && value) setCatalog(value as SessionPluginCatalog);
+    }).catch(() => {});
     return () => { active = false; };
-  }, [session.id, skillIds.join('\u0000')]);
+  }, [session.id, session.assistantName, (session.skillIds || []).join('\u0000'), (session.appIds || []).join('\u0000'), (session.appServiceIds || []).join('\u0000'), (session.connectorIds || []).join('\u0000')]);
 
   const sections = React.useMemo<PluginSection[]>(() => {
-    const toolCards = appToolCards(session, apps);
-    const knownTools = new Set(toolCards.map(item => item.title));
-    for (const name of historyToolNames(session.history)) {
-      if (knownTools.has(name)) continue;
-      knownTools.add(name);
-      toolCards.push({ id: `history:${name}`, title: name, description: '本会话已加载并使用', meta: '会话工具' });
-    }
-    const assistant = installedAssistants.find(item => item.name === session.assistantName) || null;
-    const expertCards: PluginCard[] = session.assistantName ? [{
-      id: `expert:${session.assistantName}`,
-      title: assistant?.displayName || session.assistantName,
-      description: assistant?.description,
-      meta: assistant?.category || '当前会话专家',
-    }] : [];
-    const skillCards: PluginCard[] = skills.map(skill => ({
-      id: `skill:${skill.name}`,
-      title: skill.displayName || skill.name,
-      description: skill.description,
-      meta: skill.source || '当前会话技能',
-    }));
-    const appCards: PluginCard[] = selectedAppIds(session, apps).map(id => {
-      const app = apps.find(item => toolAppId(item) === id);
-      const selectedServices = app ? getAppToolServices(app).filter(service => (session.appServiceIds || []).includes(service.id)).map(service => service.title) : [];
-      return { id: `app:${id}`, title: app ? toolAppTitle(app) : id, description: app?.description, meta: selectedServices.length ? `服务：${selectedServices.join('、')}` : '当前会话 App' };
-    });
+    const toolCards: PluginCard[] = catalog.tools.map(tool => ({ id: `tool:${tool.id}`, title: firstText(tool.title, tool.name, tool.id), description: tool.description, meta: tool.source === 'built-in' ? 'Moss 内置工具' : tool.source === 'mcp' ? 'MCP 工具' : '当前会话 App 工具', badges: [tool.source === 'built-in' ? '内置' : tool.source === 'mcp' ? 'MCP' : 'App'], icon: toolIcon() }));
+    const skillCards: PluginCard[] = catalog.skills.map(skill => ({ id: `skill:${skill.id}`, title: firstText(skill.displayName, skill.name, skill.id), description: skill.description, meta: skill.source || '当前 Agent 技能', icon: <ResourceIcon source={skill.icon} label={skill.displayName || skill.name} fallback={Hammer} /> }));
+    const expertCards: PluginCard[] = (catalog.experts || []).map(expert => ({ id: `expert:${expert.id}`, title: firstText(expert.displayName, expert.name, expert.id), description: expert.description, meta: '当前会话专家', icon: <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-primary/10 text-primary"><AssistantAvatar assistant={expert as unknown as InstalledAssistant} className="h-5 w-5" /></span> }));
+    const appCards: PluginCard[] = (catalog.apps || []).map(app => ({ id: `app:${app.id}`, title: firstText(app.displayName, app.name, app.id), description: app.description, meta: '当前会话 App', icon: <AppIcon icon={app.icon} className="h-7 w-7 rounded-lg" /> }));
     return (['tools', 'skills', 'experts', 'apps'] as const).map(id => ({ id, ...sectionMeta[id], items: id === 'tools' ? toolCards : id === 'skills' ? skillCards : id === 'experts' ? expertCards : appCards }));
-  }, [apps, installedAssistants, session, skills]);
+  }, [catalog]);
 
-  return <div data-session-plugins className="min-h-0 flex-1 overflow-y-auto p-3">
-    <div className="mb-3 flex items-center gap-2"><Blocks size={15} className="text-primary" /><h2 className="text-sm font-semibold">当前会话插件</h2></div>
-    <div className={cn('space-y-4', !sections.some(section => section.items.length) && 'hidden')}>
-      {sections.map(section => <PluginSectionView key={section.id} section={section} />)}
-    </div>
-  </div>;
+  return <div data-session-plugins className="min-h-0 flex-1 overflow-y-auto bg-background px-3 py-3"><div className="space-y-5">{sections.map(section => <PluginSectionView key={section.id} section={section} />)}</div></div>;
 }

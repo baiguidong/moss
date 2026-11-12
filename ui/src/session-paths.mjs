@@ -26,6 +26,10 @@ export function createSessionPaths({
     return DESKTOP_DATA_PATHS.sessionResourceManifestPath(normalizeSessionDirName(sessionId), normalizeSessionDirName(rootSessionId));
   }
 
+  function getLocalSessionModelResourcesPath(sessionId, rootSessionId = sessionId) {
+    return DESKTOP_DATA_PATHS.sessionModelResourcesPath(normalizeSessionDirName(sessionId), normalizeSessionDirName(rootSessionId));
+  }
+
   function getLocalSessionTranscriptPath(sessionRecord) {
     if (!sessionRecord?.id || !sessionRecord?.underlyingSessionId) return null;
     const rootSessionId = normalizeSessionDirName(sessionRecord.storageRootSessionId || sessionRecord.id);
@@ -40,6 +44,7 @@ export function createSessionPaths({
     getLocalSessionDir,
     getLocalSessionEngineDir,
     getLocalSessionResourceManifestPath,
+    getLocalSessionModelResourcesPath,
     getLocalSessionTranscriptPath,
   };
 }

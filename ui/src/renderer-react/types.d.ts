@@ -901,20 +901,20 @@ export type DesktopSettings = {
   };
   enterpriseAccount?: {
     serverUrl: string;
-    credentialMode: 'password' | 'api-key';
+    credentialMode: 'password';
     userName: string;
     userEmail: string;
     userPassword: string;
-    apiKey: string;
+    accessToken: string;
     workspace: string;
   };
   enterpriseAccountServerUrl: string;
-  enterpriseAccountCredentialMode: 'password' | 'api-key';
+  enterpriseAccountCredentialMode: 'password';
   enterpriseAccountUserName: string;
   // Legacy key name; stores either username or email for password login.
   enterpriseAccountUserEmail: string;
   enterpriseAccountUserPassword: string;
-  enterpriseAccountApiKey: string;
+  enterpriseAccountAccessToken: string;
   enterpriseAccountWorkspace: string;
   settingsPath: string;
   settingsExists: boolean;
@@ -1588,6 +1588,12 @@ declare global {
       copyFileToWorkspace: (payload: { sessionId: string; sourcePath: string; fileName: string }) => Promise<{ path: string } | { error: string }>;
       /** Resolves after the turn completes; transport/runtime errors reject. */
       send: (payload: SendRequest) => Promise<SendResult>;
+      getSessionPluginCatalog: (payload: { sessionId: string }) => Promise<{
+        tools: Array<{ id: string; name: string; title: string; description?: string; source?: string; appId?: string }>;
+        skills: Array<{ id: string; name: string; displayName?: string; description?: string; icon?: string; source?: string }>;
+        experts?: Array<{ id: string; name: string; displayName?: string; description?: string; avatar?: string; emoji?: string }>;
+        apps?: Array<{ id: string; name?: string; displayName?: string; description?: string; icon?: string }>;
+      }>;
       sessionInteraction: (payload: { sessionId: string; action: 'steer' | 'side_question' | 'cancel_side' | 'inspect'; id: string; prompt?: string; details?: import('./lib/session-interactions').InteractionDetails }) => Promise<{ status: string; id: string }>;
       approvePlan: (payload: SessionRequest) => Promise<PlanDecisionResult>;
       rejectPlan: (payload: SessionRequest) => Promise<PlanDecisionResult>;

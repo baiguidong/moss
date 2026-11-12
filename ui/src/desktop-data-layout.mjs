@@ -64,6 +64,11 @@ export function createDesktopDataPaths(mossHome) {
       'runtime',
       'resource-manifest.json',
     ),
+    sessionModelResourcesPath: (sessionId, rootSessionId = sessionId) => path.join(
+      sessionRecordDir(sessionId, rootSessionId),
+      'runtime',
+      'model-resources.json',
+    ),
     sessionTranscriptPath: (sessionId, engineSessionId, rootSessionId = sessionId) => path.join(
       sessionRecordDir(sessionId, rootSessionId),
       'runtime',

@@ -8,6 +8,7 @@ import { selectedConnectorIds } from './apps/connector-app-selection.mjs';
 import { createAppDiscoveryPreferences } from './apps/app-discovery-preferences.mjs';
 import { createConnectorAppHost } from './apps/connector-app-host.mjs';
 import { connectorIdFromApp, getAppDiscovery } from '../../packages/app-sdk/src/discovery.mjs';
+import { parseAppServiceKey } from '../../packages/app-sdk/src/tool-services.mjs';
 import { setConnectorAppLifecycle, saveConnectorCredentials, provisionConnectorCredentials, refreshConnectorCliStatus, isConnectorAppActivationCurrent } from './connector-hub-ipc.mjs';
 import { createRestoreState } from './web/restore-state.mjs';
 import { resolveAppSkills } from './apps/app-skills.mjs';
@@ -509,7 +510,7 @@ const enterpriseAccountNetFetch = createOfflineAwareFetch({
 });
 const DESKTOP_DATA_PATHS = createDesktopDataPaths(MOSS_HOME);
 const sessionPaths = createSessionPaths({ DESKTOP_DATA_PATHS });
-const { getLocalSessionDir, getLocalSessionEngineDir, getLocalSessionResourceManifestPath, getLocalSessionTranscriptPath } = sessionPaths;
+const { getLocalSessionDir, getLocalSessionEngineDir, getLocalSessionResourceManifestPath, getLocalSessionModelResourcesPath, getLocalSessionTranscriptPath } = sessionPaths;
 const MOSS_PROJECTS_DIR = DESKTOP_DATA_PATHS.projectsRoot;
 const MOSS_SESSIONS_DIR = DESKTOP_DATA_PATHS.sessionsRoot;
 const workspaceCatalog = createWorkspaceCatalog(DESKTOP_DATA_PATHS.workspacesRoot);
@@ -1952,6 +1953,112 @@ async function getAgentChannelCatalog(context = null, options = {}) {
   };
 }
 
+async function getSessionPluginCatalog(sessionRecord) {
+  const runtime = await getClaudeRuntimeModule();
+  const { selectedAppIds, selectedAppServiceIds } = getRuntimeSessionAppSelection(sessionRecord);
+  const selectedServiceAppIds = selectedAppServiceIds.map(parseAppServiceKey).map(value => value?.appId).filter(Boolean);
+  const catalogAppIds = normalizeStringList([...selectedAppIds, ...selectedServiceAppIds]);
+  const [installedSkills, contributions, appSkills] = await Promise.all([
+    getInstalledSkills(),
+    appRuntime
+      ? appRuntime.listContributions({ kinds: ['tools'], loadSchemas: false, selectedAppIds, selectedAppServiceIds }).catch(() => ({ tools: [] }))
+      : Promise.resolve({ tools: [] }),
+    appRuntime && !isAppScopedSession(sessionRecord) && sessionRecord?.agentMode !== 'remote-direct'
+      ? resolveAppSkills(appRuntime, selectedAppIds).catch(() => ({ skills: [] }))
+      : Promise.resolve({ skills: [] }),
+  ]);
+  const builtInTools = typeof runtime.listDesktopTools === 'function' ? runtime.listDesktopTools(desktopSettings) : [];
+  const tools = [
+    ...builtInTools.filter(tool => tool.enabled).map(tool => ({
+      id: tool.id, name: tool.id, title: tool.id, description: tool.searchHint || '', source: 'built-in',
+    })),
+    ...(Array.isArray(contributions?.tools) ? contributions.tools.map(tool => ({
+      id: String(tool.id || tool.name || ''), name: String(tool.name || tool.id || ''),
+      title: String(tool.title || tool.name || tool.id || ''), description: String(tool.description || ''),
+      source: 'app', appId: tool.appId,
+    })).filter(tool => tool.id) : []),
+  ];
+  const toolKeys = new Set(tools.map(tool => `${tool.appId || tool.source}:${tool.id}`));
+  for (const appId of catalogAppIds) {
+    const services = appMcpHost?.toolCatalog(appId) || [];
+    for (const service of services) {
+      const serviceSelected = selectedAppIds.includes(appId)
+        || selectedAppServiceIds.includes(JSON.stringify([appId, service.serviceId]));
+      if (!serviceSelected) continue;
+      if (['app-disabled', 'instance-disabled', 'unauthorized', 'disabled', 'credentials-missing'].includes(service.status)) continue;
+      for (const tool of service.tools || []) {
+        if (tool.disabled) continue;
+        const id = `mcp:${appId}:${service.serviceId || service.name}:${tool.name}`;
+        const key = `${appId}:${id}`;
+        if (toolKeys.has(key)) continue;
+        toolKeys.add(key);
+        tools.push({ id, name: tool.name, title: tool.name, description: tool.description || '', source: 'mcp', appId });
+      }
+    }
+  }
+  const skills = installedSkills.filter(skill => skill.enabled !== false).map(skill => ({
+    id: String(skill.id || skill.name || ''), name: String(skill.name || skill.id || ''),
+    displayName: String(skill.displayName || skill.name || skill.id || ''), description: String(skill.description || ''),
+    icon: skill.icon, source: skill.isBuiltin ? 'built-in' : 'installed',
+  })).filter(skill => skill.id && skill.name);
+  const skillKeys = new Set(skills.flatMap(skill => [skill.id, skill.name]));
+  for (const skill of Array.isArray(appSkills?.skills) ? appSkills.skills : []) {
+    const id = String(skill.name || '').trim();
+    if (!id || skillKeys.has(id)) continue;
+    skillKeys.add(id);
+    skills.push({ id, name: id, displayName: id, description: String(skill.description || ''), source: 'app' });
+  }
+  for (const id of normalizeStringList([
+    ...(sessionRecord?.skillIds || []),
+    ...(sessionRecord?.projectDefaults?.skillIds || []),
+  ])) {
+    if (skillKeys.has(id)) continue;
+    skillKeys.add(id);
+    skills.push({ id, name: id, displayName: id, description: '', source: 'session' });
+  }
+  const apps = listAllStoredApps()
+    .filter(app => catalogAppIds.includes(app.id || app.name))
+    .map(app => ({ id: app.id || app.name, name: app.name || app.id, displayName: app.displayName || app.title || app.name || app.id, description: app.description || '', icon: app.icon }));
+  const assistants = await getInstalledAssistants();
+  const expertIds = normalizeStringList([
+    sessionRecord?.assistantName,
+    ...(sessionRecord?.projectDefaults?.expertIds || []),
+  ]);
+  const expertById = new Map(assistants.map(assistant => [assistant.name, assistant]));
+  const experts = expertIds.map(id => {
+    const assistant = expertById.get(id);
+    return assistant
+      ? { id: assistant.name, name: assistant.name, displayName: assistant.displayName || assistant.name, description: assistant.description || '', avatar: assistant.avatar || '', emoji: assistant.emoji || '' }
+      : { id, name: id, displayName: id, description: '', avatar: '', emoji: '' };
+  });
+  return { tools, skills, experts, apps };
+}
+
+async function refreshSessionModelResources(sessionRecord) {
+  if (!sessionRecord?.id || sessionRecord.isSubAgent) return null;
+  const resources = await getSessionPluginCatalog(sessionRecord);
+  const snapshot = { schemaVersion: 1, sessionId: sessionRecord.id, generatedAt: Date.now(), ...resources };
+  sessionRecord.modelResources = snapshot;
+  try {
+    await writeJsonFileAtomicAsync(getLocalSessionModelResourcesPath(sessionRecord.id, sessionRecord.storageRootSessionId), snapshot);
+  } catch (error) {
+    mossLog('warn', 'session', 'Unable to persist model resource snapshot', { sessionId: sessionRecord.id, error: error instanceof Error ? error.message : String(error) });
+  }
+  emitSessionMeta(sessionRecord);
+  return snapshot;
+}
+
+function refreshAllSessionModelResources() {
+  for (const sessionRecord of sessions.values()) {
+    void refreshSessionModelResources(sessionRecord).catch(error => {
+      mossLog('warn', 'session', 'Unable to refresh model resource snapshot', {
+        sessionId: sessionRecord.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+}
+
 function filterAgentChannelResourceSelection(requested, available, aliases = new Map()) {
   if (requested === null) return { selected: null, unavailable: [] };
   const availableSet = new Set(available);
@@ -2122,6 +2229,7 @@ async function createSessionFromAgentChannel(input = {}) {
   sessionRecord.channelInstanceId = String(input.instanceId || '').trim();
   await applyAgentChannelSessionPolicy(sessionRecord.id, input.binding || {}, {appId,instanceId:sessionRecord.channelInstanceId});
   await prepareAssistantContextForSessionStart(sessionRecord);
+  await refreshSessionModelResources(sessionRecord);
   return toAgentChannelSessionOption(sessionRecord, {
     appId,
     instanceId: sessionRecord.channelInstanceId,
@@ -2764,6 +2872,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     ...appTools.map(tool => tool.appId || tool.id.split('/')[0]),
     ...Object.keys(mcpServers).map(name => appToolPolicy.mcpServers[name]?.appId).filter(Boolean),
   ]);
+  if (sessionRecord) await refreshSessionModelResources(sessionRecord);
 
   return {
     cwd,
@@ -3257,7 +3366,7 @@ function getSessionSummary(sessionRecord) {
     permissionMode: getHostPermissionMode(sessionRecord.permissionMode, desktopSettings.permissionMode),
     composerIntent: sessionRecord.isCoordinatorMode ? 'boss' : 'chat',
     agentTeamsEnabled: hostPolicy.agentTeamsEnabled ?? sessionRecord.projectDefaults?.agentTeamsEnabled ?? desktopSettings.agentTeamsEnabled,
-    skillIds: sessionRecord.projectDefaults?.skillIds || [],
+    skillIds: normalizeStringList(sessionRecord.skillIds ?? sessionRecord.projectDefaults?.skillIds),
     workspace,
     createdAt: sessionRecord.createdAt,
     updatedAt: sessionRecord.updatedAt,
@@ -4482,6 +4591,7 @@ async function emitAppsChanged(payload = {}) {
     timestamp: Date.now(),
     ...nextPayload,
   });
+    refreshAllSessionModelResources();
     if (appAuthoring?.initialized && appRuntime) {
       for (const installation of appRuntime.installations.list()) {
         void appRuntime.publishHostEvent(installation.appId, appDefaultInstanceId(installation.appId), 'moss.apps/v1', 'authoring.changed', { revision: Date.now() }).catch(() => {});
@@ -5070,6 +5180,7 @@ function createSessionRecord({
   isSubAgent = false,
   title,
   assistantName,
+  skillIds,
   projectId,
   connectorIds,
   appIds,
@@ -5137,6 +5248,7 @@ function createSessionRecord({
     persistTimer: null,
     isSubAgent,
     assistantName: assistantName || null,
+    skillIds: normalizeStringList(skillIds ?? projectDefaults?.skillIds),
     assistantSystemPrompt: '',
     projectCreationMode: Boolean(projectCreationMode),
     projectId: normalizedProjectId,
@@ -5418,6 +5530,7 @@ async function updateSessionConnectors(sessionRecord, connectorIds) {
     }
   }
   schedulePersistSession(sessionRecord, true);
+  await refreshSessionModelResources(sessionRecord);
   emitSessionMeta(sessionRecord);
   return {
     ...getSessionDetailPayload(sessionRecord),
@@ -5425,7 +5538,7 @@ async function updateSessionConnectors(sessionRecord, connectorIds) {
   };
 }
 
-function updateSessionConnectorAuthStatus(sessionRecord, payload = {}) {
+async function updateSessionConnectorAuthStatus(sessionRecord, payload = {}) {
   const connectorId = typeof payload.connectorId === 'string' ? payload.connectorId.trim() : '';
   if (!connectorId) throw new Error('Connector id is required.');
   const status = String(payload.status || '').trim();
@@ -5463,6 +5576,7 @@ function updateSessionConnectorAuthStatus(sessionRecord, payload = {}) {
   sessionRecord.updatedAt = Date.now();
   sessionRecord.preview = normalizePreviewText(content);
   schedulePersistSession(sessionRecord, true);
+  await refreshSessionModelResources(sessionRecord);
   emitSessionMeta(sessionRecord);
   emitSessionHistory(sessionRecord);
   return getSessionDetailPayload(sessionRecord);
@@ -7247,7 +7361,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     readLegacy: readDesktopMcpStore,
     clearLegacy: () => saveDesktopMcpStore({ version: 1, servers: {} }),
     onChanged: resetLocalRuntimesForMcpReload,
-    onCatalogChanged: () => emitToRenderer('app:changed', { action: 'mcp-tools', timestamp: Date.now() }),
+    onCatalogChanged: () => {
+      emitToRenderer('app:changed', { action: 'mcp-tools', timestamp: Date.now() });
+      refreshAllSessionModelResources();
+    },
     reservedName: (name) => Boolean(findConnectorMcpServer(name)),
     inspect: async (name, config, signal) => {
       const runtime = await getClaudeRuntimeModule();
@@ -9273,6 +9390,7 @@ async function createDesktopSession(payload = {}, internal = {}) {
     workspace: payload.workspace,
     title: payload.title,
     assistantName: requestedAssistantName || null,
+    skillIds: payload.skillIds,
     projectId: payload.projectId,
     projectDefaults: payload.projectDefaults,
     mode: payload.mode,
@@ -9290,6 +9408,7 @@ async function createDesktopSession(payload = {}, internal = {}) {
       actor: 'user', targetType: 'session', targetId: sessionRecord.id });
   }
   await prepareAssistantContextForSessionStart(sessionRecord);
+  await refreshSessionModelResources(sessionRecord);
   return {
     summary: getSessionSummary(sessionRecord),
     detail: {
@@ -9304,7 +9423,7 @@ ipcMain.handle('agent:create-session', (_event, payload = {}) => createDesktopSe
 
 ipcMain.handle('agent:set-connector-auth-status', async (_event, payload = {}) => {
   const sessionRecord = getSessionRecord(payload.sessionId);
-  return updateSessionConnectorAuthStatus(sessionRecord, payload);
+  return await updateSessionConnectorAuthStatus(sessionRecord, payload);
 });
 
 function assertSessionCanFork(sessionRecord) {
@@ -9331,6 +9450,7 @@ async function finalizeForkedSessionRecord(sessionRecord, sourceSession, history
   sessionRecord.preview = deriveSessionPreview(history);
   sessionRecord.updatedAt = Date.now();
   schedulePersistSession(sessionRecord, true);
+  await refreshSessionModelResources(sessionRecord);
   emitSessionMeta(sessionRecord);
   return {
     summary: getSessionSummary(sessionRecord),
@@ -9376,6 +9496,7 @@ ipcMain.handle('agent:fork-session', async (_event, { sessionId } = {}) => {
       const forked = createSessionRecord({
         title,
         assistantName: sourceSession.assistantName,
+        skillIds: sourceSession.skillIds,
         connectorIds: sourceSession.connectorIds,
       appIds: sourceSession.appIds,
       appServiceIds: sourceSession.appServiceIds,
@@ -9412,6 +9533,7 @@ ipcMain.handle('agent:fork-session', async (_event, { sessionId } = {}) => {
       mode: sourceSession.isCoordinatorMode ? 'boss' : 'chat',
       title,
       assistantName: sourceSession.assistantName,
+      skillIds: sourceSession.skillIds,
       connectorIds: sourceSession.connectorIds,
       appIds: sourceSession.appIds,
       appServiceIds: sourceSession.appServiceIds,
@@ -9513,12 +9635,18 @@ ipcMain.handle('agent:get-session', async (_event, { sessionId }) => {
   if (!sessionRecord.workspaceWatcher) {
     void startWorkspaceWatcher(sessionRecord);
   }
+  await refreshSessionModelResources(sessionRecord);
   return {
     ...getSessionSummary(sessionRecord),
     history,
     workerSummariesJson: sessionRecord.workerSummariesJson || null,
     tasks: snapshotSessionTasks(sessionRecord),
   };
+});
+
+ipcMain.handle('agent:get-session-plugin-catalog', async (_event, { sessionId }) => {
+  const sessionRecord = getSessionRecord(sessionId);
+  return refreshSessionModelResources(sessionRecord);
 });
 
 ipcMain.handle('agent:list-session-tasks', async (_event, { sessionId }) => {
@@ -10625,6 +10753,13 @@ async function sendAgentPromptNow(event, {
   } else if (mode !== 'plan') {
     sessionRecord.isCoordinatorMode = false;
   }
+  const requestedSkillIds = normalizeStringList((Array.isArray(skills) ? skills : []).map(skill => (
+    typeof skill === 'string' ? skill : skill?.name
+  )));
+  if (!sessionRecord.projectCreationMode && requestedSkillIds.length) {
+    sessionRecord.skillIds = normalizeStringList([...(sessionRecord.skillIds || []), ...requestedSkillIds]);
+  }
+  await refreshSessionModelResources(sessionRecord);
   sessionRecord.updatedAt = Date.now();
   schedulePersistSession(sessionRecord, true);
   emitSessionMeta(sessionRecord);
@@ -10950,6 +11085,7 @@ ipcMain.handle('agent:set-apps', async (_event, { sessionId, appIds, appServiceI
       : serviceAppId !== undefined ? await sessionApps.setServices(record, serviceAppId, appServiceIds)
       : toggleAppId !== undefined ? await sessionApps.toggle(record, toggleAppId)
       : await sessionApps.update(record, { appIds, appServiceIds: appServiceIds ?? record.appServiceIds ?? [] });
+    await refreshSessionModelResources(record);
     return { success: true, data: { ...getSessionDetailPayload(record), skippedBusyRuntime } };
   } catch (error) { return { success: false, error: error.message }; }
 });

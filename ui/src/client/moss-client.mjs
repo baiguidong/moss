@@ -232,6 +232,7 @@ export function createMossClient(transport, platform = {}) {
   openWorkspace: (payload) => transport.invoke('workspace:open', payload),
   copyFileToWorkspace: (payload) => transport.invoke('workspace:copyFileToWorkspace', payload),
   send: (payload) => transport.invoke('agent:send', payload),
+  getSessionPluginCatalog: (payload) => transport.invoke('agent:get-session-plugin-catalog', payload),
   sessionInteraction: (payload) => transport.invoke('agent:session-interaction', payload),
   approvePlan: (payload) => transport.invoke('agent:approve-plan', payload),
   rejectPlan: (payload) => transport.invoke('agent:reject-plan', payload),
