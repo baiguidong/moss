@@ -1067,7 +1067,8 @@ function isHiddenUserMetaEvent(event: AgentEvent): boolean {
     event.isVisibleInTranscriptOnly === true
   ) return true;
   const text = extractRawUserText(event).trim();
-  return text.startsWith('<local-command-caveat>') || text.startsWith('<command-name>') || isTaskNotificationText(text);
+  return text.startsWith('<local-command-caveat>') || text.startsWith('<command-name>')
+    || isTaskNotificationText(text) || isInternalTeammateMessage(text);
 }
 
 function isSidechainEvent(event: AgentEvent): boolean {
@@ -1090,6 +1091,23 @@ function isWorkerLaunchToolUse(block: any): boolean {
     typeof block.input === 'object' &&
     typeof block.input.prompt === 'string'
   );
+}
+
+const TEAMMATE_MESSAGE_RE = /<teammate-message\b[^>]*>\s*([\s\S]*?)\s*<\/teammate-message>/g;
+
+function isInternalTeammateMessage(text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized) return false;
+  const matches = [...normalized.matchAll(TEAMMATE_MESSAGE_RE)];
+  if (matches.length === 0) return false;
+  if (normalized.replace(TEAMMATE_MESSAGE_RE, '').trim()) return false;
+  return matches.every((match) => {
+    try {
+      return JSON.parse(match[1] || '').type === 'idle_notification';
+    } catch {
+      return false;
+    }
+  });
 }
 
 // Strip Agent tool-use blocks from a top-level assistant event so the

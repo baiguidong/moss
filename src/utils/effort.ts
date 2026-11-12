@@ -200,7 +200,7 @@ export function getDisplayedEffortLevel(
 }
 
 /**
- * Build the ` with {level} effort` suffix shown in Logo/Spinner.
+ * Build the Chinese effort suffix shown in Logo/Spinner.
  * Returns empty string if the user hasn't explicitly set an effort value.
  * Delegates to resolveAppliedEffort() so the displayed level matches what
  * the API actually receives (including max→high clamp for non-Opus models).
@@ -212,7 +212,7 @@ export function getEffortSuffix(
   if (effortValue === undefined) return ''
   const resolved = resolveAppliedEffort(model, effortValue)
   if (resolved === undefined) return ''
-  return ` with ${convertEffortValueToLevel(resolved)} effort`
+  return `（${convertEffortValueToLevel(resolved)}强度）`
 }
 
 export function isValidNumericEffort(value: number): boolean {

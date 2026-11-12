@@ -3,15 +3,13 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { TurnChangeCard } from '../src/renderer-react/components/chat/turn-change-card';
 
-test('unavailable and stale payloads never render a file total, line counts or an old diff', () => {
+test('unavailable and stale payloads do not render a change card', () => {
   for (const coverage of ['unavailable', undefined] as const) {
     const html = renderToStaticMarkup(<TurnChangeCard sessionId="session" rewindSupported initiallyExpanded change={{
       userMessageId: 'user', coverage, stats: { filesChanged: 1, additions: 4, deletions: 0 }, hasUnverifiedChanges: true,
       files: [{ filePath: '/workspace/old-write.txt', isNewFile: true, structuredPatch: [], additions: 4, deletions: 0 }],
     }} />);
-    expect(html).toContain('文件变化未核实');
-    expect(html).not.toContain('1 个文件'); expect(html).not.toContain('+4'); expect(html).not.toContain('old-write.txt');
-    expect(html).not.toContain('tabular-nums');
+    expect(html).toBe('');
   }
 });
 
@@ -24,13 +22,13 @@ test('a confirmed unchanged turn renders no comparison, rewind button or observa
   expect(html).toBe('');
 });
 
-test('zero known files with incomplete coverage does not imply an unchanged turn', () => {
+test('zero known files with incomplete coverage does not render a change card', () => {
   for (const coverage of ['partial', 'unavailable'] as const) {
     const html = renderToStaticMarkup(<TurnChangeCard sessionId="session" rewindSupported={false} change={{
       userMessageId: 'user', coverage, files: [], stats: { filesChanged: 0, additions: 0, deletions: 0 },
       hasUnverifiedChanges: true, observationNote: '部分文件无法核实',
     }} />);
-    expect(html).toContain('部分文件无法核实');
+    expect(html).toBe('');
   }
 });
 
@@ -44,10 +42,11 @@ test('a real file change with zero line counts still renders its comparison', ()
 
 test('complete and partial observations identify the extent of the confirmed total', () => {
   for (const coverage of ['complete', 'partial'] as const) {
+    const files = [{ filePath: '/workspace/a.txt', isNewFile: true, structuredPatch: [], additions: 12, deletions: 0 }];
     const html = renderToStaticMarkup(<TurnChangeCard sessionId="session" rewindSupported change={{
-      userMessageId: 'user', coverage, stats: { filesChanged: 3, additions: 12, deletions: 0 }, hasUnverifiedChanges: coverage !== 'complete', files: [],
+      userMessageId: 'user', coverage, stats: { filesChanged: 1, additions: 12, deletions: 0 }, hasUnverifiedChanges: coverage !== 'complete', files,
     }} />);
-    expect(html).toContain(coverage === 'complete' ? '本轮改动 3 个文件' : '已确认变化 3 个文件');
+    expect(html).toContain(coverage === 'complete' ? '本轮改动 1 个文件' : '已确认变化 1 个文件');
     expect(html).toContain('+12');
   }
 });

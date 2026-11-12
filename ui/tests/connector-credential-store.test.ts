@@ -100,7 +100,7 @@ describe('connector credential store', () => {
       enterpriseAccountCredentials: {
         abc123: {
           apiKey: {
-            value: 'moss_sk_remote.secret',
+            value: 'connector-secret',
             field: 'apiKey',
             serverUrl: 'https://moss.example.com',
           },
@@ -115,7 +115,7 @@ describe('connector credential store', () => {
 
     store.write(data);
     const serialized = fs.readFileSync(storagePath, 'utf8');
-    expect(serialized).not.toContain('moss_sk_remote.secret');
+    expect(serialized).not.toContain('connector-secret');
     expect(serialized).not.toContain('remote-password');
     expect(store.read()).toEqual({
       connectorFields: {},

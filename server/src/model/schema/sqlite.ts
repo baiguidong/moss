@@ -51,24 +51,11 @@ export const sqliteSchema: string[] = [
     created_at INTEGER NOT NULL,
     PRIMARY KEY (user_id, role_id)
   )`,
-  `CREATE TABLE IF NOT EXISTS api_keys (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL REFERENCES organizations(id),
-    user_id TEXT NOT NULL REFERENCES users(id),
-    name TEXT NOT NULL,
-    prefix TEXT NOT NULL,
-    secret_hash TEXT NOT NULL,
-    scopes_json TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
-    created_at INTEGER NOT NULL,
-    last_used_at INTEGER
-  )`,
   `CREATE TABLE IF NOT EXISTS oauth_identities (
     provider_id TEXT NOT NULL,
     subject TEXT NOT NULL,
     user_id TEXT NOT NULL REFERENCES users(id),
     email TEXT NOT NULL,
-    api_key_id TEXT REFERENCES api_keys(id),
     created_at INTEGER NOT NULL,
     last_login_at INTEGER NOT NULL,
     PRIMARY KEY (provider_id, subject),
@@ -101,8 +88,6 @@ export const sqliteSchema: string[] = [
   `CREATE INDEX IF NOT EXISTS users_email_idx ON users (email)`,
   `CREATE INDEX IF NOT EXISTS roles_org_idx ON roles (org_id)`,
   `CREATE INDEX IF NOT EXISTS user_roles_role_idx ON user_roles (role_id)`,
-  `CREATE INDEX IF NOT EXISTS api_keys_org_idx ON api_keys (org_id)`,
-  `CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys (user_id)`,
   `CREATE INDEX IF NOT EXISTS oauth_identities_user_idx ON oauth_identities (user_id)`,
   `CREATE INDEX IF NOT EXISTS oauth_authorization_requests_expiry_idx
   ON oauth_authorization_requests (expires_at)`,

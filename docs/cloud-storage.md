@@ -59,7 +59,7 @@ Manifest 声明 `hostApi: "^3.0.0"`，在 `host.protocols` 中加入 `moss.cloud
 | `cloud-storage:delete` | 删除文件或空目录 |
 | `cloud-storage:share` | 创建、查询和撤销自己的文件分享（Host API 2.3） |
 
-任务控制还会检查任务自身的读/写权限。必须同时有 App 声明、安装授权和远程用户权限。普通用户/部门管理员初次升级获得这三个个人云端权限；已有显式 API Key 的 scopes 不会自动扩权，需要重新授权或使用登录凭证。
+任务控制还会检查任务自身的读/写权限。必须同时有 App 声明、安装授权和远程用户权限。普通用户/部门管理员初次升级获得这三个个人云端权限。
 
 ```js
 import { createCloudStorageClient } from '@moss/app-sdk/cloud-storage'
@@ -98,13 +98,13 @@ const page = await cloud.request('files.list', { parentId: null, limit: 100 })
 
 本地文件句柄仅当前 App 实例和远程账号可使用，24 小时失效；传输状态独立保存在 Moss 的 `cloud-transfers/transfers.json`，不占用 App KV。该文件包含宿主需要的路径，App 只看到文件名和任务 ID。重启后未完成任务变为暂停，用户显式恢复。关闭 App 页面可继续任务；禁用/卸载 App、撤销权限、切换账号、退出 Moss 或关闭远程会停止任务。跨账号无法恢复原任务；切回原连接后可再恢复。
 
-同一账号修改密码或轮换 API Key 后，重新认证确认服务器、组织和用户一致即可查询和恢复旧任务；正在执行的请求仍保持原连接绑定并先中止，不会中途改用新凭证。
+同一账号修改密码后，重新认证确认服务器、组织和用户一致即可查询和恢复旧任务；正在执行的请求仍保持原连接绑定并先中止，不会中途改用新凭证。
 
 取消先返回 `paused` / `CANCEL_PENDING`，等待实际操作停止并确认服务端结果，再推送 `cancelled` 或 `completed`。若完成已提交，则保留文件并显示已完成；删除文件仍需单独调用删除接口。断网或无法确认取消时保留暂停状态及错误，不报告取消成功；再次取消或恢复会继续确认取消意图。初始化响应丢失时通过原 `requestKey` 查询会话，不创建新上传。
 
 **HTTP 与传输行为**
 
-HTTP 前缀 `/api/v1/cloud-storage`，使用现有 Moss Bearer 登录令牌/API Key。每次操作重新检查用户、组织、API Key 当前有效性及权限；活动流每 2 秒重检，授权撤销后中止。
+HTTP 前缀 `/api/v1/cloud-storage`，使用 Moss Bearer 登录令牌。每次操作重新检查用户、组织和权限；活动流每 2 秒重检，授权撤销后中止。
 
 | HTTP | 用途 |
 | --- | --- |
@@ -197,7 +197,7 @@ Host API 次版本为 2.3.0，兼容原有 `^2.0.0` / `^2.1.0` / `^2.2.0` App。
 
 `CloudShare` 为 `{id,fileId,name,size,url,accessCode,createdAt,expiresAt,revokedAt,state}`，状态为 `active/expired/revoked/unavailable`。时间戳均为毫秒。`expiresAt: null` 表示永久；其余值必须是未来一年内时间。省略 `accessCode` 自动生成 6 位数字；传 `null` 不需要分享码，字符串接受 4–12 位大小写字母或数字。`requestKey` 在同一用户内幂等；重试须使用相同设置和同一键。
 
-管理 HTTP 为 `POST/GET /api/v1/cloud-storage/shares` 和 `DELETE /api/v1/cloud-storage/shares/:id`。均重新校验登录、当前权限和所有权；创建还要求 `cloud-storage:read`。既有内置普通用户/部门管理员角色如果已具有读取云端空间权限，数据库升级时添加分享权限一次；自定义角色、API Key 和 App 安装授权仍需显式授予。已有登录令牌需重新登录才能取得新增 scope。
+管理 HTTP 为 `POST/GET /api/v1/cloud-storage/shares` 和 `DELETE /api/v1/cloud-storage/shares/:id`。均重新校验登录、当前权限和所有权；创建还要求 `cloud-storage:read`。既有内置普通用户/部门管理员角色如果已具有读取云端空间权限，数据库升级时添加分享权限一次；自定义角色和 App 安装授权仍需显式授予。已有登录令牌需重新登录才能取得新增 scope。
 
 在 `server.json` 配置 `server.publicUrl: "https://files.example.com"`，使复制的链接采用接收者可访问的地址。未配置时 Server 返回相对路径，Host 使用当前服务器连接地址补齐。不要配置 S3 内网地址；公开域名及 TLS 由部署方配置。Nginx `/s/` 使用流式代理并关闭包含分享凭证的访问日志。
 

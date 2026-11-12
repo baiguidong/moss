@@ -55,10 +55,11 @@ export function KeyboardShortcutHint(t0) {
     t3 = $[2];
   }
   const shortcutText = t3;
+  const connector = /[\u3400-\u9fff]/.test(action) ? ' 可' : ' to ';
   if (parens) {
     let t4;
     if ($[3] !== action || $[4] !== shortcutText) {
-      t4 = <Text>({shortcutText} to {action})</Text>;
+      t4 = <Text>({shortcutText}{connector}{action})</Text>;
       $[3] = action;
       $[4] = shortcutText;
       $[5] = t4;
@@ -69,7 +70,7 @@ export function KeyboardShortcutHint(t0) {
   }
   let t4;
   if ($[6] !== action || $[7] !== shortcutText) {
-    t4 = <Text>{shortcutText} to {action}</Text>;
+    t4 = <Text>{shortcutText}{connector}{action}</Text>;
     $[6] = action;
     $[7] = shortcutText;
     $[8] = t4;

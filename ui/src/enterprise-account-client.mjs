@@ -1,7 +1,3 @@
-import {
-  normalizeRemoteDirectCredentialMode,
-} from './desktop-settings.mjs';
-
 export const MAX_REMOTE_PREVIEW_DOWNLOAD_BYTES = 250 * 1024 * 1024;
 export const MAX_REMOTE_WORKSPACE_UPLOAD_BYTES = 250 * 1024 * 1024;
 
@@ -47,16 +43,14 @@ export function getEnterpriseAccountSettings(settings) {
   const nestedServerUrl = ownStringField(enterpriseAccount, 'serverUrl');
   const nestedUserEmail = ownStringField(enterpriseAccount, 'userEmail');
   const nestedUserPassword = ownRawStringField(enterpriseAccount, 'userPassword');
-  const nestedApiKey = ownStringField(enterpriseAccount, 'apiKey');
+  const nestedAccessToken = ownStringField(enterpriseAccount, 'accessToken');
   const nestedWorkspace = ownStringField(enterpriseAccount, 'workspace');
   return {
     serverUrl:
       nestedServerUrl ??
       stringField(settings, 'enterpriseAccountServerUrl') ??
       '',
-    credentialMode: normalizeRemoteDirectCredentialMode(
-      enterpriseAccount.credentialMode ?? settings?.enterpriseAccountCredentialMode,
-    ),
+    credentialMode: 'password',
     userEmail:
       nestedUserEmail ??
       stringField(settings, 'enterpriseAccountUserEmail') ??
@@ -66,9 +60,9 @@ export function getEnterpriseAccountSettings(settings) {
       (typeof settings?.enterpriseAccountUserPassword === 'string'
         ? settings.enterpriseAccountUserPassword
         : ''),
-    apiKey:
-      nestedApiKey ??
-      stringField(settings, 'enterpriseAccountApiKey') ??
+    accessToken:
+      nestedAccessToken ??
+      stringField(settings, 'enterpriseAccountAccessToken') ??
       '',
     workspace:
       nestedWorkspace ??
@@ -135,10 +129,9 @@ function decodeAccessTokenIdentity(authToken) {
 
 export async function requestEnterpriseAuthentication({
   authCenterUrl,
-  credentialMode,
   loginIdentifier,
   password,
-  apiKey,
+  accessToken,
   signal,
   fetchImpl = enterpriseAccountFetch,
   redirect,
@@ -150,34 +143,34 @@ export async function requestEnterpriseAuthentication({
     throw Object.assign(new Error('请先登录 Moss 账号。'), { code: 'MOSS_LOGIN_REQUIRED' });
   }
 
-  let payload;
-  if (credentialMode === 'api-key') {
-    const normalizedApiKey = typeof apiKey === 'string' ? apiKey.trim() : '';
-    if (!normalizedApiKey) {
-      throw Object.assign(new Error('请先登录 Moss 账号。'), { code: 'MOSS_LOGIN_REQUIRED' });
-    }
-    payload = {
-      grant_type: 'api_key',
-      api_key: normalizedApiKey,
-    };
-  } else {
-    const normalizedLoginIdentifier = typeof loginIdentifier === 'string'
-      ? loginIdentifier.trim()
-      : '';
-    if (!normalizedLoginIdentifier) {
-      throw Object.assign(new Error('请先登录 Moss 账号。'), { code: 'MOSS_LOGIN_REQUIRED' });
-    }
-    if (typeof password !== 'string' || !password) {
-      throw Object.assign(new Error('请先登录 Moss 账号。'), { code: 'MOSS_LOGIN_REQUIRED' });
-    }
-    payload = {
-      grant_type: 'password',
-      ...(normalizedLoginIdentifier.includes('@')
-        ? { email: normalizedLoginIdentifier }
-        : { username: normalizedLoginIdentifier }),
-      password,
+  const normalizedAccessToken = typeof accessToken === 'string' ? accessToken.trim() : '';
+  if (normalizedAccessToken) {
+    const identity = decodeAccessTokenIdentity(normalizedAccessToken);
+    return {
+      authToken: normalizedAccessToken,
+      userId: identity.userId,
+      orgId: identity.orgId,
+      userName: '',
+      userEmail: '',
     };
   }
+
+  const normalizedLoginIdentifier = typeof loginIdentifier === 'string'
+    ? loginIdentifier.trim()
+    : '';
+  if (!normalizedLoginIdentifier) {
+    throw Object.assign(new Error('请先登录 Moss 账号。'), { code: 'MOSS_LOGIN_REQUIRED' });
+  }
+  if (typeof password !== 'string' || !password) {
+    throw Object.assign(new Error('请先登录 Moss 账号。'), { code: 'MOSS_LOGIN_REQUIRED' });
+  }
+  const payload = {
+    grant_type: 'password',
+    ...(normalizedLoginIdentifier.includes('@')
+      ? { email: normalizedLoginIdentifier }
+      : { username: normalizedLoginIdentifier }),
+    password,
+  };
 
   let response;
   try {
@@ -242,10 +235,9 @@ export async function resolveEnterpriseAccountConnection(settings, options = {})
     fetchImpl: options.fetchImpl,
     redirect: options.redirect,
     authCenterUrl: parsed.authCenterUrl,
-    credentialMode: enterpriseAccount.credentialMode,
     loginIdentifier: enterpriseAccount.userEmail,
     password: enterpriseAccount.userPassword,
-    apiKey: enterpriseAccount.apiKey,
+    accessToken: enterpriseAccount.accessToken,
   });
 
   return {
@@ -340,9 +332,7 @@ export function createEnterpriseAccountClient({ getSettings }) {
     getCloudUsageOverview: async (settings) => {
       const resolvedSettings = currentSettings(settings);
       const remote = getEnterpriseAccountSettings(resolvedSettings);
-      const hasCredentials = remote.credentialMode === 'api-key'
-        ? Boolean(remote.apiKey)
-        : Boolean(remote.userEmail && remote.userPassword);
+      const hasCredentials = Boolean(remote.accessToken || (remote.userEmail && remote.userPassword));
       if (!resolvedSettings?.enterpriseEnabled || !remote.serverUrl || !hasCredentials) return null;
       const signal = AbortSignal.timeout(20_000);
       const connection = await resolveEnterpriseAccountConnection(resolvedSettings, { signal });

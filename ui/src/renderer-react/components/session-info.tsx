@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { Check, Copy, Info, RefreshCw, X } from 'lucide-react';
+import { Check, Copy, Info, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { copyToClipboard } from '@/components/chat/clipboard';
 import { getPermissionModeLabel } from '@/components/permission-mode-selector';
+import { DraggableDialogShell } from '@/components/session-command-launcher';
 import { buildSessionInfo, formatSessionDuration } from '@/lib/session-info';
 import type { TranscriptRenderMessage } from '@/lib/agent-transcript';
 import type { BackgroundTaskInfo, SessionDetail, SessionRecordedUsage, SessionSummary } from '../types';
@@ -204,12 +205,6 @@ function LiveSessionInfo(props: SessionInfoProps) {
 export function SessionInfoButton({ session, ...props }: Omit<SessionInfoProps, 'session'> & { session?: SessionDetail | null }) {
   const [open, setOpen] = React.useState(false);
   const trigger = React.useRef<HTMLButtonElement>(null);
-  const dialog = React.useRef<HTMLDialogElement>(null);
-  const titleId = React.useId();
-  React.useEffect(() => {
-    if (open && !dialog.current?.open) dialog.current?.showModal();
-    else if (!open && dialog.current?.open) dialog.current.close();
-  }, [open]);
   return <>
     <Tooltip>
       <TooltipTrigger asChild>
@@ -218,14 +213,8 @@ export function SessionInfoButton({ session, ...props }: Omit<SessionInfoProps, 
       </TooltipTrigger>
       <TooltipContent>会话信息</TooltipContent>
     </Tooltip>
-    <dialog ref={dialog} aria-labelledby={titleId} onClose={() => { setOpen(false); trigger.current?.focus({ preventScroll: true }); }}
-      onClick={(event) => { if (event.target === event.currentTarget) dialog.current?.close(); }}
-      className="m-auto max-h-[calc(100dvh-64px)] w-[min(640px,calc(100vw-32px))] overflow-y-auto rounded-2xl border border-border bg-card p-0 text-foreground shadow-2xl backdrop:bg-black/35 backdrop:backdrop-blur-sm">
-      <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border/60 bg-card px-5 py-3">
-        <h2 id={titleId} className="flex items-center gap-2 text-sm font-semibold"><Info className="h-4 w-4 text-muted-foreground" />会话信息</h2>
-        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-full" aria-label="关闭会话信息" onClick={() => dialog.current?.close()}><X className="h-4 w-4" /></Button>
-      </div>
-      {open && session && <LiveSessionInfo key={session.id} {...props} session={session} />}
-    </dialog>
+    {open && session && <DraggableDialogShell title="会话信息" wide onClose={() => { setOpen(false); trigger.current?.focus({ preventScroll: true }); }}>
+      <LiveSessionInfo key={session.id} {...props} session={session} />
+    </DraggableDialogShell>}
   </>;
 }

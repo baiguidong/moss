@@ -7,7 +7,7 @@ export type NavigationEntry = {
   projectId?: string | null;
   appName?: string | null;
   appRoute?: string;
-  settingsSection?: 'basic-info' | 'agents';
+  settingsSection?: 'basic-info' | 'model' | 'permission' | 'agents';
   settingsAppId?: string | null;
 };
 

@@ -7,9 +7,6 @@ import type {
   CreateUserRequest,
   CreateUserResponse,
   UpdateUserRequest,
-  ApiKeysListResponse,
-  CreateApiKeyRequest,
-  CreateApiKeyResponse,
   DepartmentsListResponse,
   CreateDepartmentRequest,
   UpdateDepartmentRequest,
@@ -31,16 +28,6 @@ export async function login(
     grant_type: 'password',
     username,
     password,
-  }
-  const response = await authClient.post<LoginResponse>('/api/v1/auth/token', body)
-  setToken(response.access_token)
-  return response
-}
-
-export async function loginWithApiKey(apiKey: string): Promise<LoginResponse> {
-  const body: LoginRequest = {
-    grant_type: 'api_key',
-    api_key: apiKey,
   }
   const response = await authClient.post<LoginResponse>('/api/v1/auth/token', body)
   setToken(response.access_token)
@@ -82,20 +69,6 @@ export async function resetPassword(
     `/api/v1/users/${userId}/password`,
     { password }
   )
-}
-
-export async function getApiKeys(): Promise<ApiKeysListResponse> {
-  return authClient.get<ApiKeysListResponse>('/api/v1/api-keys')
-}
-
-export async function revokeApiKey(keyId: string): Promise<{ ok: boolean }> {
-  return authClient.delete<{ ok: boolean }>(`/api/v1/api-keys/${keyId}`)
-}
-
-export async function createApiKey(
-  data: CreateApiKeyRequest
-): Promise<CreateApiKeyResponse> {
-  return authClient.post<CreateApiKeyResponse>('/api/v1/api-keys', data)
 }
 
 export async function getDepartments(): Promise<DepartmentsListResponse> {

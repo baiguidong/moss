@@ -274,14 +274,7 @@ async function authenticateRequest(
 ): Promise<AuthContext | null> {
   const token = getBearerToken(req)
   if (!token) return null
-  const accessTokenAuth = await authService.verifyAccessToken(token)
-  if (accessTokenAuth) return accessTokenAuth
-  try {
-    const issued = await authService.issueTokenFromApiKey(token)
-    return await authService.verifyAccessToken(issued.access_token)
-  } catch {
-    return null
-  }
+  return await authService.verifyAccessToken(token)
 }
 
 function writeJson(
@@ -591,24 +584,9 @@ export function startServer(
         (pathname === '/api/v1/auth/token' || pathname === '/api/v1/auth/login')
       ) {
         const body = await readJsonBody(req)
-        const grantType =
-          typeof body.grant_type === 'string'
-            ? body.grant_type.trim()
-            : typeof body.api_key === 'string'
-              ? 'api_key'
-              : 'password'
-
-        if (grantType === 'api_key') {
-          writeJson(
-            res,
-            200,
-            await authService.issueTokenFromApiKey(
-              typeof body.api_key === 'string' ? body.api_key : '',
-            ),
-          )
-          return
-        }
-
+        const grantType = typeof body.grant_type === 'string'
+          ? body.grant_type.trim()
+          : 'password'
         if (grantType === 'password') {
           writeJson(
             res,
@@ -1417,47 +1395,6 @@ export function startServer(
             await models.sessions.listUserSessions(auth.orgId, userId)
           ).map(session => serializeSession(session)),
         })
-        return
-      }
-
-      if (req.method === 'GET' && pathname === '/api/v1/api-keys') {
-        authService.requireScope(auth, 'admin:api_keys')
-        writeJson(res, 200, await authService.listApiKeys(auth.orgId, auth))
-        return
-      }
-
-      if (req.method === 'POST' && pathname === '/api/v1/api-keys') {
-        authService.requireScope(auth, 'admin:api_keys')
-        const body = await readJsonBody(req)
-        writeJson(
-          res,
-          200,
-          await authService.createApiKey(
-            {
-              orgId: auth.orgId,
-              userId: typeof body.user_id === 'string' ? body.user_id : '',
-              name: typeof body.name === 'string' ? body.name : '',
-              scopes: Array.isArray(body.scopes)
-                ? body.scopes.filter(
-                    (scope): scope is string => typeof scope === 'string',
-                  )
-                : [],
-            },
-            auth,
-          ),
-        )
-        return
-      }
-
-      const apiKeyMatch = pathname.match(/^\/api\/v1\/api-keys\/([^/]+)$/)
-      if (req.method === 'DELETE' && apiKeyMatch) {
-        authService.requireScope(auth, 'admin:api_keys')
-        const keyId = apiKeyMatch[1] || ''
-        writeJson(
-          res,
-          200,
-          await authService.revokeApiKey({ orgId: auth.orgId, keyId }, auth),
-        )
         return
       }
 

@@ -256,13 +256,13 @@ export async function performRemoteDirectOAuth({
       code_verifier: codeVerifier,
       redirect_uri: listener.redirectUri,
     });
-    if (typeof exchanged.api_key !== 'string' || !exchanged.api_key.startsWith('moss_sk_')) {
-      throw new Error('Moss Server response is missing a permanent API Key.');
+    if (typeof exchanged.access_token !== 'string' || !exchanged.access_token) {
+      throw new Error('Moss Server response is missing an access token.');
     }
     completed = true;
     return {
       serverUrl: normalizedServerUrl,
-      apiKey: exchanged.api_key,
+      authToken: exchanged.access_token,
       user: exchanged.user ?? null,
     };
   } finally {

@@ -59,32 +59,16 @@ export const mysqlSchema: string[] = [
     FOREIGN KEY (\`user_id\`) REFERENCES users(\`id\`) ON DELETE CASCADE,
     FOREIGN KEY (\`role_id\`) REFERENCES roles(\`id\`) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin`,
-  `CREATE TABLE IF NOT EXISTS api_keys (
-    id VARCHAR(128) PRIMARY KEY,
-    org_id VARCHAR(128) NOT NULL,
-    user_id VARCHAR(128) NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    prefix VARCHAR(64) NOT NULL,
-    secret_hash VARCHAR(191) NOT NULL,
-    scopes_json LONGTEXT NOT NULL,
-    status VARCHAR(191) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
-    created_at BIGINT NOT NULL,
-    last_used_at BIGINT,
-    FOREIGN KEY (\`org_id\`) REFERENCES organizations(\`id\`),
-    FOREIGN KEY (\`user_id\`) REFERENCES users(\`id\`)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin`,
   `CREATE TABLE IF NOT EXISTS oauth_identities (
     provider_id VARCHAR(128) NOT NULL,
     subject VARCHAR(255) NOT NULL,
     user_id VARCHAR(128) NOT NULL,
     email VARCHAR(255) NOT NULL,
-    api_key_id VARCHAR(128),
     created_at BIGINT NOT NULL,
     last_login_at BIGINT NOT NULL,
     PRIMARY KEY (provider_id, subject),
     UNIQUE (provider_id, user_id),
-    FOREIGN KEY (\`user_id\`) REFERENCES users(\`id\`),
-    FOREIGN KEY (\`api_key_id\`) REFERENCES api_keys(\`id\`)
+    FOREIGN KEY (\`user_id\`) REFERENCES users(\`id\`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin`,
   `CREATE TABLE IF NOT EXISTS oauth_authorization_requests (
     id VARCHAR(128) PRIMARY KEY,
@@ -115,8 +99,6 @@ export const mysqlSchema: string[] = [
   `CREATE INDEX users_email_idx ON users (email)`,
   `CREATE INDEX roles_org_idx ON roles (org_id)`,
   `CREATE INDEX user_roles_role_idx ON user_roles (role_id)`,
-  `CREATE INDEX api_keys_org_idx ON api_keys (org_id)`,
-  `CREATE INDEX api_keys_user_idx ON api_keys (user_id)`,
   `CREATE INDEX oauth_identities_user_idx ON oauth_identities (user_id)`,
   `CREATE INDEX oauth_authorization_requests_expiry_idx
   ON oauth_authorization_requests (expires_at)`,

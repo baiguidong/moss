@@ -337,10 +337,10 @@ function ModeIndicator({
   // doesn't push the mode indicator off-screen.
   const modePart = currentMode && hasActiveMode && !getIsRemoteMode() ? <Text color={getModeColor(currentMode)} key="mode">
         {permissionModeSymbol(currentMode)}{' '}
-        {permissionModeTitle(currentMode).toLowerCase()} on
+        {toChinesePermissionModeTitle(permissionModeTitle(currentMode))} 已开启
         {shouldShowModeHint && <Text dimColor>
             {' '}
-            <KeyboardShortcutHint shortcut={modeCycleShortcut} action="cycle" parens />
+            <KeyboardShortcutHint shortcut={modeCycleShortcut} action="切换模式" parens />
           </Text>}
       </Text> : null;
 
@@ -499,4 +499,21 @@ function getSpinnerHintParts(isLoading: boolean, escShortcut: string, todosShort
 }
 function isPrStatusEnabled(): boolean {
   return getGlobalConfig().prStatusFooterEnabled ?? true;
+}
+
+function toChinesePermissionModeTitle(title: string): string {
+  switch (title) {
+    case 'Plan Mode':
+      return '计划模式'
+    case 'Accept edits':
+      return '自动接受编辑'
+    case 'Bypass Permissions':
+      return '绕过权限'
+    case "Don't Ask":
+      return '不询问'
+    case 'Default':
+      return '默认模式'
+    default:
+      return title
+  }
 }

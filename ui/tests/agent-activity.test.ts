@@ -62,6 +62,21 @@ describe('agent activity state', () => {
     expect(deriveAgentActivity([user()], false, {
       questionRequest: { requestId: 'q-idle', sessionId: 's', requestedAt: 1, input: { questions: [] } },
     })).toEqual({ kind: 'waiting', label: '等待你的回答' });
+
+    expect(deriveAgentActivity([user(), {
+      id: 'shutdown-result', timestamp, type: 'tool_result', role: 'assistant', toolUseId: 'shutdown', toolName: 'SendMessage', content: 'sent',
+    }], true, {
+      agentTeams: {
+        teams: [{
+          status: 'live',
+          snapshots: [{
+            phase: 'wrapping_up',
+            taskCounts: { total: 5, completed: 5, inProgress: 0 },
+            team: { leadAgentId: 'lead', members: [{ agentId: 'lead', status: 'idle' }, { agentId: 'worker', status: 'running' }] },
+          }],
+        }],
+      },
+    })).toEqual({ kind: 'working', label: '正在等待团队成员退出' });
   });
 
   it('recognizes compaction and stops when the turn is idle', () => {

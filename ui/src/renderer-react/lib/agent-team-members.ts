@@ -79,9 +79,14 @@ export function getTeamMembersAtFrame(run: AgentTeamRun, frame = run.snapshots.l
     const present = currentIds.has(member.agentId);
     const tasks = tasksForMember(snapshot.tasks, member);
     const completed = tasks.length > 0 && tasks.every((task) => task.status === "completed");
-    const activity: TeamMemberView["activity"] = !terminal && present && member.status === "running"
-      ? "working"
-      : completed ? "completed"
+    // A completed assignment is terminal for the member even if the teammate
+    // has not acknowledged the shutdown request yet.  The team config can
+    // legitimately keep isActive=true during the short wrapping-up window;
+    // letting that flag win makes finished members appear to be working and
+    // keeps the header's active count wrong.
+    const activity: TeamMemberView["activity"] = completed ? "completed"
+      : !terminal && present && member.status === "running"
+        ? "working"
         : terminal ? snapshot.phase === "interrupted" ? "interrupted" : "ended"
           : present ? "idle" : "departed";
     return { ...member, present, activity };

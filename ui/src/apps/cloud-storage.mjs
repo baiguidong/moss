@@ -118,7 +118,7 @@ export class CloudStorageHost {
     if (binding && binding.settingsKey !== settingsKey) error('ACCOUNT_CHANGED', 'Transfer belongs to a different connection')
     const config = getEnterpriseAccountSettings(this.getSettings())
     if (!config.serverUrl) error('UNCONFIGURED', 'Remote server is not configured')
-    if (!(config.credentialMode === 'api-key' ? config.apiKey : config.userEmail && config.userPassword)) error('UNAUTHENTICATED', 'Sign in to the remote server')
+    if (!(config.accessToken || (config.userEmail && config.userPassword))) error('UNAUTHENTICATED', 'Sign in to the remote server')
     let conn = this.connectionCache
     if (!conn || conn.settingsKey !== settingsKey || conn.expiry < Date.now()) {
       const controller = new AbortController()

@@ -23,7 +23,6 @@ import {
   FolderOpen,
   GitFork,
   Laptop,
-  ListTree,
   LoaderCircle,
   MessageSquareText,
   Paperclip,
@@ -78,6 +77,7 @@ import {
 import { FilePreview } from "@/components/file-preview";
 import { PermissionModeSelector } from "@/components/permission-mode-selector";
 import { SessionEffortSelector } from "@/components/session-effort-selector";
+import { SessionCommandLauncher, type SessionOutlineEntry, type SessionUsageSummary } from "@/components/session-command-launcher";
 import { collectFileAttachments, mergeFileAttachments } from "@/lib/file-attachments";
 import type { ComposerChoices, QueuedMessage } from '@/lib/composer-queue';
 import { QueuedMessages } from '@/components/chat/queued-messages';
@@ -90,6 +90,7 @@ import type {
   AskUserQuestionAnnotations,
   AskUserQuestionRequest,
   BackgroundTaskInfo,
+  DesktopSettings,
   DesktopAgentDefinition,
   PermissionMode,
   SessionSummary,
@@ -188,11 +189,8 @@ export function SessionTabBar({
   globalToolDisplayMode,
   onToolDisplayModeChange,
   toolDisplaySettingBusy,
-  outline,
-  onJumpToOutlineItem,
   messages,
   terminalActions,
-  sessionInfo,
   isPinned = false,
   onTogglePin,
   childSessions,
@@ -216,11 +214,8 @@ export function SessionTabBar({
   globalToolDisplayMode: ToolDisplayMode;
   onToolDisplayModeChange?: (mode: ToolDisplayMode | null) => void;
   toolDisplaySettingBusy: boolean;
-  outline: OutlineEntry[];
-  onJumpToOutlineItem: (messageId: string) => void;
   messages: TranscriptRenderMessage[];
   terminalActions?: React.ReactNode;
-  sessionInfo?: React.ReactNode;
   isPinned?: boolean;
   onTogglePin?: () => void;
   childSessions: SessionSummary[];
@@ -231,7 +226,6 @@ export function SessionTabBar({
   agentTeamsStatus?: React.ReactNode;
 }) {
   const { session: toolbarTarget } = React.useContext(WindowToolbarContext);
-  const [outlineOpen, setOutlineOpen] = React.useState(false);
   const [transcriptCopied, setTranscriptCopied] = React.useState(false);
   const handleCopyTranscript = React.useCallback(async () => {
     const text = buildTranscriptPlainText(messages);
@@ -241,25 +235,6 @@ export function SessionTabBar({
     setTranscriptCopied(true);
     window.setTimeout(() => setTranscriptCopied(false), 1200);
   }, [messages]);
-  const [outlineQuery, setOutlineQuery] = React.useState("");
-  const outlineRef = React.useRef<HTMLDivElement | null>(null);
-
-  React.useEffect(() => {
-    if (!outlineOpen) return;
-    const onDocClick = (e: MouseEvent) => {
-      if (outlineRef.current && !outlineRef.current.contains(e.target as Node)) {
-        setOutlineOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, [outlineOpen]);
-
-  const filteredOutline = outlineQuery.trim()
-    ? outline.filter((entry) =>
-        `${entry.question}\n${entry.answerPreview}`.toLowerCase().includes(outlineQuery.trim().toLowerCase()))
-    : outline;
-
   const toolbar = (
     <div
       className={cn('@container/session-header relative z-40 shrink-0', toolbarTarget
@@ -333,63 +308,6 @@ export function SessionTabBar({
             </Tooltip>
           ) : null}
           {terminalActions}
-          {sessionInfo}
-          <div ref={outlineRef} className="relative inline-flex">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={cn("h-8 w-8 rounded-full", outlineOpen && "text-primary")}
-                  onClick={() => setOutlineOpen((prev) => !prev)}
-                  aria-label="查看会话大纲"
-                >
-                  <ListTree className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>会话大纲</TooltipContent>
-            </Tooltip>
-            {outlineOpen && (
-              <div className="moss-no-drag absolute right-0 top-full z-50 mt-1 w-[420px] max-w-[80vw] overflow-hidden rounded-xl border border-border/70 bg-card/95 shadow-[0_16px_48px_-16px_rgba(0,0,0,0.5)] backdrop-blur">
-                <div className="border-b border-border/50 p-2">
-                  <input
-                    value={outlineQuery}
-                    onChange={(e) => setOutlineQuery(e.target.value)}
-                    placeholder="搜索对话轮次..."
-                    className="w-full rounded-lg border border-border/60 bg-background/70 px-2.5 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-primary/50"
-                  />
-                </div>
-                <div className="max-h-72 overflow-y-auto py-1">
-                  {filteredOutline.length === 0 ? (
-                    <div className="px-3 py-3 text-center text-xs text-muted-foreground">
-                      {outline.length === 0 ? "还没有对话轮次" : "无匹配结果"}
-                    </div>
-                  ) : (
-                    filteredOutline.map((entry, index) => (
-                      <button
-                        key={entry.messageId}
-                        type="button"
-                        className="flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors hover:bg-muted/40"
-                        onClick={() => {
-                          onJumpToOutlineItem(entry.messageId);
-                          setOutlineOpen(false);
-                        }}
-                      >
-                        <span className="truncate text-xs font-medium text-foreground">
-                          {index + 1}. {entry.question || "（附件消息）"}
-                        </span>
-                        {entry.answerPreview && (
-                          <span className="truncate text-[11px] text-muted-foreground">
-                            {entry.answerPreview}
-                          </span>
-                        )}
-                      </button>
-                    ))
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex">
@@ -564,7 +482,15 @@ export function ComposerPanel({
   onInteraction,
   onAskSideQuestion,
   onOpenSideQuestion,
-  sideQuestionRunning = false,
+  onRunCommand,
+  onExport,
+  outline = [],
+  onJumpToOutlineItem,
+  currentModel,
+  onModelChange,
+  modelSettings,
+  sessionUsage,
+  sessionInfo,
   selectedAssistant,
   onSelectAssistant,
   onClearAssistant,
@@ -612,7 +538,15 @@ export function ComposerPanel({
   onInteraction?: SendInteraction;
   onAskSideQuestion?: (prompt: string) => Promise<void>;
   onOpenSideQuestion?: () => void;
-  sideQuestionRunning?: boolean;
+  onRunCommand?: (prompt: string) => Promise<void>;
+  onExport?: () => Promise<void>;
+  outline?: SessionOutlineEntry[];
+  onJumpToOutlineItem?: (messageId: string) => void;
+  currentModel?: string;
+  onModelChange?: (model: string) => Promise<void>;
+  modelSettings?: Pick<DesktopSettings, 'url' | 'apiKey'>;
+  sessionUsage?: SessionUsageSummary | null;
+  sessionInfo?: React.ReactNode;
   className?: string;
   contextUsage?: ContextUsageInfo | null;
   homeComposerMode?: 'chat' | 'project-create';
@@ -1568,6 +1502,24 @@ export function ComposerPanel({
 
           <div className="composer-toolbar flex flex-wrap items-center justify-between gap-2">
             <div className="composer-toolbar-options flex min-w-0 flex-wrap items-center gap-2">
+              <SessionCommandLauncher
+                onOpenSideQuestion={onOpenSideQuestion}
+                onCompact={onRunCommand ? async () => { await onRunCommand('/compact'); } : undefined}
+                onExport={onExport}
+                permissionMode={permissionMode}
+                onPermissionModeChange={onPermissionModeChange}
+                permissionModeChanging={permissionModeChanging}
+                sessionInfo={sessionInfo}
+                effortControl={sessionId ? <SessionEffortSelector key={`effort-menu:${sessionId}`} sessionId={sessionId} disabled={Boolean(readOnlyReason)} busy={loading} /> : undefined}
+                contextUsage={contextUsage}
+                currentModel={currentModel}
+                onModelChange={onModelChange}
+                modelSettings={modelSettings}
+                sessionUsage={sessionUsage}
+                outline={outline}
+                onJumpToOutlineItem={onJumpToOutlineItem}
+                disabled={Boolean(readOnlyReason) || !hasActiveSession}
+              />
               <button
                 type="button"
                 onClick={handleSelectFile}
@@ -1605,12 +1557,9 @@ export function ComposerPanel({
                 onChange={onPermissionModeChange}
                 disabled={loading || permissionModeChanging || Boolean(readOnlyReason)}
               />
-              {sessionId && <SessionEffortSelector key={`effort:${sessionId}`} sessionId={sessionId} disabled={Boolean(readOnlyReason)} busy={loading} />}
-
             </div>
 
             <div className="composer-toolbar-actions ml-auto flex shrink-0 items-center justify-end gap-2">
-              {onOpenSideQuestion && <button type="button" aria-label="打开侧问" title={sideQuestionRunning ? '侧问 · 正在回答' : '打开侧问'} onClick={onOpenSideQuestion} className="composer-control relative inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2 text-xs text-muted-foreground hover:bg-muted"><MessageSquareText className="h-4 w-4 shrink-0" /><span className="composer-control-label">侧问</span>{sideQuestionRunning && <span className="composer-control-status h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />}</button>}
               {contextUsage && <ContextUsageRing usage={contextUsage} />}
               {loading && (
                 <Button
@@ -1846,11 +1795,7 @@ function HomeLanding({
   );
 }
 
-type OutlineEntry = {
-  messageId: string;
-  question: string;
-  answerPreview: string;
-};
+type OutlineEntry = SessionOutlineEntry;
 
 function deriveOutline(messages: TranscriptRenderMessage[]): OutlineEntry[] {
   const entries: OutlineEntry[] = [];
@@ -2468,6 +2413,12 @@ export function ChatArea({
   onStop,
   onOpenChildSession,
   onInteraction,
+  onRunCommand,
+  onExport,
+  currentModel,
+  onModelChange,
+  modelSettings,
+  sessionUsage,
   onRestoreInteraction,
   interactions = [],
   installedAssistants,
@@ -2554,6 +2505,12 @@ export function ChatArea({
   onSend: (files?: Array<{ name: string; path: string }>, workspace?: string, skills?: SkillMentionItem[], agent?: DesktopAgentDefinition) => void;
   onStop: () => void;
   onInteraction?: SendInteraction;
+  onRunCommand?: (prompt: string) => Promise<void>;
+  onExport?: () => Promise<void>;
+  currentModel?: string;
+  onModelChange?: (model: string) => Promise<void>;
+  modelSettings?: Pick<DesktopSettings, 'url' | 'apiKey'>;
+  sessionUsage?: SessionUsageSummary | null;
   onRestoreInteraction?: (item: SessionInteraction) => void;
   interactions?: SessionInteraction[];
   onOpenChildSession?: (sessionId: string) => void;
@@ -2608,7 +2565,9 @@ export function ChatArea({
   const toolCallDrafts = useSessionToolCallDrafts(sessionId);
   const pendingDraftTools = React.useMemo(() => new Set(toolCallDrafts.filter(d => d.status === 'draft').map(d => d.toolCall!.toolUseId)), [toolCallDrafts]);
   const [sideOpen, setSideOpen] = React.useState(false);
+  const [commandNotice, setCommandNotice] = React.useState<{ title: string; message: string } | null>(null);
   React.useEffect(() => setSideOpen(false), [sessionId]);
+  React.useEffect(() => setCommandNotice(null), [sessionId]);
   const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
   const [workspace, setWorkspace] = React.useState<string | undefined>();
   const virtualListRef = React.useRef<VirtualMessageListHandle | null>(null);
@@ -2669,6 +2628,38 @@ export function ChatArea({
     virtualListRef.current?.scrollToMessage(messageId);
   }, []);
 
+  const handleExportTranscript = React.useCallback(async () => {
+    const text = buildTranscriptPlainText(messages);
+    if (!text) {
+      setCommandNotice({ title: '无法导出会话', message: '当前会话还没有可导出的内容。' });
+      return;
+    }
+    const safeTitle = (sessionTitle || 'moss-conversation').trim().replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '') || 'moss-conversation';
+    try {
+      if (window.mossWeb) {
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `${safeTitle}.txt`;
+        anchor.click();
+        URL.revokeObjectURL(url);
+        setCommandNotice({ title: '会话已导出', message: `已下载 ${safeTitle}.txt` });
+        return;
+      }
+      const sourcePath = await window.agentDesktop.fs.createTempFile(`${safeTitle}.txt`);
+      if (!sourcePath) throw new Error('无法创建临时导出文件。');
+      const bytes = Array.from(new TextEncoder().encode(text));
+      if (!(await window.agentDesktop.fs.writeFile(sourcePath, bytes))) throw new Error('无法写入导出内容。');
+      const result = await window.agentDesktop.shell.saveFile({ sourcePath, defaultPath: `${safeTitle}.txt` });
+      if (result.canceled) return;
+      if (!result.ok) throw new Error(result.error || '保存文件失败。');
+      setCommandNotice({ title: '会话已导出', message: result.path ? `已保存到 ${result.path}` : '文件已保存。' });
+    } catch (cause) {
+      setCommandNotice({ title: '导出失败', message: cause instanceof Error ? cause.message : String(cause) });
+    }
+  }, [messages, sessionTitle]);
+
   const fallbackBusyStartRef = React.useRef<{ sessionId?: string; startedAt: number } | null>(null);
   if (!loading) {
     fallbackBusyStartRef.current = null;
@@ -2683,8 +2674,9 @@ export function ChatArea({
       toolPermissionRequest,
       questionRequest,
       pendingPlanApproval: Boolean(pendingPlanApproval),
+      agentTeams,
     }),
-    [messages, loading, pendingPlanApproval, questionRequest, toolPermissionRequest, pendingDraftTools],
+    [agentTeams, messages, loading, pendingPlanApproval, questionRequest, toolPermissionRequest, pendingDraftTools],
   );
   const activityStartTime = loadingStartTime
     ?? (composerActivity?.kind === "waiting"
@@ -2821,11 +2813,8 @@ export function ChatArea({
         globalToolDisplayMode={globalToolDisplayMode}
         onToolDisplayModeChange={onToolDisplayModeChange}
         toolDisplaySettingBusy={toolDisplaySettingBusy}
-        outline={outline}
-        onJumpToOutlineItem={handleJumpToOutlineItem}
         messages={messages}
         terminalActions={terminalActions}
-        sessionInfo={sessionInfo}
         isPinned={isPinned}
         onTogglePin={onTogglePin}
         childSessions={childSessions}
@@ -2914,6 +2903,11 @@ export function ChatArea({
           )}
           <QueuedMessages messages={queuedMessages ?? []} onEdit={onEditQueuedMessage} onRemove={onRemoveQueuedMessage} />
           {sessionId && <SessionInteractions key={sessionId} sessionId={sessionId} items={interactions} busy={loading} onRestore={item => onRestoreInteraction ? onRestoreInteraction(item) : onChange(value ? `${value}\n\n${item.prompt}` : item.prompt)} />}
+          {commandNotice && <div className="mb-2 rounded-xl border border-border/70 bg-card/90 px-4 py-3 text-xs shadow-sm" role="status">
+            <div className="font-medium">{commandNotice.title}</div>
+            <div className="mt-1 break-words text-muted-foreground">{commandNotice.message}</div>
+            <button type="button" className="mt-2 text-[11px] text-primary hover:underline" onClick={() => setCommandNotice(null)}>关闭</button>
+          </div>}
           <ComposerPanel
             value={value}
             loading={loading}
@@ -2936,8 +2930,16 @@ export function ChatArea({
             onSend={(files, skills, agent) => { appWorkbench.close(); onSend(files, undefined, skills, agent); }}
             onInteraction={onInteraction}
             onOpenSideQuestion={onInteraction ? () => setSideOpen(true) : undefined}
-            sideQuestionRunning={interactions.some(item => item.kind === 'side_question' && item.status === 'running')}
             onAskSideQuestion={onInteraction ? async prompt => { setSideOpen(true); await onInteraction('side_question', prompt); } : undefined}
+            onRunCommand={onRunCommand}
+            onExport={onExport || handleExportTranscript}
+            currentModel={currentModel}
+            onModelChange={onModelChange}
+            modelSettings={modelSettings}
+            sessionUsage={sessionUsage}
+            outline={outline}
+            onJumpToOutlineItem={handleJumpToOutlineItem}
+            sessionInfo={sessionInfo}
             onStop={onStop}
             installedAssistants={installedAssistants}
             selectedAssistant={selectedAssistant ?? null}

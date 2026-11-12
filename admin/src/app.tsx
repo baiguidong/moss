@@ -8,7 +8,6 @@ const DashboardPage = lazy(() => import('./pages/dashboard-page'))
 const SessionsPage = lazy(() => import('./pages/computers-page'))
 const UsersPage = lazy(() => import('./pages/users-page'))
 const UsagePage = lazy(() => import('./pages/usage-page'))
-const ApiKeysPage = lazy(() => import('./pages/api-keys-page'))
 const SystemSettingsPage = lazy(() => import('./pages/system-settings-page'))
 
 function RouteLoader() {
@@ -78,14 +77,6 @@ export default function App() {
           element={
             <SuspendedRoute>
               <SessionDetailRoute />
-            </SuspendedRoute>
-          }
-        />
-        <Route
-          path="/api-keys"
-          element={
-            <SuspendedRoute>
-              <ApiKeysPage />
             </SuspendedRoute>
           }
         />

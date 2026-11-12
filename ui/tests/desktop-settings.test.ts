@@ -138,7 +138,7 @@ describe('desktop settings', () => {
       model: text.model, fastModel: text.fastModel, url: text.baseUrl,
       apiKey: text.apiKey, maxTurns: text.maxTurns,
     });
-    store.save({ ...store.value, enterpriseAccountApiKey: 'hydrated-server-login-key' });
+    store.save({ ...store.value, enterpriseAccountAccessToken: 'hydrated-server-login-token' });
     expect(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).models.text).toEqual(text);
 
     const updatedText = { ...text, model: 'edited-model', apiKey: 'edited-key' };
@@ -326,8 +326,8 @@ describe('desktop settings', () => {
       },
       enterpriseAccount: {
         serverUrl: 'https://remote.example.com/',
-        credentialMode: 'api-key',
-        apiKey: 'remote-secret',
+        credentialMode: 'password',
+        accessToken: 'remote-token',
         profileMode: 'session',
       },
     });
@@ -344,8 +344,8 @@ describe('desktop settings', () => {
         model: 'image-a',
       },
       enterpriseAccountServerUrl: 'https://remote.example.com/',
-      enterpriseAccountCredentialMode: 'api-key',
-      enterpriseAccountApiKey: 'remote-secret',
+      enterpriseAccountCredentialMode: 'password',
+      enterpriseAccountAccessToken: 'remote-token',
     });
     expect(settings).not.toHaveProperty('enterpriseAccountProfileMode');
     expect(settings.enterpriseAccount).not.toHaveProperty('profileMode');
@@ -520,9 +520,9 @@ describe('desktop settings', () => {
     store.save({
       ...store.value,
       enterpriseAccountServerUrl: 'https://moss.example.com',
-      enterpriseAccountCredentialMode: 'api-key',
+      enterpriseAccountCredentialMode: 'password',
       enterpriseAccountUserName: 'Moss User',
-      enterpriseAccountApiKey: 'moss_sk_remote.secret',
+      enterpriseAccountAccessToken: 'jwt.remote.token',
       enterpriseAccountUserPassword: 'remote-password',
       enterpriseAccountProfileMode: 'session',
       enterpriseAccount: {
@@ -532,7 +532,7 @@ describe('desktop settings', () => {
     });
 
     const serialized = fs.readFileSync(settingsPath, 'utf8');
-    expect(serialized).not.toContain('moss_sk_remote.secret');
+    expect(serialized).not.toContain('jwt.remote.token');
     expect(serialized).not.toContain('remote-password');
     const persisted = JSON.parse(serialized);
     expect(persisted.enterpriseAccount).not.toHaveProperty('apiKey');
@@ -705,7 +705,7 @@ it('reads legacy enterprise credentials without creating or moving any sessions'
   const settings = normalizeDesktopSettings({ remoteEnabled: true, remoteDirect: { serverUrl: 'https://enterprise.test', userEmail: 'alice', apiKey: 'key' } });
   expect(settings.enterpriseEnabled).toBe(true);
   expect(settings.enterpriseAccountServerUrl).toBe('https://enterprise.test');
-  expect(settings.enterpriseAccountApiKey).toBe('key');
+  expect(settings.enterpriseAccountAccessToken).toBe('');
   expect(settings.remoteDirect).toBeUndefined();
   expect(settings.remoteEnabled).toBeUndefined();
 });

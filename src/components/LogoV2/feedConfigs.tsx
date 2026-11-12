@@ -15,10 +15,10 @@ export function createRecentActivityFeed(activities: LogOption[]): FeedConfig {
     };
   });
   return {
-    title: 'Recent activity',
+    title: '最近活动',
     lines,
-    footer: lines.length > 0 ? '/resume for more' : undefined,
-    emptyMessage: 'No recent activity'
+    footer: lines.length > 0 ? '使用 /resume 查看更多' : undefined,
+    emptyMessage: '暂无最近活动'
   };
 }
 export function createProjectOnboardingFeed(steps: Step[]): FeedConfig {
@@ -34,14 +34,14 @@ export function createProjectOnboardingFeed(steps: Step[]): FeedConfig {
       text: `${checkmark}${text}`
     };
   });
-  const warningText = getCwd() === homedir() ? 'Note: You have launched Moss in your home directory. For the best experience, launch it in a project directory instead.' : undefined;
+  const warningText = getCwd() === homedir() ? '注意：Moss 当前在主目录中启动。为获得更好体验，请在项目目录中启动。' : undefined;
   if (warningText) {
     lines.push({
       text: warningText
     });
   }
   return {
-    title: 'Tips for getting started',
+    title: '入门提示',
     lines
   };
 }

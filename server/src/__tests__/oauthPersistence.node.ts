@@ -150,36 +150,27 @@ try {
       assert.equal(exchangeResponse.status, 200)
       assert.equal(exchangeResponse.headers.get('cache-control'), 'no-store')
       return (await exchangeResponse.json()) as {
-        api_key: string
-        key: { id: string }
+        access_token: string
+        token_type: string
         user: { id: string }
       }
     }
 
     const first = await login()
-    assert.match(first.api_key, /^moss_sk_/)
-    assert.equal(
-      (await service.issueTokenFromApiKey(first.api_key)).user.id,
-      first.user.id,
-    )
-    const stored = (await db
-      .prepare('SELECT secret_hash FROM api_keys WHERE id = ?')
-      .get(first.key.id)) as {
-      secret_hash: string
-    }
-    assert.ok(stored.secret_hash)
-    assert.equal(JSON.stringify(stored).includes(first.api_key), false)
+    assert.ok(first.access_token)
+    assert.equal(first.token_type, 'Bearer')
+    assert.equal((await service.verifyAccessToken(first.access_token))?.userId, first.user.id)
 
     const second = await login()
-    assert.notEqual(second.api_key, first.api_key)
-    await assert.rejects(
-      async () => await service.issueTokenFromApiKey(first.api_key),
-      /Invalid API key/,
-    )
-    assert.equal(
-      (await service.issueTokenFromApiKey(second.api_key)).user.id,
-      first.user.id,
-    )
+    assert.ok(second.access_token)
+    assert.equal((await service.verifyAccessToken(second.access_token))?.userId, first.user.id)
+
+    const apiKeyGrant = await fetch(`${baseUrl}/api/v1/auth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'api_key', api_key: 'removed-key' }),
+    })
+    assert.equal(apiKeyGrant.status, 400)
 
     const canceledStart = await fetch(`${baseUrl}/api/v1/auth/oauth/start`, {
       method: 'POST',

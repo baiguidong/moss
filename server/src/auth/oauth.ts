@@ -9,8 +9,8 @@ const RANDOM_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/
 const PKCE_VERIFIER_PATTERN = /^[A-Za-z0-9._~-]{43,128}$/
 const STATE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/
 
-type PermanentApiKeyResult = ReturnType<
-  AuthService['issuePermanentApiKeyForOAuthUser']
+type OAuthTokenResult = ReturnType<
+  AuthService['issueTokenForOAuthUser']
 >
 
 export class OAuthLoginError extends Error {
@@ -280,7 +280,7 @@ export class OAuthLoginService {
     code: string
     codeVerifier: string
     redirectUri: string
-  }): Promise<PermanentApiKeyResult> {
+  }): Promise<OAuthTokenResult> {
     await this.pruneExpired()
     const code = requireValue(input.code, 'code', RANDOM_ID_PATTERN)
     const authorization = await this.authService.consumeOAuthAuthorizationCode(
@@ -303,7 +303,7 @@ export class OAuthLoginService {
       throw new OAuthLoginError(400, '授权码校验失败，请重新认证。')
     }
 
-    return await this.authService.issuePermanentApiKeyForOAuthUser({
+    return await this.authService.issueTokenForOAuthUser({
       userId: authorization.userId,
       orgId: authorization.orgId,
     })

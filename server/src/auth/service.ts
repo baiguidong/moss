@@ -3,13 +3,10 @@ import { flatMapAsync, mapAsync, someAsync } from '../model/async.js'
 import type { Database } from '../model/database.js'
 import {
   AuthRepository,
-  createApiKeyRecord,
   createSyntheticUserEmail,
   hashPassword,
-  sanitizeApiKey,
   sanitizeUser,
   verifyPassword,
-  type AuthCenterApiKey,
   type AuthCenterBootstrap,
   type AuthCenterDepartment,
   type AuthCenterOAuthAuthorizationCode,
@@ -122,19 +119,6 @@ export class AuthService {
       !(await this.db.getOrganization(auth.orgId))
     ) {
       throw new AuthServiceError(401, 'Login is no longer valid')
-    }
-    if (auth.keyId !== 'password-login') {
-      const key = await this.db.getApiKeyById(auth.keyId)
-      if (
-        !key ||
-        key.status !== 'active' ||
-        key.userId !== auth.userId ||
-        key.orgId !== auth.orgId
-      ) {
-        throw new AuthServiceError(401, 'Login credential was revoked')
-      }
-      if (!hasScope(key.scopes, scope))
-        throw new AuthServiceError(403, `Missing credential scope: ${scope}`)
     }
     this.requireScope(auth, scope)
     if (!hasScope(await this.getEffectiveScopes(auth.userId), scope)) {
@@ -318,61 +302,15 @@ export class AuthService {
     return await this.db.deleteOAuthAuthorizationCodeByState(state, redirectUri)
   }
 
-  async issueTokenFromApiKey(apiKeyValue: string): Promise<{
+  async issueTokenForOAuthUser(input: {
+    userId: string
+    orgId: string
+  }): Promise<{
     access_token: string
     token_type: 'Bearer'
     expires_in: number
     user: UserWithRoles
     organization: { id: string; name: string; createdAt: number } | null
-    scopes: string[]
-  }> {
-    return await this.db.transaction(async () => {
-      const value = apiKeyValue.trim()
-      if (!value) {
-        throw new AuthServiceError(400, 'Missing api_key')
-      }
-
-      const apiKey = await this.db.findActiveApiKey(value)
-      if (!apiKey) {
-        throw new AuthServiceError(401, 'Invalid API key')
-      }
-
-      const user = await this.db.getUserById(apiKey.userId)
-      const organization = await this.db.getOrganization(apiKey.orgId)
-      if (!user || user.status !== 'active' || !organization) {
-        throw new AuthServiceError(401, 'API key owner is invalid')
-      }
-
-      // Browser OAuth keys are managed login credentials, so their scopes track
-      // the user's current role. Explicitly created API keys remain fixed-scope.
-      const oauthIdentity = await this.db.getOAuthIdentityByApiKeyId(apiKey.id)
-      const scopes =
-        oauthIdentity?.providerId === 'moss-server'
-          ? await this.getEffectiveScopes(user.id)
-          : apiKey.scopes
-      if (
-        oauthIdentity &&
-        JSON.stringify(scopes) !== JSON.stringify(apiKey.scopes)
-      ) {
-        await this.db.updateApiKeyScopes(apiKey.id, scopes)
-      }
-      await this.db.updateApiKeyLastUsed(apiKey.id)
-      return await this.issueToken({
-        user,
-        scopes,
-        keyId: apiKey.id,
-      })
-    })
-  }
-
-  async issuePermanentApiKeyForOAuthUser(input: {
-    userId: string
-    orgId: string
-  }): Promise<{
-    api_key: string
-    key: Omit<AuthCenterApiKey, 'secretHash'>
-    user: UserWithRoles
-    organization: { id: string; name: string; createdAt: number }
     scopes: string[]
   }> {
     return await this.db.transaction(async () => {
@@ -382,50 +320,14 @@ export class AuthService {
         throw new AuthServiceError(403, 'OAuth user is disabled')
       }
 
-      const providerId = 'moss-server'
-      const subject = user.id
-      let identity = await this.db.getOAuthIdentity(providerId, subject)
-      if (!identity) {
-        const createdAt = Date.now()
-        identity = {
-          providerId,
-          subject,
-          userId: user.id,
-          email: user.email,
-          apiKeyId: null,
-          createdAt,
-          lastLoginAt: createdAt,
-        }
-        await this.db.createOAuthIdentity(identity)
-      }
-      if (identity?.apiKeyId) {
-        await this.db.revokeApiKey(identity.apiKeyId)
-      }
       const scopes = await this.getEffectiveScopes(user.id)
-      const created = createApiKeyRecord({
-        orgId: user.orgId,
-        userId: user.id,
-        name: 'oauth:browser-login',
-        scopes,
-      })
       const loggedInAt = Date.now()
-      await this.db.createApiKey(created.apiKey)
-      await this.db.updateOAuthIdentityLogin({
-        providerId,
-        subject,
-        email: user.email,
-        apiKeyId: created.apiKey.id,
-        lastLoginAt: loggedInAt,
-      })
       await this.db.updateUserLastLogin(user.id, loggedInAt)
-
-      return {
-        api_key: created.plainTextKey,
-        key: sanitizeApiKey(created.apiKey),
-        user: await this.withRoles({ ...user, lastLoginAt: loggedInAt }),
-        organization,
+      return await this.issueToken({
+        user: { ...user, lastLoginAt: loggedInAt },
         scopes,
-      }
+        keyId: 'password-login',
+      })
     })
   }
 
@@ -1028,82 +930,6 @@ export class AuthService {
     })
   }
 
-  async listApiKeys(
-    orgId: string,
-    auth?: AuthContext,
-  ): Promise<{
-    api_keys: Array<Omit<AuthCenterApiKey, 'secretHash'>>
-  }> {
-    const visibleUserIds = new Set(
-      (await this.listVisibleUsers(orgId, auth)).map(user => user.id),
-    )
-    return {
-      api_keys: (await this.db.listApiKeysByOrg(orgId))
-        .filter(apiKey => visibleUserIds.has(apiKey.userId))
-        .map(apiKey => sanitizeApiKey(apiKey)),
-    }
-  }
-
-  async createApiKey(
-    input: {
-      orgId: string
-      userId: string
-      name: string
-      scopes: string[]
-    },
-    auth?: AuthContext,
-  ): Promise<{
-    api_key: Omit<AuthCenterApiKey, 'secretHash'>
-    plain_text_key: string
-  }> {
-    const user = await this.db.getUserByIdAndOrg(input.userId, input.orgId)
-    if (!user) {
-      throw new AuthServiceError(404, 'Unknown user_id')
-    }
-    await this.assertCanManageExistingUser(user, auth)
-
-    const name = input.name.trim()
-    const scopes = input.scopes.map(scope => scope.trim()).filter(Boolean)
-
-    if (!name || scopes.length === 0) {
-      throw new AuthServiceError(400, 'Missing name or scopes')
-    }
-    await this.assertCanManageApiKeyScopes(scopes, auth)
-
-    const created = createApiKeyRecord({
-      orgId: input.orgId,
-      userId: user.id,
-      name,
-      scopes,
-    })
-    await this.db.createApiKey(created.apiKey)
-    return {
-      api_key: sanitizeApiKey(created.apiKey),
-      plain_text_key: created.plainTextKey,
-    }
-  }
-
-  async revokeApiKey(
-    input: {
-      orgId: string
-      keyId: string
-    },
-    auth?: AuthContext,
-  ): Promise<{ ok: true }> {
-    const apiKey = await this.db.getApiKeyById(input.keyId)
-    if (!apiKey || apiKey.orgId !== input.orgId) {
-      throw new AuthServiceError(404, 'Unknown key_id')
-    }
-    const user = await this.db.getUserByIdAndOrg(apiKey.userId, input.orgId)
-    if (!user) {
-      throw new AuthServiceError(404, 'Unknown user_id')
-    }
-    await this.assertCanManageExistingUser(user, auth)
-
-    await this.db.revokeApiKey(apiKey.id)
-    return { ok: true }
-  }
-
   async createDepartment(input: {
     orgId: string
     name: string
@@ -1683,28 +1509,4 @@ export class AuthService {
     }
   }
 
-  private async assertCanManageApiKeyScopes(
-    scopes: string[],
-    auth?: AuthContext,
-  ): Promise<void> {
-    if (!auth) {
-      return
-    }
-
-    const actor = await this.requireAuthUser(auth)
-    if (auth.systemRoles?.includes('admin') || auth.role === 'admin') {
-      return
-    }
-
-    const regularTemplate = BUILTIN_ROLE_TEMPLATES.find(
-      role => role.key === 'user',
-    )
-    const allowedScopes = new Set(regularTemplate?.permissions ?? [])
-    if (!scopes.every(scope => allowedScopes.has(scope))) {
-      throw new AuthServiceError(
-        403,
-        'Department admin can only issue user-scoped API keys',
-      )
-    }
-  }
 }

@@ -17,8 +17,6 @@ const CODE_CHALLENGE = createHash('sha256')
 
 function authService() {
   let sequence = 0
-  let currentKey: string | null = null
-  const activeKeys = new Set<string>()
   const authorizationRequests = new Map<
     string,
     {
@@ -156,24 +154,12 @@ function authService() {
         scopes: ['sessions:create', 'sessions:attach', 'sessions:list'],
       }
     },
-    issuePermanentApiKeyForOAuthUser() {
-      if (currentKey) activeKeys.delete(currentKey)
+    issueTokenForOAuthUser() {
       sequence += 1
-      currentKey = `moss_sk_key-${sequence}.secret-${sequence}`
-      activeKeys.add(currentKey)
       return {
-        api_key: currentKey,
-        key: {
-          id: `key-${sequence}`,
-          orgId: 'org-1',
-          userId: user.id,
-          name: 'oauth:browser-login',
-          prefix: currentKey.slice(0, 16),
-          scopes: ['sessions:create', 'sessions:attach', 'sessions:list'],
-          status: 'active' as const,
-          createdAt: sequence,
-          lastUsedAt: null,
-        },
+        access_token: `jwt-${sequence}`,
+        token_type: 'Bearer' as const,
+        expires_in: 3600,
         user,
         organization: {
           id: 'org-1',
@@ -184,12 +170,7 @@ function authService() {
       }
     },
   } as unknown as AuthService
-  return {
-    service,
-    isActive(apiKey: string) {
-      return activeKeys.has(apiKey)
-    },
-  }
+  return { service }
 }
 
 async function start(
@@ -253,9 +234,8 @@ describe('OAuth browser login service', () => {
       codeVerifier: CODE_VERIFIER,
       redirectUri: REDIRECT_URI,
     })
-    expect(result.api_key).toStartWith('moss_sk_')
-    expect(result.key).not.toHaveProperty('secretHash')
-    expect(auth.isActive(result.api_key)).toBe(true)
+    expect(result.access_token).toBe('jwt-1')
+    expect(result.token_type).toBe('Bearer')
     await expect(
       (async () =>
         await service.exchange({
@@ -291,7 +271,7 @@ describe('OAuth browser login service', () => {
       codeVerifier: CODE_VERIFIER,
       redirectUri: REDIRECT_URI,
     })
-    expect(result.api_key).toStartWith('moss_sk_')
+    expect(result.access_token).toBe('jwt-1')
   })
 
   test('allows a retry after an invalid password', async () => {
@@ -449,7 +429,7 @@ describe('OAuth browser login service', () => {
     ).rejects.toThrow('授权请求无效或已过期')
   })
 
-  test('rotates the prior browser-login API key', async () => {
+  test('issues a fresh short-lived access token for each browser login', async () => {
     const auth = authService()
     const service = new OAuthLoginService(auth.service)
     const login = async () => {
@@ -469,12 +449,10 @@ describe('OAuth browser login service', () => {
     }
     const first = await login()
     const second = await login()
-    expect(second.api_key).not.toBe(first.api_key)
-    expect(auth.isActive(first.api_key)).toBe(false)
-    expect(auth.isActive(second.api_key)).toBe(true)
+    expect(second.access_token).not.toBe(first.access_token)
   })
 
-  test('persists only the API key hash and completes the HTTP flow in Node', async () => {
+  test('persists OAuth records and completes the HTTP flow in Node', async () => {
     const outdir = await mkdtemp(join(tmpdir(), 'moss-oauth-node-test-'))
     try {
       const entrypoint = join(

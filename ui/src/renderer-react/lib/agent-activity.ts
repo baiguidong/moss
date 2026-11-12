@@ -20,6 +20,17 @@ export type AgentActivityOptions = {
   toolPermissionRequest?: AskUserQuestionRequest | null;
   questionRequest?: AskUserQuestionRequest | null;
   pendingPlanApproval?: boolean;
+  /** Persisted Agent Teams state used to explain shutdown/coordination waits. */
+  agentTeams?: {
+    teams: Array<{
+      status: "live" | "completed" | "interrupted";
+      snapshots: Array<{
+        phase: string;
+        taskCounts: { total: number; completed: number; inProgress: number };
+        team: { leadAgentId: string; members: Array<{ agentId: string; status: "running" | "idle" }> };
+      }>;
+    }>;
+  } | null;
 };
 
 function requestToolName(request: AskUserQuestionRequest | null | undefined): string {
@@ -107,6 +118,22 @@ export function deriveAgentActivity(
   }
   if (latestActive?.type === "assistant_text") {
     return { label: "正在输出回复", kind: "responding" };
+  }
+
+  // Tool results are also emitted for team shutdown requests.  When the
+  // transcript has gone quiet, prefer the durable team state over the generic
+  // "requesting model" fallback so a long shutdown/coordination wait is
+  // accurately explained to the user.
+  const liveTeam = options.agentTeams?.teams.find((team) => team.status === "live");
+  const teamSnapshot = liveTeam?.snapshots.at(-1);
+  if (teamSnapshot) {
+    const { total, completed, inProgress } = teamSnapshot.taskCounts;
+    if (total > 0 && completed === total) {
+      return { label: "正在等待团队成员退出", kind: "working" };
+    }
+    if (inProgress > 0) {
+      return { label: "团队成员正在工作", kind: "working" };
+    }
   }
 
   // A tool result or a completed model block means Claude Code is about to

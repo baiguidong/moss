@@ -50,6 +50,14 @@ describe("agent transcript tool rendering", () => {
     expect(messages.map(message => message.content)).toEqual(['帮我保存成文档', `为什么出现 ${notification}`]);
     expect(history[0].message?.content).toContain(memory);
   });
+  it("hides internal teammate idle notifications from the main transcript", () => {
+    const messages = buildMainChatRenderMessagesFromHistory([{
+      type: 'user',
+      uuid: 'teammate-idle',
+      prompt: '<teammate-message teammate_id="script-auditor" color="purple">\n{"type":"idle_notification","from":"script-auditor","timestamp":"2026-11-12T03:29:44.282Z","idleReason":"available"}\n</teammate-message>',
+    }]);
+    expect(messages).toEqual([]);
+  });
   it("renders legacy Channel envelopes as ordinary user messages", () => {
     const messages = buildMainChatRenderMessagesFromHistory([{
       type: "user",

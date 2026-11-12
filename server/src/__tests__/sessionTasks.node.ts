@@ -22,8 +22,7 @@ try {
   const bob = (await auth.createUser({
     orgId: alice.orgId, email: 'bob@example.test', name: 'Bob', role: 'user', password: 'bob-password',
   }, alice)).user
-  const bobKey = await auth.issuePermanentApiKeyForOAuthUser({ userId: bob.id, orgId: alice.orgId })
-  const bobLogin = await auth.issueTokenFromApiKey(bobKey.api_key)
+  const bobLogin = await auth.issueTokenFromPassword({ email: 'bob@example.test', password: 'bob-password' })
   const store = new SessionRepository(db)
   const config: ServerConfig = {
     host: '127.0.0.1', port: 0, authMode: 'local', tokenTtlSec: 3600,

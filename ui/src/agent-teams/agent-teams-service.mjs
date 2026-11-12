@@ -201,6 +201,18 @@ function buildSnapshot(team, tasks, messages, terminalStatus = null, capturedAt 
   }));
   const normalizedMessages = messages.map((value) => normalizeMessage(value, value?.to || '')).filter(Boolean);
   const members = Array.isArray(team?.members) ? team.members.map(normalizeMember).filter(Boolean) : [];
+  // A teammate may finish its assigned task and remain alive briefly while
+  // it waits for the leader's shutdown request.  Treat that member as idle in
+  // the durable snapshot so the UI does not report a completed worker as
+  // actively working during the wrapping-up phase.
+  const normalizedMembers = members.map((member) => {
+    if (member.agentId === team?.leadAgentId) return member;
+    const ownedTasks = normalizedTasks.filter((task) => task.owner === member.name || task.owner === member.agentId);
+    if (ownedTasks.length > 0 && ownedTasks.every((task) => task.status === 'completed')) {
+      return { ...member, status: 'idle' };
+    }
+    return member;
+  });
   const taskCounts = {
     total: normalizedTasks.length,
     completed: normalizedTasks.filter((task) => task.status === 'completed').length,
@@ -218,7 +230,7 @@ function buildSnapshot(team, tasks, messages, terminalStatus = null, capturedAt 
       createdAt: Number(team?.createdAt) || Date.now(),
       leadAgentId: typeof team?.leadAgentId === 'string' ? team.leadAgentId : '',
       leadSessionId: typeof team?.leadSessionId === 'string' ? team.leadSessionId : '',
-      members,
+      members: normalizedMembers,
     },
     tasks: normalizedTasks,
     messages: normalizedMessages,

@@ -582,16 +582,7 @@ try {
       'Stopped-service backup and restore content verification passed\n',
     )
   }
-  // Current key validity is checked even while its JWT remains cryptographically valid.
-  const key = await auth.issuePermanentApiKeyForOAuthUser({
-    userId: bob.id,
-    orgId: identity.orgId,
-  })
-  const keyLogin = await auth.issueTokenFromApiKey(key.api_key)
-  await db
-    .prepare("UPDATE api_keys SET status='revoked' WHERE id=?")
-    .run(key.key.id)
-  await request('/status', 'GET', undefined, keyLogin.access_token, 401)
+  // Access tokens are the only Moss Server credential accepted by the host.
   const cancelRequestKey = randomUUID()
   const pending = await j('/uploads', 'POST', {
     name: 'cancel',
@@ -688,8 +679,8 @@ try {
     enterpriseEnabled: true,
     enterpriseAccount: {
       serverUrl: base,
-      credentialMode: 'api-key',
-      apiKey: 'test-host-key',
+      credentialMode: 'password',
+      accessToken: login.access_token,
     },
   }
   let allowed = true,
@@ -704,12 +695,12 @@ try {
     resolveConnection: async () => ({
       serverUrl: base,
       userId:
-        settings.enterpriseAccount.apiKey === 'test-host-key'
+        settings.enterpriseAccount.accessToken === login.access_token
           ? identity.userId
           : bob.id,
       orgId: identity.orgId,
       authToken:
-        settings.enterpriseAccount.apiKey === 'test-host-key'
+        settings.enterpriseAccount.accessToken === login.access_token
           ? login.access_token
           : bobLogin.access_token,
     }),

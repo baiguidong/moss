@@ -81,6 +81,40 @@ describe('Agent Teams archive service', () => {
     ]));
   });
 
+  it('normalizes completed assignments to idle during team wrapping-up', async () => {
+    const mossHome = await createRoot();
+    const sessionDir = path.join(mossHome, 'sessions', 'desktop-completed');
+    const team = {
+      name: 'completed-team',
+      createdAt: 100,
+      leadAgentId: 'team-lead@completed-team',
+      leadSessionId: 'engine-completed',
+      members: [
+        { agentId: 'team-lead@completed-team', name: 'team-lead', isActive: true },
+        { agentId: 'worker@completed-team', name: 'worker', isActive: true },
+      ],
+    };
+    const canonicalName = sanitizeTeamName(team.name);
+    await writeJson(path.join(mossHome, 'teams', canonicalName, 'config.json'), team);
+    await writeJson(path.join(mossHome, 'tasks', canonicalName, '1.json'), {
+      id: '1', subject: 'Done', description: '', status: 'completed', owner: 'worker', blocks: [], blockedBy: [],
+    });
+    const service = createAgentTeamsService({
+      mossHome,
+      getSessionRecords: () => [{ id: 'desktop-completed', underlyingSessionId: 'engine-completed' }],
+      getSessionDir: () => sessionDir,
+      pollIntervalMs: 60_000,
+    });
+
+    await service.checkNow();
+    const snapshot = (await service.getSessionState('desktop-completed')).teams[0]?.snapshots.at(-1);
+    expect(snapshot?.phase).toBe('wrapping_up');
+    expect(snapshot?.team.members).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'worker', status: 'idle' }),
+      expect.objectContaining({ name: 'team-lead', status: 'running' }),
+    ]));
+  });
+
   it('removes terminal receipts instead of archiving them for a deleted session', async () => {
     const mossHome = await createRoot();
     const sessionDir = path.join(mossHome, 'sessions', 'desktop-deleted');

@@ -148,7 +148,7 @@ try {
   const fd = await open(source, 'w')
   try { await fd.truncate(35 * 1024 ** 2 + 101); await fd.write(Buffer.from('moss-deployment-check'), 0, 21, 35 * 1024 ** 2) }
   finally { await fd.close() }
-  const settings = { remoteEnabled: false, remoteDirect: { serverUrl: base, credentialMode: 'api-key', apiKey: 'test-binding' } }
+  const settings = { remoteEnabled: false, remoteDirect: { serverUrl: base, credentialMode: 'password', accessToken: token } }
   let hold = true, progress = 0, networkCalls = 0
   const parts = []
   const options = {

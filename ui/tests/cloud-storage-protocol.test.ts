@@ -42,7 +42,7 @@ test('metadata disk failure pauses a task before any upload and permits shutdown
   const root=await mkdtemp(join(tmpdir(),'moss-cloud-full-'))
   let requests=0
   const host=new CloudStorageHost({
-    directory:join(root,'transfers'),getSettings:()=>({enterpriseEnabled:true,enterpriseAccount:{serverUrl:'http://server.test',credentialMode:'api-key',apiKey:'test'}}),
+    directory:join(root,'transfers'),getSettings:()=>({enterpriseEnabled:true,enterpriseAccount:{serverUrl:'http://server.test',credentialMode:'password',accessToken:'test-token'}}),
     resolveConnection:async()=>({serverUrl:'http://server.test',userId:'u',orgId:'o',authToken:'token'}),
     fetchImpl:async()=>{requests++;throw new Error('Must not upload')},
     pickFiles:async()=>[join(root,'source')],pickDestination:async()=>null,authorizeApp:async()=>true,
@@ -82,7 +82,7 @@ test('Host normalizes public share URLs without exposing login credentials and r
   const root=await mkdtemp(join(tmpdir(),'moss-share-host-'))
   const requests:any[]=[]
   let old=false, user='u'
-  const host=new CloudStorageHost({directory:root,getSettings:()=>({enterpriseEnabled:true,enterpriseAccount:{serverUrl:'https://files.test',credentialMode:'api-key',apiKey:'private-key'}}),
+  const host=new CloudStorageHost({directory:root,getSettings:()=>({enterpriseEnabled:true,enterpriseAccount:{serverUrl:'https://files.test',credentialMode:'password',accessToken:'private-token'}}),
     resolveConnection:async()=>({serverUrl:'https://files.test',userId:user,orgId:'o',authToken:'private-token'}),
     fetchImpl:async (url:any, init:any)=>{requests.push({url,init});return old ? Response.json({error:{code:'NOT_FOUND'}},{status:404}) : Response.json({shares:[{id:'s',url:'/s/public-token'}],nextCursor:null})},
     pickFiles:async()=>[],pickDestination:async()=>null,authorizeApp:async()=>true})

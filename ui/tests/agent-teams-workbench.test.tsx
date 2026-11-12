@@ -83,6 +83,20 @@ test('shutdown retains departed teammates and clears stale running status withou
   expect(JSON.stringify(archive)).toBe(original);
 });
 
+test('completed assignments do not remain marked working during wrapping-up', () => {
+  const run = structuredClone(state.teams[0]);
+  const latest = run.snapshots.at(-1)!;
+  latest.team.members = latest.team.members.map(member => ({ ...member, status: 'running' as const }));
+  latest.phase = 'wrapping_up';
+  run.status = 'live';
+  const members = getTeamMembersAtFrame(run);
+  expect(members.find(member => member.name === 'worker')?.activity).toBe('completed');
+  const status = renderToStaticMarkup(<AgentTeamsStatus state={{ ...state, teams: [run] }} onOpen={() => {}} />);
+  expect(status).toContain('收尾中');
+  expect(status).toContain('任务 2/2');
+  expect(status).toContain('进行中 0');
+});
+
 test('replay shows only members known at the selected frame and restores rejoined members', () => {
   const run = structuredClone(state.teams[0]);
   run.snapshots[0].team.members = [run.snapshots[0].team.members[0]];
@@ -97,6 +111,7 @@ test('replay shows only members known at the selected frame and restores rejoine
   const rejoined = structuredClone(run.snapshots[1]);
   rejoined.phase = 'executing';
   rejoined.team.members[1].status = 'running';
+  rejoined.tasks[0].status = 'in_progress';
   run.snapshots.push(rejoined);
   expect(getTeamMembersAtFrame(run, 3).find(member => member.name === 'worker')).toMatchObject({ present: true, activity: 'working' });
 });

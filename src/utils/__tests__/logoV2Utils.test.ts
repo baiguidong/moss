@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { formatModelAndBilling, getLogoDisplayData } from '../logoV2Utils.js'
+import { formatModelAndBilling, formatWelcomeMessage, getLogoDisplayData } from '../logoV2Utils.js'
 
 const ORIGINAL_DEMO_VERSION = process.env.DEMO_VERSION
 
@@ -24,5 +24,10 @@ describe('logo display data', () => {
       truncatedModel: 'custom-model',
       truncatedBilling: '',
     })
+  })
+
+  test('uses Chinese welcome messages', () => {
+    expect(formatWelcomeMessage(null)).toBe('欢迎回来！')
+    expect(formatWelcomeMessage('小明')).toBe('欢迎回来，小明！')
   })
 })

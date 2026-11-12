@@ -4,7 +4,7 @@ Agent Mail 是 Moss 客户端之间通过同一个 `moss-server` 交换任务的
 
 ## 架构决策
 
-- 身份：发件人与收件人都是 Server 用户中心中的用户。服务端只信任 JWT/API Key 解出的 `userId` 和 `orgId`，忽略客户端提供的发件人字段。
+- 身份：发件人与收件人都是 Server 用户中心中的用户。服务端只信任 JWT 解出的 `userId` 和 `orgId`，忽略客户端提供的发件人字段。
 - 隔离：只能搜索和发送给同一组织中的 active 用户。
 - 发送能力：使用动态注入的原生 `MossMail` Tool。它与本地团队协作的 `SendMessage` Tool 分离。首次发送可按收件人记住授权；回复默认仍需确认。
 - Skill：可在未来提供邮件写作规范，但不承担网络协议、鉴权或可靠投递。
@@ -149,6 +149,6 @@ expired lease -> queued (attempts < 5) or failed
 5. 未信任发件人的邮件显示在通知中心；可选择允许一次、允许并信任发件人、拒绝一次，或拒绝并屏蔽发件人。
 6. 收信记录与发信记录在侧栏“协作邮箱”中按日期查看；删除只影响当前用户自己的列表。
 
-手工创建的长期 API Key 只有在 scopes 中包含 `agent-mail:send` / `agent-mail:receive` 时才能使用对应接口。桌面浏览器 OAuth 管理的登录 Key 会在换取 access token 时同步用户当前角色的默认 scopes，旧登录凭据无需手工重建。
+用户通过密码 OAuth 获取的 access token 必须包含 `agent-mail:send` / `agent-mail:receive` 才能使用对应接口；角色权限变化后重新登录即可获得新的 scopes。
 
 凭据只由 Electron 主进程和 Server HTTP 客户端持有，不进入 Tool schema、模型上下文、本地邮件队列或日志。邮件正文始终以外部 user-level 输入送入 Agent，不能声明为 system/developer 指令或提升权限。

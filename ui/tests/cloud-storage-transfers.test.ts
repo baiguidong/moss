@@ -11,11 +11,11 @@ const unsupportedLink = async () => { throw Object.assign(new Error('No hard lin
 
 async function fixture(overrides: Record<string, any> = {}) {
   const root = await mkdtemp(join(tmpdir(), 'moss-cloud-regression-'))
-  const settings = { enterpriseEnabled: true, enterpriseAccount: { serverUrl: 'http://server.test', credentialMode: 'api-key', apiKey: 'old-key' } }
+  const settings = { enterpriseEnabled: true, enterpriseAccount: { serverUrl: 'http://server.test', credentialMode: 'password', accessToken: 'old-token' } }
   const identity = { serverUrl: 'http://server.test', orgId: 'org', userId: 'alice' }
   const options = {
     directory: join(root, 'transfers'), getSettings: () => settings,
-    resolveConnection: async () => ({ ...identity, authToken: `${settings.enterpriseAccount.apiKey}-token` }),
+    resolveConnection: async () => ({ ...identity, authToken: settings.enterpriseAccount.accessToken }),
     fetchImpl: async () => { throw new Error('Unexpected network request') },
     pickFiles: async () => [], pickDestination: async () => null, authorizeApp: async () => true,
     ...overrides,
@@ -130,7 +130,7 @@ test('credential rotation preserves same-account tasks and another account canno
   try {
     const t = f.task({ sourcePath: join(f.root, 'removed-source') })
     const oldBinding = t.binding
-    f.settings.enterpriseAccount.apiKey = 'rotated-key'
+    f.settings.enterpriseAccount.accessToken = 'rotated-token'
     f.host.invalidate()
     await expect(f.host.connection(oldBinding)).rejects.toMatchObject({ code: 'ACCOUNT_CHANGED' })
     expect((await f.host.handle('transfers.list', {}, context)).transfers.map((v: any) => v.id)).toEqual([t.id])
@@ -139,9 +139,9 @@ test('credential rotation preserves same-account tasks and another account canno
     await f.host.running.get(t.id)?.done
     expect(t.state).toBe('completed')
     expect(t.binding.settingsKey).toBe(f.host.fingerprint())
-    expect(tokens).toEqual(['Bearer rotated-key-token'])
+    expect(tokens).toEqual(['Bearer rotated-token'])
     f.identity.userId = 'bob'
-    f.settings.enterpriseAccount.apiKey = 'bob-key'
+    f.settings.enterpriseAccount.accessToken = 'bob-token'
     f.host.invalidate()
     expect((await f.host.handle('transfers.list', {}, context)).transfers).toEqual([])
     await expect(f.host.handle('transfers.get', { transferId: t.id }, context)).rejects.toMatchObject({ code: 'TRANSFER_NOT_FOUND' })

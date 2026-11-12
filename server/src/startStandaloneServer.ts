@@ -19,7 +19,6 @@ export async function startStandaloneDirectConnectServer(
   port: number
   httpUrl: string
   bootstrapAdminUsername?: string
-  bootstrapAdminApiKey?: string
   bootstrapAdminEmail?: string
   bootstrapAdminPassword?: string
   stop: () => Promise<void>
@@ -86,7 +85,6 @@ export async function startStandaloneDirectConnectServer(
       port: actualPort,
       httpUrl,
       bootstrapAdminUsername: bootstrap.bootstrapAdminUsername,
-      bootstrapAdminApiKey: bootstrap.bootstrapAdminApiKey,
       bootstrapAdminEmail: bootstrap.bootstrapAdminEmail,
       bootstrapAdminPassword: bootstrap.bootstrapAdminPassword,
       stop,

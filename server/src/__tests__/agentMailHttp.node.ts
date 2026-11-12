@@ -39,31 +39,14 @@ try {
       aliceAuth,
     )
   ).user
-  const bobOAuthKey = await authService.issuePermanentApiKeyForOAuthUser({
-    userId: bob.id,
-    orgId: aliceAuth.orgId,
+  const bobLogin = await authService.issueTokenFromPassword({
+    email: 'bob@example.test',
+    password: 'bob-password',
   })
-  await db
-    .prepare(`UPDATE api_keys SET scopes_json = ? WHERE id = ?`)
-    .run(
-      JSON.stringify(['sessions:create', 'sessions:attach', 'sessions:list']),
-      bobOAuthKey.key.id,
-    )
-  const bobLogin = await authService.issueTokenFromApiKey(bobOAuthKey.api_key)
   const bobAuth = await authService.verifyAccessToken(bobLogin.access_token)
   assert.ok(bobAuth)
   authService.requireScope(bobAuth, 'agent-mail:receive')
   assert.ok(bobLogin.scopes.includes('agent-mail:receive'))
-  const migratedScopes = JSON.parse(
-    String(
-      (
-        (await db
-          .prepare(`SELECT scopes_json FROM api_keys WHERE id = ?`)
-          .get(bobOAuthKey.key.id)) as any
-      ).scopes_json,
-    ),
-  )
-  assert.ok(migratedScopes.includes('agent-mail:receive'))
 
   const config: ServerConfig = {
     host: '127.0.0.1',

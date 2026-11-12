@@ -36,7 +36,7 @@ try {
     res.setHeader('content-type', 'application/json');
     if (req.url.endsWith('/start')) {
       start = JSON.parse(body); res.end(JSON.stringify({ authorization_url: `/api/v1/auth/oauth/authorize/${'t'.repeat(43)}` }));
-    } else if (req.url.endsWith('/exchange')) res.end(JSON.stringify({ api_key: 'moss_sk_test.secret', user: { id: 'test-user' } }));
+    } else if (req.url.endsWith('/exchange')) res.end(JSON.stringify({ access_token: 'jwt-test-token', user: { id: 'test-user' } }));
     else res.end('{}');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

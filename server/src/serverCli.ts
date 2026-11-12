@@ -24,12 +24,6 @@ async function runServer(): Promise<void> {
       `Bootstrap admin password: ${running.bootstrapAdminPassword}\n`,
     )
   }
-  if (running.bootstrapAdminApiKey && !hideBootstrapSecrets) {
-    process.stderr.write(
-      `Bootstrap admin API key: ${running.bootstrapAdminApiKey}\n`,
-    )
-  }
-
   const shutdown = async () => {
     await running.stop()
     process.exit(0)

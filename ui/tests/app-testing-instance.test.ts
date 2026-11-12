@@ -152,9 +152,9 @@ describe('test target isolation and App browser connection', () => {
     expect(calls).toEqual(['abort', 'test-closed', 'dispose']);
   });
   test('uses the original model with full permissions and removes credentials on cleanup', () => {
-    const settings = { model: 'model', apiKey: 'secret', url: 'https://api.example.test', enterpriseAccountApiKey: 'remote-secret', agentMail: { enabled: true }, mcp: { servers: {} }, appearance: { theme: 'dark' }, toolLoading: { Bash: 'resident' } };
+    const settings = { model: 'model', apiKey: 'secret', url: 'https://api.example.test', enterpriseAccountAccessToken: 'remote-token', agentMail: { enabled: true }, mcp: { servers: {} }, appearance: { theme: 'dark' }, toolLoading: { Bash: 'resident' } };
     expect(targetSettings(settings, false)).not.toHaveProperty('apiKey');
-    expect(targetSettings(settings, false)).not.toHaveProperty('enterpriseAccountApiKey');
+    expect(targetSettings(settings, false)).not.toHaveProperty('enterpriseAccountAccessToken');
     expect(targetSettings(settings)).toMatchObject({ ...settings, permissionMode: 'bypassPermissions' });
     const copied = targetSettings(settings);
     copied.appearance.theme = 'light';

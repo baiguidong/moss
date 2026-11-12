@@ -26,14 +26,14 @@ export function getSteps(): Step[] {
   return [
     {
       key: 'workspace',
-      text: 'Ask Moss to create a new app or clone a repository',
+      text: '让 Moss 创建新应用或克隆仓库',
       isComplete: false,
       isCompletable: true,
       isEnabled: isWorkspaceDirEmpty,
     },
     {
       key: 'mossmd',
-      text: `Run /init to create a ${PRIMARY_PROJECT_INSTRUCTION_FILENAME} file with instructions for Moss`,
+      text: `运行 /init 创建 ${PRIMARY_PROJECT_INSTRUCTION_FILENAME} 文件，为 Moss 提供项目说明`,
       isComplete: hasInstructionFile,
       isCompletable: true,
       isEnabled: !isWorkspaceDirEmpty,

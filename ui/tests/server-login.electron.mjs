@@ -60,7 +60,7 @@ try {
   await until("document.querySelector('dialog[open] [role=alert]')?.textContent.includes('超时')");
   await click('重新登录');
   await until('loginEvidence.calls === 4');
-  await evaluate("loginEvidence.resolve({ enterpriseAccountServerUrl: 'https://moss.example.test', enterpriseAccountApiKey: 'test', enterpriseAccountUserName: 'Test User' })");
+  await evaluate("loginEvidence.resolve({ enterpriseAccountServerUrl: 'https://moss.example.test', enterpriseAccountAccessToken: 'jwt.test.token', enterpriseAccountUserName: 'Test User' })");
   await until("!document.querySelector('dialog[open]') && document.querySelector('[data-auth-state]').textContent === 'success'");
   const chooseCloud = async () => {
     await evaluate("document.querySelector('[aria-label=\"选择工作电脑\"]').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, ctrlKey: false }))");

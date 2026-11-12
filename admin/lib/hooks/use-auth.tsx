@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
-import { getMe, login as apiLogin, loginWithApiKey, logout as apiLogout, isAuthenticated } from '@/lib/api/auth'
+import { getMe, login as apiLogin, logout as apiLogout, isAuthenticated } from '@/lib/api/auth'
 import { UNAUTHORIZED_EVENT } from '@/lib/api/client'
 import type { AuthUser } from '@/lib/api/types'
 
@@ -11,7 +11,6 @@ interface AuthContextType {
   isLoading: boolean
   isAuthenticated: boolean
   login: (username: string, password: string) => Promise<void>
-  loginWithKey: (apiKey: string) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -64,12 +63,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setScopes(response.scopes)
   }
 
-  const loginWithKey = async (apiKey: string) => {
-    const response = await loginWithApiKey(apiKey)
-    setUser(response.user)
-    setScopes(response.scopes)
-  }
-
   const logout = async () => {
     await apiLogout()
     setUser(null)
@@ -84,7 +77,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isLoading,
         isAuthenticated: !!user,
         login,
-        loginWithKey,
         logout,
       }}
     >

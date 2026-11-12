@@ -74,9 +74,9 @@ test('Web OAuth exchanges with exact HTTPS callback/PKCE; invalid, duplicate and
     const input = JSON.parse(options.body);
     assert.equal(input.redirect_uri, 'https://portal.example/api/oauth/callback');
     if (url.endsWith('/start')) { verifier = input.code_challenge; return Response.json({ authorization_url: '/api/v1/auth/oauth/authorize/' + 'a'.repeat(43) }); }
-    exchanges++; assert.ok(input.code_verifier); return Response.json({ api_key: 'moss_sk_test', user: { id: 'user' } });
+    exchanges++; assert.ok(input.code_verifier); return Response.json({ access_token: 'jwt-test-token', user: { id: 'user' } });
   } });
-  assert.equal(result.apiKey, 'moss_sk_test'); assert.equal(exchanges, 1); assert.equal(verifier.length, 43); assert.deepEqual(hub.list(), []);
+  assert.equal(result.authToken, 'jwt-test-token'); assert.equal(exchanges, 1); assert.equal(verifier.length, 43); assert.deepEqual(hub.list(), []);
   const pending = await hub.listen('s'.repeat(43)); hub.cancel(hub.list()[0].id);
   await assert.rejects(pending.callback, /取消/); assert.throws(() => hub.accept(new URL('https://portal.example/api/oauth/callback?state=' + 's'.repeat(43) + '&code=ok')), /已处理/);
   await pending.close(); hub.close();

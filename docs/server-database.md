@@ -48,7 +48,7 @@ Compose 的 `.env` 提供固定的 `MOSS_DB_NAME`、`MOSS_DB_USER`、`MOSS_DB_PA
 
 | Repository | 本地保存的数据 |
 | --- | --- |
-| `auth` | 组织、部门、用户、角色、API Key、OAuth 授权记录和服务配置 |
+| `auth` | 组织、部门、用户、角色、OAuth 授权记录和服务配置 |
 | `session` | 会话、运行尝试、Server 实例和事件 |
 | `agentMail` | 邮件、收件权限、消费租约和删除记录 |
 | `openIM` | Moss 用户 / 群与 OpenIM 标识的绑定 |

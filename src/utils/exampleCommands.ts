@@ -156,7 +156,7 @@ export const getExampleCommandFromCache = memoize(() => {
     'create a util logging.py that...',
   ]
 
-  return `Try "${sample(commands)}"`
+  return `试试：“${sample(commands)}”`
 })
 
 export const refreshExampleCommands = memoize(async (): Promise<void> => {

@@ -11,8 +11,8 @@
 
 - session runtime API
 - auth API
-- 内置窗口登录授权与永久 API Key 交换
-- users / api keys 管理 API
+- 内置窗口登录授权与短期 access token 交换
+- users 管理 API
 - `/admin` 静态 SPA
 
 仓库开发环境的默认启动入口：
@@ -124,7 +124,7 @@ runner 固定在容器内运行 `moss-session-runner.mjs --stdio <manifest>`，
 
 Moss Server 自身提供浏览器登录授权，不连接外部 OAuth/OIDC 提供方，因此无需配置 authorization URL、client ID、client secret 或固定 Server callback。
 
-桌面客户端在“设置 → 远端”填写 Server 地址并点击“认证”后，会启动临时本地 callback listener，生成 `state` 和 PKCE verifier/challenge，再通过隔离的 Moss 认证窗口打开 Server 登录页。用户使用已有 Moss Server 账号登录，Server 将一次性 authorization code 重定向到客户端回环地址，客户端换取永久 API Key 并加密保存。
+桌面客户端在“设置 → 远端”填写 Server 地址并点击“认证”后，会启动临时本地 callback listener，生成 `state` 和 PKCE verifier/challenge，再通过隔离的 Moss 认证窗口打开 Server 登录页。用户使用已有 Moss Server 账号登录，Server 将一次性 authorization code 重定向到客户端回环地址，客户端换取短期 access token 并加密保存。
 
 授权请求和一次性 authorization code 保存在 AuthCenter SQLite 中，分别有效 10 分钟和 2 分钟，可跨 Server 进程重启和多实例请求切换。桌面客户端认证期间，原“认证”按钮会变为“取消”，点击后立即关闭本地 callback 并解除认证状态。
 
@@ -302,7 +302,7 @@ MOSS_RAGFLOW_PASSWORD_LENGTH=6
 
 ### POST `/api/v1/auth/token`
 
-密码或 API key 登录，返回 access token。
+使用用户名/邮箱和密码登录，返回短期 access token。
 
 密码登录：
 
@@ -315,15 +315,6 @@ MOSS_RAGFLOW_PASSWORD_LENGTH=6
 ```
 
 兼容旧客户端，`email` 登录仍然可用。
-
-API key 登录：
-
-```json
-{
-  "grant_type": "api_key",
-  "api_key": "moss_sk_xxx.yyy"
-}
-```
 
 示例响应：
 
@@ -406,17 +397,14 @@ http://127.0.0.1:54321/callback?code=<one-time-code>&state=<client-state>
 }
 ```
 
-验证完成后返回 HTTP `200`，永久 API Key 只在这一次响应中返回：
+验证完成后返回 HTTP `200`。响应中的 access token 是短期 JWT，后续请求通过
+`Authorization: Bearer <access_token>` 发送：
 
 ```json
 {
-  "api_key": "moss_sk_xxx.yyy",
-  "key": {
-    "id": "key-id",
-    "name": "oauth:browser-login",
-    "scopes": ["sessions:create", "sessions:attach", "sessions:list"],
-    "status": "active"
-  },
+  "access_token": "jwt",
+  "token_type": "Bearer",
+  "expires_in": 3600,
   "user": {
     "id": "user-id",
     "email": "user@example.com",
@@ -429,8 +417,6 @@ http://127.0.0.1:54321/callback?code=<one-time-code>&state=<client-state>
   "scopes": ["sessions:create", "sessions:attach", "sessions:list"]
 }
 ```
-
-API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE /api/v1/api-keys/:keyId` 撤销。同一用户再次通过浏览器认证会轮换 Key，并立即撤销上一次浏览器登录签发的 Key。客户端随后可使用新 Key 调用 `POST /api/v1/auth/token` 获取短期 access token，或直接作为 Bearer 凭据访问 Server。
 
 ### GET `/api/v1/auth/me`
 
@@ -547,7 +533,7 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
 
 需要 scope：`admin:users`，并校验当前权限和部门管理范围。部门管理员只能删除管理范围内的普通用户；不能删除当前登录用户或最后一名启用的系统管理员。
 
-返回 `{ "ok": true }`。用户被逻辑删除并从用户列表和通讯录移除，密码、已签发的访问令牌和 API Key 失效，OAuth 登录绑定及待兑换授权码清除，角色和部门关联移除，定时任务停用、会话标记为终止。用户名和邮箱可重新使用。重复删除或用户不存在返回 `404`。
+返回 `{ "ok": true }`。用户被逻辑删除并从用户列表和通讯录移除，密码和已签发的访问令牌失效，OAuth 登录绑定及待兑换授权码清除，角色和部门关联移除，定时任务停用、会话标记为终止。用户名和邮箱可重新使用。重复删除或用户不存在返回 `404`。
 
 历史会话、消息、文件和外部知识库数据保留，不提供恢复接口。服务端会关闭该用户的 WebSocket 连接，并尝试停止运行中的会话及撤销 OpenIM 登录；运行时或 OpenIM 清理失败会记录警告，不回滚账号删除。外部知识库账号不随之删除。
 
@@ -610,51 +596,6 @@ API Key 无自动过期时间，服务端只存哈希，可通过现有 `DELETE 
 需要 scope：`admin:users`
 
 返回该用户在当前 org 下的 session 列表。
-
-## API Keys API
-
-### GET `/api/v1/api-keys`
-
-需要 scope：`admin:api_keys`
-
-### POST `/api/v1/api-keys`
-
-需要 scope：`admin:api_keys`
-
-请求：
-
-```json
-{
-  "user_id": "user-id",
-  "name": "service-key",
-  "scopes": ["sessions:create", "sessions:list"]
-}
-```
-
-示例响应：
-
-```json
-{
-  "api_key": {
-    "id": "key-id",
-    "orgId": "org-id",
-    "userId": "user-id",
-    "name": "service-key",
-    "prefix": "moss_sk_xxx",
-    "scopes": ["sessions:create", "sessions:list"],
-    "status": "active",
-    "createdAt": 0,
-    "lastUsedAt": null
-  },
-  "plain_text_key": "moss_sk_xxx.yyy"
-}
-```
-
-### DELETE `/api/v1/api-keys/:keyId`
-
-需要 scope：`admin:api_keys`
-
-逻辑上是 revoke，不会物理删除行。
 
 ## Sessions API
 
@@ -880,7 +821,7 @@ OpenIM 是 Moss Server 的内置组织级 integration。管理密钥保存在 Se
 
 - `AuthService.verifyAccessToken()` 已经是进程内调用，server 不再反向 fetch 外部 auth-center。
 - `admin/dist` 由同一个进程直接挂在 `/admin`。
-- 单库模式下，auth / users / api_keys / sessions / runtime events 共用同一个 SQLite 文件。
+- 单库模式下，auth / users / sessions / runtime events 共用同一个 SQLite 文件。
 
 ## 云端定时任务
 

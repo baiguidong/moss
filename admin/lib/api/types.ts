@@ -64,11 +64,10 @@ export interface PermissionDefinition {
 }
 
 export interface LoginRequest {
-  grant_type: 'password' | 'api_key'
+  grant_type: 'password'
   username?: string
   email?: string
   password?: string
-  api_key?: string
 }
 
 export interface LoginResponse {
@@ -145,33 +144,6 @@ export interface UpsertRoleRequest {
   name?: string
   description?: string
   permissions?: string[]
-}
-
-export interface ApiKey {
-  id: string
-  orgId: string
-  userId: string
-  name: string
-  prefix: string
-  scopes: string[]
-  status: 'active' | 'revoked'
-  createdAt: number
-  lastUsedAt: number | null
-}
-
-export interface ApiKeysListResponse {
-  api_keys: ApiKey[]
-}
-
-export interface CreateApiKeyRequest {
-  user_id: string
-  name: string
-  scopes: string[]
-}
-
-export interface CreateApiKeyResponse {
-  api_key: ApiKey
-  plain_text_key: string
 }
 
 export interface RagflowAccountStatus {

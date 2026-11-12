@@ -8,7 +8,6 @@ import {
   Laptop,
   Settings,
   LogOut,
-  KeyRound,
 } from 'lucide-react'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -51,12 +50,6 @@ const menuItems: NavItem[] = [
 ]
 
 const systemItems: NavItem[] = [
-  {
-    title: 'API Key 管理',
-    url: '/api-keys',
-    icon: KeyRound,
-    requiredScope: 'admin:api_keys',
-  },
   {
     title: '系统设置',
     url: '/settings',

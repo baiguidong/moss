@@ -55,7 +55,7 @@ export function Onboarding({
     />
     </Box>;
   const securityStep = <Box flexDirection="column" gap={1} paddingLeft={1}>
-      <Text bold>Security notes:</Text>
+      <Text bold>安全提示：</Text>
       <Box flexDirection="column" width={70}>
         {/**
          * OrderedList misnumbers items when rendering conditionally,
@@ -63,20 +63,20 @@ export function Onboarding({
          */}
         <OrderedList>
           <OrderedList.Item>
-            <Text>Moss can make mistakes</Text>
+            <Text>Moss 可能会出错</Text>
             <Text dimColor wrap="wrap">
-              You should always review Moss&apos;s responses, especially when
+              请始终检查 Moss 的回答，尤其是在
               <Newline />
-              running code.
+              运行代码时。
               <Newline />
             </Text>
           </OrderedList.Item>
           <OrderedList.Item>
             <Text>
-              Due to prompt injection risks, only use it with code you trust
+              由于存在提示词注入风险，请只在你信任的代码上使用 Moss
             </Text>
             <Text dimColor wrap="wrap">
-              For more details, check local Moss security documentation.
+              详情请查看本地 Moss 安全文档。
             </Text>
           </OrderedList.Item>
         </OrderedList>
@@ -118,19 +118,19 @@ export function Onboarding({
     steps.push({
       id: 'terminal-setup',
       component: <Box flexDirection="column" gap={1} paddingLeft={1}>
-          <Text bold>Use Moss&apos;s terminal setup?</Text>
+          <Text bold>使用 Moss 的终端设置？</Text>
           <Box flexDirection="column" width={70} gap={1}>
             <Text>
-              For the optimal coding experience, enable the recommended settings
+              为获得最佳编码体验，启用终端推荐设置
               <Newline />
               for your terminal:{' '}
               {env.terminal === 'Apple_Terminal' ? 'Option+Enter for newlines and visual bell' : 'Shift+Enter for newlines'}
             </Text>
             <Select options={[{
-            label: 'Yes, use recommended settings',
+            label: '是，使用推荐设置',
             value: 'install'
           }, {
-            label: 'No, maybe later with /terminal-setup',
+            label: '否，稍后通过 /terminal-setup 设置',
             value: 'no'
           }]} onChange={value => {
             if (value === 'install') {
@@ -141,7 +141,7 @@ export function Onboarding({
             }
           }} onCancel={() => goToNextStep()} />
             <Text dimColor>
-              {exitState.pending ? <>Press {exitState.keyName} again to exit</> : <>Enter to confirm · Esc to skip</>}
+              {exitState.pending ? <>再次按 {exitState.keyName} 退出</> : <>Enter 确认 · Esc 跳过</>}
             </Text>
           </Box>
         </Box>
@@ -178,7 +178,7 @@ export function Onboarding({
       <Box flexDirection="column" marginTop={1}>
         {currentStep?.component}
         {exitState.pending && <Box padding={1}>
-            <Text dimColor>Press {exitState.keyName} again to exit</Text>
+            <Text dimColor>再次按 {exitState.keyName} 退出</Text>
           </Box>}
       </Box>
     </Box>;

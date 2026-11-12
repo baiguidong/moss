@@ -36,7 +36,7 @@ describe('enterprise login requirements', () => {
     const fetchImpl = async () => { throw new Error('Unexpected network request'); };
     for (const settings of [
       {},
-      { enterpriseAccountServerUrl: 'https://moss.example.com', enterpriseAccountCredentialMode: 'api-key' },
+      { enterpriseAccountServerUrl: 'https://moss.example.com', enterpriseAccountCredentialMode: 'password' },
       { enterpriseAccountServerUrl: 'https://moss.example.com', enterpriseAccountCredentialMode: 'password' },
       { enterpriseAccountServerUrl: 'https://moss.example.com', enterpriseAccountCredentialMode: 'password', enterpriseAccountUserEmail: 'alice@example.com' },
     ]) {
@@ -49,9 +49,9 @@ describe('cloud usage', () => {
   it('does not request usage when cloud is disabled, unconfigured or not signed in', async () => {
     globalThis.fetch = async () => { throw new Error('Unexpected request'); };
     for (const settings of [
-      { enterpriseEnabled: false, enterpriseAccountServerUrl: 'https://moss.example.com', enterpriseAccountApiKey: 'key' },
+      { enterpriseEnabled: false, enterpriseAccountServerUrl: 'https://moss.example.com', enterpriseAccountAccessToken: 'token' },
       { enterpriseEnabled: true },
-      { enterpriseEnabled: true, enterpriseAccountServerUrl: 'https://moss.example.com', enterpriseAccountCredentialMode: 'api-key' },
+      { enterpriseEnabled: true, enterpriseAccountServerUrl: 'https://moss.example.com' },
     ]) {
       const client = createEnterpriseAccountClient({ getSettings: () => settings });
       expect(await client.getCloudUsageOverview()).toBeNull();
@@ -73,14 +73,14 @@ describe('cloud usage', () => {
     const client = createEnterpriseAccountClient({ getSettings: () => ({
       enterpriseEnabled: true,
       agentMode: 'local',
-      enterpriseAccount: { serverUrl: 'https://moss.example.com/', credentialMode: 'api-key', apiKey: 'current-account-key' },
+      enterpriseAccount: { serverUrl: 'https://moss.example.com/', credentialMode: 'password', userEmail: 'alice@example.com', userPassword: 'current-account-password' },
     }) });
 
     expect(await client.getCloudUsageOverview()).toEqual(overview);
     expect(requests.map(request => request.url)).toEqual([
       'https://moss.example.com/api/v1/auth/token', 'https://moss.example.com/api/v1/usage?host_kind=cloud',
     ]);
-    expect(JSON.parse(requests[0].init.body)).toEqual({ grant_type: 'api_key', api_key: 'current-account-key' });
+    expect(JSON.parse(requests[0].init.body)).toEqual({ grant_type: 'password', email: 'alice@example.com', password: 'current-account-password' });
     expect(requests[1].init.headers.authorization).toBe('Bearer current-account-token');
     expect(requests[1].init.signal).toBeInstanceOf(AbortSignal);
     expect(requests[1].init.signal).toBe(requests[0].init.signal);
@@ -105,18 +105,18 @@ describe('remote direct client settings', () => {
       enterpriseAccountServerUrl: 'https://legacy.example.com',
       enterpriseAccount: {
         serverUrl: ' https://remote.example.com ',
-        credentialMode: 'api-key',
+        credentialMode: 'password',
         userEmail: ' user@example.com ',
         userPassword: '  password  ',
-        apiKey: ' key ',
+        accessToken: ' token ',
         workspace: ' /workspace ',
       },
     })).toEqual({
       serverUrl: 'https://remote.example.com',
-      credentialMode: 'api-key',
+      credentialMode: 'password',
       userEmail: 'user@example.com',
       userPassword: '  password  ',
-      apiKey: 'key',
+      accessToken: 'token',
       workspace: '/workspace',
     });
   });
@@ -140,8 +140,8 @@ describe('remote direct client settings', () => {
 
     await expect(requestEnterpriseAccessToken({
       authCenterUrl: 'http://127.0.0.1:43127',
-      credentialMode: 'api-key',
-      apiKey: 'server-key',
+      loginIdentifier: 'user@example.com',
+      password: 'server-password',
     })).rejects.toThrow(
       'Failed to connect to Moss Server at http://127.0.0.1:43127: fetch failed',
     );
@@ -159,8 +159,8 @@ describe('remote direct client settings', () => {
 
     await expect(requestEnterpriseAuthentication({
       authCenterUrl: 'https://moss.example.com',
-      credentialMode: 'api-key',
-      apiKey: 'server-key',
+      loginIdentifier: 'user@example.com',
+      password: 'server-password',
     })).resolves.toEqual({
       authToken: 'access-token',
       userId: 'user-2',

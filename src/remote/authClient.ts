@@ -3,7 +3,6 @@ import { fetchDirectConnect } from './directConnectFetch.js'
 export async function resolveDirectConnectAccessToken(options: {
   authToken?: string
   serverUrl?: string
-  apiKey?: string
   username?: string
   email?: string
   password?: string
@@ -18,7 +17,6 @@ export async function resolveDirectConnectAccessToken(options: {
   }
 
   const serverUrl = options.serverUrl || ''
-  const apiKey = options.apiKey || process.env.MOSS_API_KEY || ''
   const username =
     options.username ||
     process.env.MOSS_USER_USERNAME ||
@@ -27,7 +25,7 @@ export async function resolveDirectConnectAccessToken(options: {
   const email = options.email || process.env.MOSS_USER_EMAIL || ''
   const password = options.password || process.env.MOSS_USER_PASSWORD || ''
   const loginIdentifier = username || email
-  if (!serverUrl || (!apiKey && !(loginIdentifier && password))) {
+  if (!serverUrl || !(loginIdentifier && password)) {
     return undefined
   }
 
@@ -38,18 +36,11 @@ export async function resolveDirectConnectAccessToken(options: {
       headers: {
         'content-type': 'application/json',
       },
-      body: JSON.stringify(
-        apiKey
-          ? {
-              grant_type: 'api_key',
-              api_key: apiKey,
-            }
-          : {
-              grant_type: 'password',
-              ...(username ? { username } : { email }),
-              password,
-            },
-      ),
+      body: JSON.stringify({
+        grant_type: 'password',
+        ...(username ? { username } : { email }),
+        password,
+      }),
     },
   )
 

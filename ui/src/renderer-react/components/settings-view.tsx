@@ -1053,7 +1053,7 @@ export function SettingsView({
   }, [selectedAppSetting?.id, activeGroupId]);
 
   React.useEffect(() => {
-    if (!settingsDraft?.enterpriseAccountServerUrl || !settingsDraft.enterpriseAccountApiKey) {
+    if (!settingsDraft?.enterpriseAccountServerUrl || !settingsDraft.enterpriseAccountAccessToken) {
       setRemoteIdentity(null);
       return;
     }
@@ -1066,7 +1066,7 @@ export function SettingsView({
     return () => {
       cancelled = true;
     };
-  }, [settingsDraft?.enterpriseAccountApiKey, settingsDraft?.enterpriseAccountServerUrl]);
+  }, [settingsDraft?.enterpriseAccountAccessToken, settingsDraft?.enterpriseAccountServerUrl]);
 
   React.useEffect(() => {
     const container = scrollRef.current;
@@ -1585,7 +1585,7 @@ export function SettingsView({
                               <div className="space-y-2">
                                 <div className="flex items-center justify-end gap-3">
                                   <span className="text-xs text-muted-foreground">
-                                    {remoteAuthState === 'success' || settingsDraft.enterpriseAccountApiKey
+                                    {remoteAuthState === 'success' || settingsDraft.enterpriseAccountAccessToken
                                       ? (remoteIdentity?.userName || settingsDraft.enterpriseAccountUserName
                                           || remoteIdentity?.userEmail || settingsDraft.enterpriseAccountUserEmail
                                           || '已认证')
@@ -1613,7 +1613,7 @@ export function SettingsView({
                                     )}
                                     {remoteAuthState === 'loading'
                                       ? '取消'
-                                      : remoteAuthState === 'success' || settingsDraft.enterpriseAccountApiKey
+                                      : remoteAuthState === 'success' || settingsDraft.enterpriseAccountAccessToken
                                         ? '重新认证'
                                         : '开始认证'}
                                   </Button>

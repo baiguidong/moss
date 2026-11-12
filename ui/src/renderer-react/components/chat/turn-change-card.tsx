@@ -56,9 +56,9 @@ export function TurnChangeCard({
     return () => { active = false; };
   }, [sessionId, change.observationId, verified, selectedFile?.filePath, selectedFile?.verified, reviewOpen]);
 
-  // Keep empty observations as evidence, but don't show an empty comparison.
-  // Incomplete coverage and zero-line changes (e.g. binary files) remain visible.
-  if (change.coverage === 'complete' && change.files.length === 0 && change.stats.filesChanged === 0) return null;
+  // Only render an actionable card when at least one file change was
+  // confirmed. Missing observations and zero-change turns create noise here.
+  if (!verified || change.files.length === 0 || change.stats.filesChanged === 0) return null;
 
   const openConfirmation = async () => {
     setConfirmOpen(true);

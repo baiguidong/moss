@@ -1,5 +1,4 @@
 import {
-  createHash,
   randomBytes,
   randomUUID,
   scryptSync,
@@ -53,25 +52,11 @@ export type AuthCenterRole = {
   updatedAt: number
 }
 
-export type AuthCenterApiKey = {
-  id: string
-  orgId: string
-  userId: string
-  name: string
-  prefix: string
-  secretHash: string
-  scopes: string[]
-  status: 'active' | 'revoked'
-  createdAt: number
-  lastUsedAt: number | null
-}
-
 export type AuthCenterOAuthIdentity = {
   providerId: string
   subject: string
   userId: string
   email: string
-  apiKeyId: string | null
   createdAt: number
   lastLoginAt: number
 }
@@ -109,7 +94,6 @@ export type SanitizedAuthCenterDepartment = AuthCenterDepartment & {
 export type AuthCenterBootstrap = {
   created: boolean
   bootstrapAdminUsername?: string
-  bootstrapAdminApiKey?: string
   bootstrapAdminEmail?: string
   bootstrapAdminPassword?: string
 }
@@ -126,20 +110,6 @@ const INTERNAL_EMAIL_DOMAIN = 'users.internal.moss'
 
 function now(): number {
   return Date.now()
-}
-
-function parseJsonArray(value: unknown): string[] {
-  if (typeof value !== 'string' || value.trim() === '') {
-    return []
-  }
-  try {
-    const parsed = JSON.parse(value) as unknown
-    return Array.isArray(parsed)
-      ? parsed.filter(v => typeof v === 'string')
-      : []
-  } catch {
-    return []
-  }
 }
 
 function mapOrganization(row: SqlRow): AuthCenterOrganization {
@@ -199,28 +169,12 @@ function mapRole(row: SqlRow): AuthCenterRole {
   }
 }
 
-function mapApiKey(row: SqlRow): AuthCenterApiKey {
-  return {
-    id: String(row.id),
-    orgId: String(row.org_id),
-    userId: String(row.user_id),
-    name: String(row.name),
-    prefix: String(row.prefix),
-    secretHash: String(row.secret_hash),
-    scopes: parseJsonArray(row.scopes_json),
-    status: String(row.status) as 'active' | 'revoked',
-    createdAt: Number(row.created_at),
-    lastUsedAt: row.last_used_at == null ? null : Number(row.last_used_at),
-  }
-}
-
 function mapOAuthIdentity(row: SqlRow): AuthCenterOAuthIdentity {
   return {
     providerId: String(row.provider_id),
     subject: String(row.subject),
     userId: String(row.user_id),
     email: String(row.email),
-    apiKeyId: row.api_key_id == null ? null : String(row.api_key_id),
     createdAt: Number(row.created_at),
     lastLoginAt: Number(row.last_login_at),
   }
@@ -752,7 +706,6 @@ export class AuthRepository {
         WHERE id = ? AND org_id = ? AND deleted_at IS NULL
       `).run(deletedAt, createSyntheticUserEmail(id), deletedAt, id, orgId)
       if (!result.changes) return
-      await this.db.prepare("UPDATE api_keys SET status = 'revoked' WHERE user_id = ? AND org_id = ?").run(id, orgId)
       await this.db.prepare('DELETE FROM oauth_authorization_codes WHERE user_id = ? AND org_id = ?').run(id, orgId)
       await this.db.prepare('DELETE FROM oauth_identities WHERE user_id = ?').run(id)
       await this.db.prepare('DELETE FROM user_roles WHERE user_id = ?').run(id)
@@ -800,97 +753,6 @@ export class AuthRepository {
       .run(tokenLimit, id)
   }
 
-  // API Key operations
-  async createApiKey(apiKey: AuthCenterApiKey): Promise<void> {
-    await this.db
-      .prepare(
-        `
-      INSERT INTO api_keys (id, org_id, user_id, name, prefix, secret_hash,
-                            scopes_json, status, created_at, last_used_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-      )
-      .run(
-        apiKey.id,
-        apiKey.orgId,
-        apiKey.userId,
-        apiKey.name,
-        apiKey.prefix,
-        apiKey.secretHash,
-        JSON.stringify(apiKey.scopes),
-        apiKey.status,
-        apiKey.createdAt,
-        apiKey.lastUsedAt,
-      )
-  }
-
-  async getApiKeyById(id: string): Promise<AuthCenterApiKey | null> {
-    const row = (await this.db
-      .prepare(
-        `
-      SELECT * FROM api_keys WHERE id = ? LIMIT 1
-    `,
-      )
-      .get(id)) as SqlRow | undefined
-    return row ? mapApiKey(row) : null
-  }
-
-  async findActiveApiKey(
-    plainTextKey: string,
-  ): Promise<AuthCenterApiKey | null> {
-    const match = plainTextKey.match(/^moss_sk_([^\.]+)\.(.+)$/)
-    if (!match) {
-      return null
-    }
-    const [, id, secret] = match
-    const apiKey = await this.getApiKeyById(id)
-    if (!apiKey || apiKey.status !== 'active') {
-      return null
-    }
-    return apiKey.secretHash === sha256(secret) ? apiKey : null
-  }
-
-  async listApiKeysByOrg(orgId: string): Promise<AuthCenterApiKey[]> {
-    const rows = (await this.db
-      .prepare(
-        `
-      SELECT * FROM api_keys WHERE org_id = ? ORDER BY created_at ASC
-    `,
-      )
-      .all(orgId)) as SqlRow[]
-    return rows.map(mapApiKey)
-  }
-
-  async updateApiKeyLastUsed(id: string): Promise<void> {
-    await this.db
-      .prepare(
-        `
-      UPDATE api_keys SET last_used_at = ? WHERE id = ?
-    `,
-      )
-      .run(now(), id)
-  }
-
-  async updateApiKeyScopes(id: string, scopes: string[]): Promise<void> {
-    await this.db
-      .prepare(
-        `
-      UPDATE api_keys SET scopes_json = ? WHERE id = ?
-    `,
-      )
-      .run(JSON.stringify(scopes), id)
-  }
-
-  async revokeApiKey(id: string): Promise<void> {
-    await this.db
-      .prepare(
-        `
-      UPDATE api_keys SET status = 'revoked' WHERE id = ?
-    `,
-      )
-      .run(id)
-  }
-
   // OAuth identity operations
   async getOAuthIdentity(
     providerId: string,
@@ -908,26 +770,13 @@ export class AuthRepository {
     return row ? mapOAuthIdentity(row) : null
   }
 
-  async getOAuthIdentityByApiKeyId(
-    apiKeyId: string,
-  ): Promise<AuthCenterOAuthIdentity | null> {
-    const row = (await this.db
-      .prepare(
-        `
-      SELECT * FROM oauth_identities WHERE api_key_id = ? LIMIT 1
-    `,
-      )
-      .get(apiKeyId)) as SqlRow | undefined
-    return row ? mapOAuthIdentity(row) : null
-  }
-
   async createOAuthIdentity(identity: AuthCenterOAuthIdentity): Promise<void> {
     await this.db
       .prepare(
         `
       INSERT INTO oauth_identities (
-        provider_id, subject, user_id, email, api_key_id, created_at, last_login_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        provider_id, subject, user_id, email, created_at, last_login_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
     `,
       )
       .run(
@@ -935,7 +784,6 @@ export class AuthRepository {
         identity.subject,
         identity.userId,
         identity.email,
-        identity.apiKeyId,
         identity.createdAt,
         identity.lastLoginAt,
       )
@@ -945,20 +793,18 @@ export class AuthRepository {
     providerId: string
     subject: string
     email: string
-    apiKeyId: string
     lastLoginAt: number
   }): Promise<void> {
     await this.db
       .prepare(
         `
       UPDATE oauth_identities
-      SET email = ?, api_key_id = ?, last_login_at = ?
+      SET email = ?, last_login_at = ?
       WHERE provider_id = ? AND subject = ?
     `,
       )
       .run(
         input.email,
-        input.apiKeyId,
         input.lastLoginAt,
         input.providerId,
         input.subject,
@@ -1229,12 +1075,6 @@ export class AuthRepository {
     const orgId = randomUUID()
     const adminUserId = randomUUID()
     const resolvedAdmin = resolveBootstrapAdminConfig(config)
-    const { apiKey, plainTextKey } = createApiKeyRecord({
-      orgId,
-      userId: adminUserId,
-      name: 'bootstrap-admin',
-      scopes: ['*'],
-    })
 
     await this.db.transaction(async () => {
       await this.createOrganization(orgId, 'Default Organization', now())
@@ -1257,7 +1097,6 @@ export class AuthRepository {
       if (!adminRole)
         throw new Error('Failed to initialize the system administrator role')
       await this.setUserRoleIds(adminUserId, [adminRole.id])
-      await this.createApiKey(apiKey)
       await this.setConfig('issuer', 'moss-server')
       await this.setConfig('jwt_secret', randomBytes(32).toString('base64url'))
     })
@@ -1265,7 +1104,6 @@ export class AuthRepository {
     return {
       created: true,
       bootstrapAdminUsername: resolvedAdmin.username,
-      bootstrapAdminApiKey: plainTextKey,
       bootstrapAdminEmail: resolvedAdmin.email,
       bootstrapAdminPassword: resolvedAdmin.password,
     }
@@ -1294,12 +1132,6 @@ export class AuthRepository {
     const org = (await this.listOrganizations())[0]
     const orgId = org?.id ?? randomUUID()
     const adminUserId = randomUUID()
-    const { apiKey, plainTextKey } = createApiKeyRecord({
-      orgId,
-      userId: adminUserId,
-      name: 'bootstrap-admin',
-      scopes: ['*'],
-    })
 
     await this.db.transaction(async () => {
       if (!org) {
@@ -1324,13 +1156,11 @@ export class AuthRepository {
       if (!adminRole)
         throw new Error('Failed to initialize the system administrator role')
       await this.setUserRoleIds(adminUserId, [adminRole.id])
-      await this.createApiKey(apiKey)
     })
 
     return {
       created: true,
       bootstrapAdminUsername: resolvedAdmin.username,
-      bootstrapAdminApiKey: plainTextKey,
       bootstrapAdminEmail: resolvedAdmin.email,
       bootstrapAdminPassword: resolvedAdmin.password,
     }
@@ -1346,10 +1176,6 @@ export class AuthRepository {
       .get()) as SqlRow | undefined
     return Number(row?.count ?? 0) > 0
   }
-}
-
-function sha256(value: string): string {
-  return createHash('sha256').update(value).digest('hex')
 }
 
 function toPasswordHashRecord(password: string, salt?: string): string {
@@ -1418,47 +1244,6 @@ function resolveBootstrapAdminEmail(
     .replace(/^-+|-+$/g, '')
 
   return `${localPart || 'admin'}@local`
-}
-
-function createApiKeyValue(id: string, secret: string): string {
-  return `moss_sk_${id}.${secret}`
-}
-
-export function createApiKeyRecord(input: {
-  orgId: string
-  userId: string
-  name: string
-  scopes: string[]
-}): {
-  apiKey: AuthCenterApiKey
-  plainTextKey: string
-} {
-  const id = randomUUID()
-  const secret = randomBytes(24).toString('base64url')
-  const plainTextKey = createApiKeyValue(id, secret)
-
-  return {
-    apiKey: {
-      id,
-      orgId: input.orgId,
-      userId: input.userId,
-      name: input.name,
-      prefix: plainTextKey.slice(0, 16),
-      secretHash: sha256(secret),
-      scopes: input.scopes,
-      status: 'active',
-      createdAt: Date.now(),
-      lastUsedAt: null,
-    },
-    plainTextKey,
-  }
-}
-
-export function sanitizeApiKey(
-  apiKey: AuthCenterApiKey,
-): Omit<AuthCenterApiKey, 'secretHash'> {
-  const { secretHash: _secretHash, ...rest } = apiKey
-  return rest
 }
 
 export function sanitizeUser(user: AuthCenterUser): SanitizedAuthCenterUser {

@@ -927,23 +927,23 @@ try {
   );
   if (credentialServerUrl) {
     const storedCredentials = getRemoteDirectCredentials(credentialServerUrl);
-    const apiKey = desktopSettings.enterpriseAccountApiKey || storedCredentials.apiKey;
+    const accessToken = desktopSettings.enterpriseAccountAccessToken || storedCredentials.accessToken;
     const userPassword =
       desktopSettings.enterpriseAccountUserPassword || storedCredentials.userPassword;
-    if (apiKey || userPassword) {
-      const migrating = Boolean(desktopSettings.enterpriseAccountApiKey || desktopSettings.enterpriseAccountUserPassword);
+    if (accessToken || userPassword) {
+      const migrating = Boolean(desktopSettings.enterpriseAccountAccessToken || desktopSettings.enterpriseAccountUserPassword);
       if (migrating) saveRemoteDirectCredentials({
         serverUrl: credentialServerUrl,
-        apiKey,
+        accessToken,
         userPassword,
       });
       const hydrated = normalizeDesktopSettings({
         ...desktopSettings,
-        enterpriseAccountApiKey: apiKey,
+        enterpriseAccountAccessToken: accessToken,
         enterpriseAccountUserPassword: userPassword,
         enterpriseAccount: {
           ...desktopSettings.enterpriseAccount,
-          apiKey,
+          accessToken,
           userPassword,
         },
       }, desktopSettings);
@@ -2662,7 +2662,7 @@ async function resolveCurrentMossServerAuthToken() {
   if (!enterpriseAccount.serverUrl) {
     throw new Error('该连接器需要 Moss Server 登录态，请先登录 Moss Server。');
   }
-  const authToken = enterpriseAccount.apiKey
+  const authToken = enterpriseAccount.accessToken
     || (await resolveEnterpriseAccountConnection()).authToken;
   if (!authToken) {
     throw new Error('无法取得 Moss Server 登录凭据，请重新登录 Moss Server。');
@@ -3045,35 +3045,35 @@ function refreshDesktopSettings(payload = {}, { policyUpdate = false } = {}) {
   const nestedRemotePayload = payload?.enterpriseAccount && typeof payload.enterpriseAccount === 'object'
     ? payload.enterpriseAccount
     : {};
-  const hasApiKeyUpdate = Object.prototype.hasOwnProperty.call(payload, 'enterpriseAccountApiKey')
-    || Object.prototype.hasOwnProperty.call(nestedRemotePayload, 'apiKey');
+  const hasAccessTokenUpdate = Object.prototype.hasOwnProperty.call(payload, 'enterpriseAccountAccessToken')
+    || Object.prototype.hasOwnProperty.call(nestedRemotePayload, 'accessToken');
   const hasPasswordUpdate = Object.prototype.hasOwnProperty.call(payload, 'enterpriseAccountUserPassword')
     || Object.prototype.hasOwnProperty.call(nestedRemotePayload, 'userPassword');
   if (previousServerUrl !== nextServerUrl) {
     const storedCredentials = nextServerUrl
       ? getRemoteDirectCredentials(nextServerUrl)
-      : { apiKey: '', userPassword: '' };
-    const apiKey = hasApiKeyUpdate
-      ? nextSettings.enterpriseAccountApiKey
-      : storedCredentials.apiKey;
+      : { accessToken: '', userPassword: '' };
+    const accessToken = hasAccessTokenUpdate
+      ? nextSettings.enterpriseAccountAccessToken
+      : storedCredentials.accessToken;
     const userPassword = hasPasswordUpdate
       ? nextSettings.enterpriseAccountUserPassword
       : storedCredentials.userPassword;
     nextSettings = normalizeDesktopSettings({
       ...nextSettings,
-      enterpriseAccountApiKey: apiKey,
+      enterpriseAccountAccessToken: accessToken,
       enterpriseAccountUserPassword: userPassword,
       enterpriseAccount: {
         ...nextSettings.enterpriseAccount,
-        apiKey,
+        accessToken,
         userPassword,
       },
     }, desktopSettings);
   }
-  if (nextServerUrl && (hasApiKeyUpdate || hasPasswordUpdate)) {
+  if (nextServerUrl && (hasAccessTokenUpdate || hasPasswordUpdate)) {
     saveRemoteDirectCredentials({
       serverUrl: nextServerUrl,
-      apiKey: nextSettings.enterpriseAccountApiKey,
+      accessToken: nextSettings.enterpriseAccountAccessToken,
       userPassword: nextSettings.enterpriseAccountUserPassword,
     });
   }
@@ -8696,10 +8696,10 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
     controller.signal.throwIfAborted();
     const settings = await refreshDesktopSettings({
       enterpriseAccountServerUrl: rawServerUrl,
-      enterpriseAccountCredentialMode: 'api-key',
+      enterpriseAccountCredentialMode: 'password',
       enterpriseAccountUserName: typeof authenticated.user?.name === 'string' ? authenticated.user.name.trim() : '',
       enterpriseAccountUserEmail: typeof authenticated.user?.email === 'string' ? authenticated.user.email.trim() : '',
-      enterpriseAccountApiKey: authenticated.apiKey,
+      enterpriseAccountAccessToken: authenticated.authToken,
     });
     mossLog('info', 'remote-auth', 'Moss Server authentication completed');
     return settings;

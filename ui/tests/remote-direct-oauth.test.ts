@@ -26,7 +26,7 @@ describe('remote direct OAuth', () => {
           .toBe(startBody?.code_challenge);
         expect(body.code).toBe(AUTHORIZATION_CODE);
         return Response.json({
-          api_key: 'moss_sk_test.secret',
+          access_token: 'jwt-test-token',
           user: { id: 'user-1' },
         });
       }
@@ -60,7 +60,7 @@ describe('remote direct OAuth', () => {
     );
     expect(result).toEqual({
       serverUrl: 'https://moss.example.com',
-      apiKey: 'moss_sk_test.secret',
+      authToken: 'jwt-test-token',
       user: { id: 'user-1' },
     });
     expect(authorizationClosed).toBe(true);

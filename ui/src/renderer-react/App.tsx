@@ -28,6 +28,7 @@ import { SessionPanelTabs } from '@/components/session-panel-tabs';
 import { MIN_PRESENTATION_WIDTH, useSessionPanelLayout, type SessionPanelLayout } from '@/lib/use-session-panel-layout';
 import { useNavigationHistory, type NavigationEntry } from '@/lib/use-navigation-history';
 import { deriveContextUsage, getRemoteModelContext } from '@/lib/context-usage';
+import { buildSessionInfo } from '@/lib/session-info';
 import { createWorkspaceDirectoryLoader } from '@/lib/workspace-directory-loader';
 import { firstMessageTitle, historyWithPendingFirstMessage, type PendingFirstMessage } from '@/lib/pending-first-message';
 import { initializeHomeResourceUsage, recordHomeResourceUse } from '@/lib/home-resource-usage';
@@ -353,7 +354,7 @@ export default function App() {
   const [selectedOperationDraftId, setSelectedOperationDraftId] = React.useState<string | null>(null);
   const [activeView, setActiveViewRaw] = React.useState<MainView>('chat');
   const setActiveView = React.useCallback((view: MainView) => { if (confirmAppViewLeave()) setActiveViewRaw(view); }, []);
-  const [settingsInitialSection, setSettingsInitialSection] = React.useState<'basic-info' | 'agents'>('basic-info');
+  const [settingsInitialSection, setSettingsInitialSection] = React.useState<'basic-info' | 'model' | 'permission' | 'agents'>('basic-info');
   const [settingsInitialAppId, setSettingsInitialAppId] = React.useState<string | null>(null);
   const [compactViewport, setCompactViewport] = React.useState(() => window.innerWidth < 720);
   const [toolFocusTarget, setToolFocusTarget] = React.useState<{
@@ -552,7 +553,7 @@ export default function App() {
   const [serverLogoutState, setServerLogoutState] = React.useState<'idle' | 'loading'>('idle');
   const [serverLogoutError, setServerLogoutError] = React.useState('');
   React.useEffect(() => {
-    if (window.mossWeb || !desktopSettings?.enterpriseAccountServerUrl || !desktopSettings.enterpriseAccountApiKey) {
+    if (window.mossWeb || !desktopSettings?.enterpriseAccountServerUrl || !desktopSettings.enterpriseAccountAccessToken) {
       setServerAccount(null);
       return;
     }
@@ -563,7 +564,7 @@ export default function App() {
       if (!cancelled) setServerAccount(null);
     });
     return () => { cancelled = true; };
-  }, [desktopSettings?.enterpriseAccountServerUrl, desktopSettings?.enterpriseAccountApiKey, desktopSettings?.enterpriseAccountUserEmail, desktopSettings?.enterpriseAccountUserPassword]);
+  }, [desktopSettings?.enterpriseAccountServerUrl, desktopSettings?.enterpriseAccountAccessToken, desktopSettings?.enterpriseAccountUserEmail, desktopSettings?.enterpriseAccountUserPassword]);
   const desktopSettingsRef = React.useRef<DesktopSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
   const [settingsNotice, setSettingsNotice] = React.useState('');
@@ -795,6 +796,24 @@ export default function App() {
       !remote && !resolved,
     );
   }, [activeDetail?.history, contextSessionId, contextAgentMode, contextCapacity, desktopSettings]);
+
+  const sessionUsage = React.useMemo(() => {
+    const history = activeDetail?.history;
+    if (!Array.isArray(history)) return null;
+    const info = buildSessionInfo(history);
+    const totals = info.historyUsage?.totals;
+    if (!totals && info.tools.total === 0) return null;
+    return {
+      promptTokens: (totals?.inputTokens ?? 0) + (totals?.cacheReadTokens ?? 0) + (totals?.cacheWriteTokens ?? 0),
+      outputTokens: totals?.outputTokens ?? 0,
+      cacheTokens: (totals?.cacheReadTokens ?? 0) + (totals?.cacheWriteTokens ?? 0),
+      requestCount: totals?.requestCount ?? 0,
+      toolCalls: info.tools.total,
+      toolSuccess: info.tools.success,
+      toolErrors: info.tools.error,
+      toolUnknown: info.tools.unknown,
+    };
+  }, [activeDetail?.history]);
 
   // Cumulative output tokens produced since the last human prompt — mirrors the
   // REPL's live "↓ N tokens" counter shown while a turn is in flight.
@@ -2056,6 +2075,32 @@ export default function App() {
     }
   }, [selectedAssistant]);
 
+  const handleSessionCommand = React.useCallback(async (prompt: string) => {
+    if (!activeSessionId) return;
+    try {
+      await dispatchToSession(activeSessionId, prompt, 'chat');
+    } catch (error) {
+      const reason = cleanIpcErrorMessage(error);
+      showPermissionNotice(`会话操作失败：${reason}`, 'error', 6000);
+      pushAppNotification({
+        severity: 'error',
+        source: '会话操作',
+        title: '会话操作失败',
+        message: reason,
+        details: getErrorMessage(error),
+      });
+    }
+  }, [activeSessionId, dispatchToSession, getErrorMessage, pushAppNotification, showPermissionNotice]);
+
+  const handleSessionModelChange = React.useCallback(async (model: string) => {
+    if (activeDetail?.busy) throw new Error('当前会话正在运行，请等待本轮完成后再切换模型。');
+    const nextModel = model.trim();
+    if (!nextModel) throw new Error('请输入模型名称。');
+    const saved = await window.agentDesktop.updateSettings({ model: nextModel });
+    applyDesktopSettings(saved);
+    showPermissionNotice(`已切换模型：${nextModel}`, 'info', 3500);
+  }, [activeDetail?.busy, applyDesktopSettings, showPermissionNotice]);
+
   const handleCreateProjectConversation = React.useCallback(async (prompt: string) => {
     if (!prompt.trim() || projectCreationEntryLock.current) return;
     if (!confirmAppViewLeave()) return;
@@ -2816,7 +2861,7 @@ export default function App() {
     setServerLogoutError('');
     try {
       const next = await window.agentDesktop.updateSettings({
-        enterpriseAccountApiKey: '',
+        enterpriseAccountAccessToken: '',
         enterpriseAccountUserName: '',
         enterpriseAccountUserEmail: '',
         enterpriseAccountUserPassword: '',
@@ -3165,6 +3210,14 @@ export default function App() {
                 interactions={latestSessionInteractions(activeDetail?.history ?? [])}
                 onRestoreInteraction={handleRestoreInteraction}
                 onInteraction={activeDetail?.agentMode !== 'remote-direct' && !activeDetail?.isSubAgent ? handleSessionInteraction : undefined}
+                onRunCommand={activeDetail?.agentMode !== 'remote-direct' && !activeDetail?.isSubAgent ? handleSessionCommand : undefined}
+                permissionMode={activeDetail?.permissionMode ?? desktopSettings?.permissionMode ?? 'default'}
+                onPermissionModeChange={handleSessionPermissionModeChange}
+                permissionModeChanging={permissionModeSettingSessionId === activeSessionId}
+                currentModel={desktopSettings?.model}
+                onModelChange={activeDetail?.agentMode !== 'remote-direct' && !activeDetail?.isSubAgent ? handleSessionModelChange : undefined}
+                modelSettings={desktopSettings ? { url: desktopSettings.url, apiKey: desktopSettings.apiKey } : undefined}
+                sessionUsage={sessionUsage}
                 value={input}
                 loading={Boolean(activeDetail?.busy || pendingSendRequests.has(activeSessionId) || pendingFirstMessage?.sessionId === activeSessionId)}
                 busyStartedAt={activeDetail?.busyStartedAt ?? null}
@@ -3188,9 +3241,6 @@ export default function App() {
                 leftCollapsed={effectiveLeftCollapsed}
                 rightCollapsed={layout.rightCollapsed}
                 composerIntent={composerIntent}
-                permissionMode={activeDetail?.permissionMode ?? desktopSettings?.permissionMode ?? 'default'}
-                onPermissionModeChange={handleSessionPermissionModeChange}
-                permissionModeChanging={permissionModeSettingSessionId === activeSessionId}
                 childSessions={activeChildSessions}
                 onReturnToParentSession={activeDetail?.isSubAgent && activeDetail.parentSessionId
                   ? () => { void openSession(activeDetail.parentSessionId!); }

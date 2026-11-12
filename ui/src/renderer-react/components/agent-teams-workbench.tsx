@@ -68,7 +68,8 @@ export function AgentTeamsStatus({
   const activeMembers = members.filter((member) => member.agentId !== snapshot.team.leadAgentId && member.activity === "working").length;
   const live = run.status === "live";
   const phaseLabel = PHASE_LABELS[snapshot.phase] ?? snapshot.phase;
-  const statusLabel = live ? "运行中" : run.status === "completed" ? "已完成" : "已中断";
+  const allTasksCompleted = counts.total > 0 && counts.completed === counts.total;
+  const statusLabel = live && allTasksCompleted ? "收尾中" : live ? "运行中" : run.status === "completed" ? "已完成" : "已中断";
 
   return (
     <button
@@ -87,7 +88,7 @@ export function AgentTeamsStatus({
         )} />
       </span>
       <span className="shrink-0 whitespace-nowrap text-[11px] font-medium text-foreground">Team {members.length}</span>
-      <span className="hidden truncate text-[10px] text-muted-foreground @[640px]/session-header:inline">{statusLabel} · {counts.completed}/{counts.total}</span>
+      <span className="hidden truncate text-[10px] text-muted-foreground @[640px]/session-header:inline">{statusLabel} · 任务 {counts.completed}/{counts.total}</span>
     </button>
   );
 }

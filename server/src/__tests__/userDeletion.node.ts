@@ -47,11 +47,10 @@ try {
   const secondAdmin = await createUser('second-admin', department.id, 'admin')
   const managerLogin = await auth.issueTokenFromPassword({ username: manager.name, password: 'password' })
   const victimLogin = await auth.issueTokenFromPassword({ username: victim.name, password: 'password' })
-  const key = await auth.createApiKey({ orgId: admin.orgId, userId: victim.id, name: 'test', scopes: ['sessions:list'] }, admin)
-  const keyLogin = await auth.issueTokenFromApiKey(key.plain_text_key)
+  const keyLogin = victimLogin
   await repo.createOAuthIdentity({
     providerId: 'test', subject: 'subject', userId: victim.id, email: victim.email!,
-    apiKeyId: key.api_key.id, createdAt: Date.now(), lastLoginAt: Date.now(),
+    createdAt: Date.now(), lastLoginAt: Date.now(),
   })
   await auth.createOAuthAuthorizationRequest({
     id: 'pending-request', redirectUri: 'http://localhost/callback', state: 'state',
@@ -101,7 +100,6 @@ try {
     assert.equal((await remove(secondAdmin.id, adminLogin.access_token)).status, 200)
     await assert.rejects(auth.deleteUser({ orgId: admin.orgId, userId: admin.userId }), /至少需要保留/)
     assert.ok(await repo.getUserById(victim.id))
-    assert.ok(await repo.findActiveApiKey(key.plain_text_key))
 
     // A token issued to a former system admin cannot retain global delete access.
     const formerAdmin = await createUser('former-admin', department.id, 'admin')
@@ -124,9 +122,7 @@ try {
       assert.equal((await fetch(`${baseUrl}/sessions`, { headers: { authorization: `Bearer ${token}` } })).status, 401)
     }
     await assert.rejects(auth.issueTokenFromPassword({ username: victim.name, password: 'password' }))
-    await assert.rejects(auth.issueTokenFromApiKey(key.plain_text_key))
     await assert.rejects(auth.updateUser({ orgId: admin.orgId, userId: victim.id, status: 'active' }, admin))
-    assert.equal(await repo.findActiveApiKey(key.plain_text_key), null)
     assert.deepEqual(await repo.listRolesForUser(victim.id), [])
     assert.equal(await db.prepare('SELECT * FROM oauth_identities WHERE user_id=?').get(victim.id), undefined)
     assert.equal(await db.prepare('SELECT * FROM oauth_authorization_codes WHERE user_id=?').get(victim.id), undefined)

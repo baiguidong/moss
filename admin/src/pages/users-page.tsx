@@ -11,7 +11,6 @@ import {
   Database,
   Eye,
   ExternalLink,
-  KeyRound,
   Loader2,
   LockKeyhole,
   MoreHorizontal,
@@ -99,17 +98,14 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import {
-  createApiKey,
   createDepartment,
   createUser,
   deleteDepartment,
   deleteUser,
-  getApiKeys,
   getDepartments,
   getRoles,
   getUsers,
   resetPassword,
-  revokeApiKey,
   setDepartmentTokenLimit,
   setUserTokenLimit,
   updateDepartment,
@@ -129,7 +125,6 @@ import { hasScope } from '@/lib/api/client'
 import { getUserSessions } from '@/lib/api/sessions'
 import { useAuth } from '@/lib/hooks/use-auth'
 import type {
-  ApiKey,
   AuthDepartment,
   AuthUser,
   PermissionDefinition,
@@ -168,7 +163,6 @@ const SCOPE_LABELS: Record<string, string> = {
   'im:group:create': '创建群聊',
   'directory:read': '查看组织通讯录',
   'admin:users': '管理用户与部门',
-  'admin:api_keys': '管理 API Keys',
   'admin:roles': '管理角色与授权',
   'admin:settings': '管理系统设置',
   'agent-mail:send': '发送 Agent Mail',
@@ -200,11 +194,6 @@ const departmentFormSchema = z.object({
   parentId: z.string().nullable().optional(),
 })
 
-const apiKeyFormSchema = z.object({
-  name: z.string().trim().min(2, '名称至少 2 个字符'),
-  scopes: z.array(z.string()).min(1, '至少选择一个权限'),
-})
-
 const passwordFormSchema = z.object({
   password: z.string().min(6, '密码至少 6 位'),
 })
@@ -218,7 +207,6 @@ const tokenLimitFormSchema = z.object({
 
 type UserFormData = z.infer<typeof userFormSchema>
 type DepartmentFormData = z.infer<typeof departmentFormSchema>
-type ApiKeyFormData = z.infer<typeof apiKeyFormSchema>
 type PasswordFormData = z.infer<typeof passwordFormSchema>
 type TokenLimitFormData = z.infer<typeof tokenLimitFormSchema>
 
@@ -458,7 +446,6 @@ function DepartmentTreeRow({
 export default function UsersPage() {
   const { user: currentUser, scopes } = useAuth()
   const canManageUsers = hasScope(scopes, 'admin:users')
-  const canManageApiKeys = hasScope(scopes, 'admin:api_keys')
   const isOrgAdmin = currentUser?.roles?.some(role => role.systemKey === 'admin')
     || currentUser?.role === 'admin'
   const canManageRagflowCredentials = hasScope(scopes, 'ragflow:credentials')
@@ -472,7 +459,6 @@ export default function UsersPage() {
   const [revealedRagflowCredentials, setRevealedRagflowCredentials] = useState<
     (Pick<RagflowCredentials, 'username'> & Partial<Pick<RagflowCredentials, 'password' | 'api_key'>>) | null
   >(null)
-  const [apiKeys, setApiKeys] = useState<ApiKey[]>([])
   const [userSessions, setUserSessions] = useState<Session[]>([])
   const [selectedUser, setSelectedUser] = useState<AuthUser | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -503,7 +489,6 @@ export default function UsersPage() {
     department: null,
   })
   const [resetPasswordUser, setResetPasswordUser] = useState<AuthUser | null>(null)
-  const [apiKeyUser, setApiKeyUser] = useState<AuthUser | null>(null)
   const [departmentToDelete, setDepartmentToDelete] = useState<AuthDepartment | null>(null)
   const [userToDelete, setUserToDelete] = useState<AuthUser | null>(null)
   const [roleToDelete, setRoleToDelete] = useState<RoleDefinition | null>(null)
@@ -514,10 +499,6 @@ export default function UsersPage() {
     description: string
     permissions: string[]
   }>({ open: false, role: null, name: '', description: '', permissions: [] })
-  const [revealedApiKey, setRevealedApiKey] = useState<{
-    userName: string
-    value: string
-  } | null>(null)
   const [tokenLimitTarget, setTokenLimitTarget] = useState<
     { type: 'user'; data: AuthUser } | { type: 'department'; data: AuthDepartment } | null
   >(null)
@@ -525,12 +506,10 @@ export default function UsersPage() {
   const [isSubmittingUser, setIsSubmittingUser] = useState(false)
   const [isSubmittingDepartment, setIsSubmittingDepartment] = useState(false)
   const [isSubmittingPassword, setIsSubmittingPassword] = useState(false)
-  const [isSubmittingApiKey, setIsSubmittingApiKey] = useState(false)
   const [isSubmittingRole, setIsSubmittingRole] = useState(false)
   const [pendingRagflowAction, setPendingRagflowAction] = useState<string | null>(null)
   const [pendingUserActionId, setPendingUserActionId] = useState<string | null>(null)
   const [pendingDepartmentActionId, setPendingDepartmentActionId] = useState<string | null>(null)
-  const [pendingApiKeyActionId, setPendingApiKeyActionId] = useState<string | null>(null)
 
   const userForm = useForm<UserFormData>({
     resolver: zodResolver(userFormSchema),
@@ -551,14 +530,6 @@ export default function UsersPage() {
     },
   })
 
-  const apiKeyForm = useForm<ApiKeyFormData>({
-    resolver: zodResolver(apiKeyFormSchema),
-    defaultValues: {
-      name: '',
-      scopes: [],
-    },
-  })
-
   const passwordForm = useForm<PasswordFormData>({
     resolver: zodResolver(passwordFormSchema),
     defaultValues: {
@@ -576,14 +547,6 @@ export default function UsersPage() {
     () => new Map(permissions.map(permission => [permission.code, permission.name])),
     [permissions],
   )
-  const apiScopeOptions = useMemo(() => {
-    const allowed = new Set(apiKeyUser?.effectiveScopes ?? [])
-    const options = permissions
-      .filter(permission => !permission.protected && (allowed.has('*') || allowed.has(permission.code)))
-      .map(permission => ({ value: permission.code, label: permission.name }))
-    return allowed.has('*') ? [{ value: '*', label: '全部权限' }, ...options] : options
-  }, [apiKeyUser, permissions])
-
   const departmentTree = useMemo(
     () => buildDepartmentTree(departments),
     [departments],
@@ -606,10 +569,9 @@ export default function UsersPage() {
     }
 
     try {
-      const [usersRes, departmentsRes, apiKeysRes, rolesRes, permissionsRes, ragflowRes] = await Promise.all([
+      const [usersRes, departmentsRes, rolesRes, permissionsRes, ragflowRes] = await Promise.all([
         getUsers(),
         getDepartments(),
-        canManageApiKeys ? getApiKeys() : Promise.resolve({ api_keys: [] }),
         getRoles(),
         getPermissions(),
         getRagflowStatus().catch(() => null),
@@ -617,7 +579,6 @@ export default function UsersPage() {
 
       setUsers(usersRes.users)
       setDepartments(departmentsRes.departments)
-      setApiKeys(apiKeysRes.api_keys)
       setRoles(rolesRes.roles)
       setPermissions(permissionsRes.permissions)
       setRagflowStatus(ragflowRes)
@@ -634,7 +595,7 @@ export default function UsersPage() {
       setIsLoading(false)
       setIsRefreshing(false)
     }
-  }, [canManageApiKeys, canManageUsers])
+  }, [canManageUsers])
 
   useEffect(() => {
     void fetchData()
@@ -686,21 +647,6 @@ export default function UsersPage() {
   }, [departmentDialog, departmentForm])
 
   useEffect(() => {
-    if (!apiKeyUser) {
-      apiKeyForm.reset({
-        name: '',
-        scopes: [],
-      })
-      return
-    }
-
-    apiKeyForm.reset({
-      name: `${apiKeyUser.name}-key`,
-      scopes: apiKeyUser.effectiveScopes,
-    })
-  }, [apiKeyForm, apiKeyUser])
-
-  useEffect(() => {
     if (!resetPasswordUser) {
       passwordForm.reset({ password: '' })
     }
@@ -737,9 +683,6 @@ export default function UsersPage() {
   const activeUsers = users.filter(user => user.status === 'active').length
   const deptAdminCount = users.filter(user => user.roles.some(role => role.systemKey === 'dept_admin')).length
   const unassignedUsers = users.filter(user => !user.departmentId).length
-
-  const getUserApiKeys = (userId: string) =>
-    apiKeys.filter(apiKey => apiKey.userId === userId)
 
   const getDepartmentName = (departmentId: string | null) => {
     if (!departmentId) {
@@ -864,32 +807,6 @@ export default function UsersPage() {
     }
   }
 
-  const handleSubmitApiKey = async (values: ApiKeyFormData) => {
-    if (!apiKeyUser) {
-      return
-    }
-
-    setIsSubmittingApiKey(true)
-    try {
-      const response = await createApiKey({
-        user_id: apiKeyUser.id,
-        name: values.name,
-        scopes: values.scopes,
-      })
-      setApiKeyUser(null)
-      setRevealedApiKey({
-        userName: apiKeyUser.name,
-        value: response.plain_text_key,
-      })
-      toast.success('API Key 已生成')
-      await fetchData()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '生成 API Key 失败')
-    } finally {
-      setIsSubmittingApiKey(false)
-    }
-  }
-
   const handleToggleUserStatus = async (user: AuthUser) => {
     setPendingUserActionId(user.id)
     try {
@@ -911,7 +828,6 @@ export default function UsersPage() {
     try {
       await deleteUser(userToDelete.id)
       setUsers(previous => previous.filter(user => user.id !== userToDelete.id))
-      setApiKeys(previous => previous.filter(key => key.userId !== userToDelete.id))
       if (selectedUser?.id === userToDelete.id) {
         setSelectedUser(null)
         setUserSessions([])
@@ -943,19 +859,6 @@ export default function UsersPage() {
       toast.error(error instanceof Error ? error.message : '删除部门失败')
     } finally {
       setPendingDepartmentActionId(null)
-    }
-  }
-
-  const handleRevokeApiKey = async (apiKey: ApiKey) => {
-    setPendingApiKeyActionId(apiKey.id)
-    try {
-      await revokeApiKey(apiKey.id)
-      toast.success('API Key 已撤销')
-      await fetchData()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '撤销 API Key 失败')
-    } finally {
-      setPendingApiKeyActionId(null)
     }
   }
 
@@ -1059,11 +962,6 @@ export default function UsersPage() {
     }
   }
 
-  const copyApiKey = (value: string) => {
-    navigator.clipboard.writeText(value)
-    toast.success('API Key 已复制')
-  }
-
   const availableParentDepartments = useMemo(() => {
     if (!departmentDialog.department) {
       return departmentOptions
@@ -1093,7 +991,7 @@ export default function UsersPage() {
     return (
       <DashboardLayout
         title="用户与组织管理"
-        description="管理部门、用户、角色及 API Key。"
+        description="管理部门、用户、角色及知识库凭据。"
       >
         <div className="flex min-h-[320px] items-center justify-center">
           <Loader2 className="size-8 animate-spin text-muted-foreground" />
@@ -1105,7 +1003,7 @@ export default function UsersPage() {
   return (
     <DashboardLayout
       title="用户与组织管理"
-      description="统一维护部门树、用户账号、角色分配与 API Key。"
+      description="统一维护部门树、用户账号、角色分配与知识库凭据。"
     >
       <div className="space-y-6">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -1214,7 +1112,7 @@ export default function UsersPage() {
                 <div className="space-y-1">
                   <CardTitle>用户列表</CardTitle>
                   <CardDescription>
-                    新增、禁用、重置密码、分配部门与角色，并为用户生成 API Key。
+                    新增、禁用、重置密码、分配部门与角色，并管理知识库凭据。
                   </CardDescription>
                 </div>
                 <div className="flex flex-col gap-3 md:flex-row md:items-center">
@@ -1260,7 +1158,6 @@ export default function UsersPage() {
                         <TableHead>用户名</TableHead>
                         <TableHead>所属部门</TableHead>
                         <TableHead>角色</TableHead>
-                        <TableHead>API Keys</TableHead>
                         <TableHead>状态</TableHead>
                         <TableHead>最后登录</TableHead>
                         <TableHead className="text-right">操作</TableHead>
@@ -1268,7 +1165,6 @@ export default function UsersPage() {
                     </TableHeader>
                     <TableBody>
                       {filteredUsers.map(user => {
-                        const userKeys = getUserApiKeys(user.id)
                         const isPending = pendingUserActionId === user.id
                         return (
                           <TableRow key={user.id}>
@@ -1290,24 +1186,6 @@ export default function UsersPage() {
                                   </Badge>
                                 ))}
                               </div>
-                            </TableCell>
-                            <TableCell>
-                              {userKeys.length > 0 ? (
-                                <div className="flex flex-wrap gap-1">
-                                  {userKeys.slice(0, 2).map(apiKey => (
-                                    <Badge key={apiKey.id} variant="secondary" className="text-xs">
-                                      {apiKey.name}
-                                    </Badge>
-                                  ))}
-                                  {userKeys.length > 2 ? (
-                                    <Badge variant="outline" className="text-xs">
-                                      +{userKeys.length - 2}
-                                    </Badge>
-                                  ) : null}
-                                </div>
-                              ) : (
-                                <span className="text-xs text-muted-foreground">暂无</span>
-                              )}
                             </TableCell>
                             <TableCell>
                               <Badge
@@ -1353,12 +1231,6 @@ export default function UsersPage() {
                                     <Pencil className="mr-2 size-4" />
                                     编辑用户
                                   </DropdownMenuItem>
-                                  {canManageApiKeys ? (
-                                    <DropdownMenuItem onClick={() => setApiKeyUser(user)}>
-                                      <KeyRound className="mr-2 size-4" />
-                                      生成 API Key
-                                    </DropdownMenuItem>
-                                  ) : null}
                                   <DropdownMenuItem onClick={() => setResetPasswordUser(user)}>
                                     <LockKeyhole className="mr-2 size-4" />
                                     重置密码
@@ -1929,116 +1801,6 @@ export default function UsersPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!apiKeyUser} onOpenChange={(open) => !open && setApiKeyUser(null)}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>生成 API Key</DialogTitle>
-            <DialogDescription>
-              为 {apiKeyUser?.name ?? '当前用户'} 生成新的访问密钥。
-            </DialogDescription>
-          </DialogHeader>
-          <Form {...apiKeyForm}>
-            <form onSubmit={apiKeyForm.handleSubmit(handleSubmitApiKey)} className="space-y-4">
-              <FormField
-                control={apiKeyForm.control}
-                name="name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Key 名称</FormLabel>
-                    <FormControl>
-                      <Input {...field} placeholder="例如：service-key" />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={apiKeyForm.control}
-                name="scopes"
-                render={() => (
-                  <FormItem>
-                    <FormLabel>权限范围</FormLabel>
-                    <div className="grid max-h-[min(46vh,420px)] gap-2 overflow-y-auto rounded-xl border bg-muted/20 p-4 sm:grid-cols-2">
-                      {apiScopeOptions.map(option => (
-                        <FormField
-                          key={option.value}
-                          control={apiKeyForm.control}
-                          name="scopes"
-                          render={({ field }) => (
-                            <FormItem className="flex flex-row items-start gap-3 space-y-0 rounded-lg border p-3">
-                              <FormControl>
-                                <Checkbox
-                                  checked={field.value.includes(option.value)}
-                                  onCheckedChange={(checked) => {
-                                    const nextValues = checked === true
-                                      ? [...field.value, option.value]
-                                      : field.value.filter(value => value !== option.value)
-                                    field.onChange(nextValues)
-                                  }}
-                                />
-                              </FormControl>
-                              <div className="space-y-1 leading-none">
-                                <FormLabel className="font-normal">{option.label}</FormLabel>
-                              </div>
-                            </FormItem>
-                          )}
-                        />
-                      ))}
-                    </div>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setApiKeyUser(null)}>
-                  取消
-                </Button>
-                <Button type="submit" disabled={isSubmittingApiKey}>
-                  {isSubmittingApiKey ? (
-                    <Loader2 className="mr-2 size-4 animate-spin" />
-                  ) : null}
-                  生成 Key
-                </Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={!!revealedApiKey}
-        onOpenChange={(open) => !open && setRevealedApiKey(null)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>API Key 已生成</DialogTitle>
-            <DialogDescription>
-              这是 {revealedApiKey?.userName ?? '当前用户'} 的新 Key，只会展示这一次。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="rounded-xl border bg-muted/60 p-4">
-            <code className="break-all text-sm">{revealedApiKey?.value}</code>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                if (revealedApiKey) {
-                  copyApiKey(revealedApiKey.value)
-                }
-              }}
-            >
-              <Copy className="mr-2 size-4" />
-              复制
-            </Button>
-            <Button type="button" onClick={() => setRevealedApiKey(null)}>
-              我已保存
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <AlertDialog
         open={!!userToDelete}
         onOpenChange={(open) => {
@@ -2049,7 +1811,7 @@ export default function UsersPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>删除用户</AlertDialogTitle>
             <AlertDialogDescription>
-              确定删除用户“{userToDelete?.name ?? ''}”？删除后该用户将无法登录，API Key 将失效，定时任务将停用。
+              确定删除用户“{userToDelete?.name ?? ''}”？删除后该用户将无法登录，知识库凭据将失效，定时任务将停用。
               历史会话、消息和文件会保留。此操作无法撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -2137,7 +1899,7 @@ export default function UsersPage() {
           <SheetHeader>
             <SheetTitle>{selectedUser?.name ?? '用户详情'}</SheetTitle>
             <SheetDescription>
-              查看用户基础信息、API Key 以及最近会话。
+              查看用户基础信息、知识库凭据以及最近会话。
             </SheetDescription>
           </SheetHeader>
           {selectedUser ? (
@@ -2260,70 +2022,6 @@ export default function UsersPage() {
                         : <Database className="mr-2 size-4" />}
                       初始化知识库账号
                     </Button>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0">
-                  <div className="space-y-1">
-                    <CardTitle className="text-base">API Keys</CardTitle>
-                    <CardDescription>
-                      共 {getUserApiKeys(selectedUser.id).length} 个 Key
-                    </CardDescription>
-                  </div>
-                  {canManageApiKeys ? (
-                    <Button variant="outline" size="sm" onClick={() => setApiKeyUser(selectedUser)}>
-                      <Plus className="mr-2 size-4" />
-                      生成 Key
-                    </Button>
-                  ) : null}
-                </CardHeader>
-                <CardContent>
-                  {getUserApiKeys(selectedUser.id).length > 0 ? (
-                    <div className="space-y-3">
-                      {getUserApiKeys(selectedUser.id).map(apiKey => (
-                        <div key={apiKey.id} className="rounded-xl border p-4">
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium">{apiKey.name}</span>
-                                <Badge variant={apiKey.status === 'active' ? 'default' : 'secondary'}>
-                                  {apiKey.status === 'active' ? '启用' : '已撤销'}
-                                </Badge>
-                              </div>
-                              <code className="text-xs text-muted-foreground">
-                                {apiKey.prefix}...
-                              </code>
-                              <div className="flex flex-wrap gap-1">
-                                {apiKey.scopes.map(scope => (
-                                  <Badge key={scope} variant="secondary" className="text-xs">
-                                    {SCOPE_LABELS[scope] ?? scope}
-                                  </Badge>
-                                ))}
-                              </div>
-                            </div>
-                            {apiKey.status === 'active' ? (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                disabled={pendingApiKeyActionId === apiKey.id}
-                                onClick={() => void handleRevokeApiKey(apiKey)}
-                              >
-                                {pendingApiKeyActionId === apiKey.id ? (
-                                  <Loader2 className="mr-2 size-4 animate-spin" />
-                                ) : null}
-                                撤销
-                              </Button>
-                            ) : null}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
-                      当前用户还没有 API Key。
-                    </div>
                   )}
                 </CardContent>
               </Card>

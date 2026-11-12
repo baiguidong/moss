@@ -61,7 +61,6 @@ async function formatErrorResponse(
 async function resolveDirectConnectHeaders(options: {
   authToken?: string
   serverUrl: string
-  apiKey?: string
   username?: string
   email?: string
   password?: string
@@ -93,7 +92,6 @@ async function resolveDirectConnectHeaders(options: {
 export async function createDirectConnectSession({
   serverUrl,
   authToken,
-  apiKey,
   username,
   email,
   password,
@@ -107,7 +105,6 @@ export async function createDirectConnectSession({
 }: {
   serverUrl: string
   authToken?: string
-  apiKey?: string
   username?: string
   email?: string
   password?: string
@@ -125,7 +122,6 @@ export async function createDirectConnectSession({
   const { headers, resolvedToken } = await resolveDirectConnectHeaders({
     authToken,
     serverUrl,
-    apiKey,
     username,
     email,
     password,
@@ -186,7 +182,6 @@ export async function attachDirectConnectSession({
   serverUrl,
   sessionId,
   authToken,
-  apiKey,
   username,
   email,
   password,
@@ -194,7 +189,6 @@ export async function attachDirectConnectSession({
   serverUrl: string
   sessionId: string
   authToken?: string
-  apiKey?: string
   username?: string
   email?: string
   password?: string
@@ -206,7 +200,6 @@ export async function attachDirectConnectSession({
   const { headers, resolvedToken } = await resolveDirectConnectHeaders({
     authToken,
     serverUrl,
-    apiKey,
     username,
     email,
     password,
