@@ -10,6 +10,11 @@
   display: block;
 }
 
+/* The compact selector already contains every view, including views hidden behind the ellipsis on wide panels. */
+.presentation-navigation-more {
+  display: none;
+}
+
 /* Native caption controls reduce the toolbar's available width on Windows/Linux. */
 @container presentation-navigation (max-width: 499px) {
   .presentation-navigation-chrome .presentation-follow-label {
@@ -24,6 +29,9 @@
   .presentation-navigation-chrome .presentation-navigation-row:not(.has-tasks) .presentation-navigation-select {
     display: none;
   }
+  .presentation-navigation-chrome .presentation-navigation-row:not(.has-tasks) .presentation-navigation-more {
+    display: block;
+  }
 }
 
 @container presentation-navigation (min-width: 390px) {
@@ -32,6 +40,9 @@
   }
   .presentation-navigation-chrome .presentation-navigation-select {
     display: none;
+  }
+  .presentation-navigation-chrome .presentation-navigation-more {
+    display: block;
   }
 }
 
@@ -54,6 +65,9 @@
   .presentation-navigation-row:not(.has-tasks) .presentation-navigation-select {
     display: none;
   }
+  .presentation-navigation-row:not(.has-tasks) .presentation-navigation-more {
+    display: block;
+  }
 }
 
 @container presentation-navigation (min-width: 520px) {
@@ -62,5 +76,8 @@
   }
   .presentation-navigation-select {
     display: none;
+  }
+  .presentation-navigation-more {
+    display: block;
   }
 }

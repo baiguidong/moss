@@ -2,7 +2,7 @@ import { CreationStatus, type CreationInfo } from './creation-status';
 import * as React from 'react';
 import { createPortal } from 'react-dom';
 import { WindowToolbarContext } from '@/components/window-chrome';
-import { ArrowLeft, Pin, PinOff, FolderOpen, Globe2, PanelsTopLeft, ListChecks, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Pin, PinOff, FolderOpen, Globe2, PanelsTopLeft, ListChecks, ChevronDown, MoreHorizontal } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuRadioGroup, DropdownMenuRadioItem } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import './presentation-panel.css';
@@ -36,13 +36,21 @@ export function PresentationToolbar({
   const activeResource = snapshot?.resources.find(item => item.id === state?.activeId);
   const activeView = tasksActive ? 'tasks' : !state || state.activeId === 'workspace' ? 'workspace'
     : state?.activeId === 'browser' || activeResource?.source.type === 'browser-tab' ? 'browser' : 'results';
-  const resultCount = snapshot?.resources.filter(item => item.kind !== 'collection' && item.isResult !== false).length || 0;
+  const resultCount = snapshot?.resources.filter(item => item.kind !== 'collection' && item.source.type !== 'browser-tab' && item.isResult !== false).length || 0;
+  const browserHasContent = Boolean(snapshot?.resources.some(item => item.source.type === 'browser-tab'
+    && item.availability !== 'expired' && item.availability !== 'unavailable'));
   const views = [
     ...(sessionTasks.length ? [{ id: 'tasks', title: '会话任务', icon: ListChecks, count: sessionTasks.length }] : []),
     { id: 'workspace', title: '工作区', icon: FolderOpen, count: 0 },
     { id: 'results', title: '结果', icon: PanelsTopLeft, count: resultCount },
     { id: 'browser', title: '浏览器', icon: Globe2, count: 0 },
   ];
+  const visibleViews = views.filter(view => view.id === 'workspace'
+    || view.id === activeView
+    || (view.id === 'tasks' && sessionTasks.length > 0)
+    || (view.id === 'results' && resultCount > 0)
+    || (view.id === 'browser' && browserHasContent));
+  const hiddenViews = views.filter(view => !visibleViews.some(visible => visible.id === view.id));
   const selected = views.find(view => view.id === activeView) || views[0];
   const selectView = (id: string) => {
     if (id === 'tasks') { onSelectTasks?.(); return; }
@@ -55,7 +63,7 @@ export function PresentationToolbar({
     <div className={cn('presentation-navigation-row flex min-w-0 items-center gap-1 px-2 text-xs', toolbarTarget ? 'h-full' : 'py-1.5', sessionTasks.length > 0 && 'has-tasks')}>
       <button type="button" className={iconButton} aria-label="返回上一个内容" disabled={!state?.back.length} onClick={() => { onSelectPresentation?.(); action({ type: 'back' }); }}><ArrowLeft size={14}/></button>
       <div className="presentation-navigation-tabs min-w-0 flex-1 items-center gap-0.5">
-        {views.map(({ id, title, icon: Icon, count }) => <button key={id} type="button"
+        {visibleViews.map(({ id, title, icon: Icon, count }) => <button key={id} type="button"
           className={cn('flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', activeView === id && 'bg-muted text-primary')}
           aria-label={count ? `${title} ${count} 项` : title} aria-pressed={activeView === id} onClick={() => selectView(id)}>
           <Icon size={13}/><span>{title}</span>{count > 0 && <span className="text-muted-foreground tabular-nums">{count}</span>}
@@ -79,6 +87,22 @@ export function PresentationToolbar({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      {hiddenViews.length > 0 && <div className="presentation-navigation-more">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" aria-label="更多右侧视图" title="更多右侧视图" className={iconButton}>
+              <MoreHorizontal size={15}/>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44" aria-label="更多右侧视图">
+            <DropdownMenuRadioGroup value={activeView} onValueChange={selectView}>
+              {hiddenViews.map(({ id, title, icon: Icon, count }) => <DropdownMenuRadioItem key={id} value={id} className="text-xs">
+                <Icon size={13}/><span>{title}</span>{count > 0 && <span className="ml-auto text-muted-foreground tabular-nums">{count}</span>}
+              </DropdownMenuRadioItem>)}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>}
       <label className="flex h-7 shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded px-1 text-muted-foreground hover:bg-muted" title={followHelp}>
         <input aria-label="跟随新结果" className="h-3 w-3 accent-primary" type="checkbox" checked={state?.autoFollow ?? true} onChange={e => action({ type: 'follow', value: e.target.checked })}/>
         <span className="presentation-follow-label">跟随新结果</span>
