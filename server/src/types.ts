@@ -146,6 +146,16 @@ export const serverFileConfigSchema = lazySchema(() =>
         passwordLength: 6,
         requestTimeoutMs: 15_000,
       }),
+    litellm: z.object({
+      enabled: z.boolean().default(false),
+      baseUrl: z.string().url().optional(),
+      publicBaseUrl: z.string().url().optional(),
+      masterKey: z.string().min(1).optional(),
+      keyTtlSec: z.number().int().min(300).default(3600),
+      defaultModel: z.string().min(1).default('moss-default'),
+      fastModel: z.string().min(1).default('moss-fast'),
+      requestTimeoutMs: z.number().int().min(1000).default(15000),
+    }).default({ enabled: false, keyTtlSec: 3600, defaultModel: 'moss-default', fastModel: 'moss-fast', requestTimeoutMs: 15000 }),
   }),
 )
 
@@ -193,6 +203,16 @@ export type ServerConfig = {
     gatewayToken?: string
     userDomain?: string
     passwordLength?: number
+    requestTimeoutMs: number
+  }
+  litellm: {
+    enabled: boolean
+    baseUrl?: string
+    publicBaseUrl?: string
+    masterKey?: string
+    keyTtlSec: number
+    defaultModel: string
+    fastModel: string
     requestTimeoutMs: number
   }
 }

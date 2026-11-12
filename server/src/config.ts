@@ -77,6 +77,13 @@ export function getDefaultServerConfig(): ServerFileConfig {
       passwordLength: 6,
       requestTimeoutMs: 15_000,
     },
+    litellm: {
+      enabled: false,
+      keyTtlSec: 3600,
+      defaultModel: 'moss-default',
+      fastModel: 'moss-fast',
+      requestTimeoutMs: 15_000,
+    },
   }
 }
 
@@ -155,6 +162,16 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
         Number(process.env.MOSS_RAGFLOW_PASSWORD_LENGTH) ||
         raw.ragflow.passwordLength,
       requestTimeoutMs: raw.ragflow.requestTimeoutMs,
+    },
+    litellm: {
+      enabled: process.env.MOSS_LITELLM_ENABLED === '1' || process.env.MOSS_LITELLM_ENABLED === 'true' || raw.litellm.enabled,
+      baseUrl: process.env.MOSS_LITELLM_BASE_URL || raw.litellm.baseUrl?.replace(/\/+$/, ''),
+      publicBaseUrl: process.env.MOSS_LITELLM_PUBLIC_BASE_URL || raw.litellm.publicBaseUrl?.replace(/\/+$/, ''),
+      masterKey: process.env.MOSS_LITELLM_MASTER_KEY || raw.litellm.masterKey,
+      keyTtlSec: Number(process.env.MOSS_LITELLM_KEY_TTL_SEC) || raw.litellm.keyTtlSec,
+      defaultModel: raw.litellm.defaultModel,
+      fastModel: raw.litellm.fastModel,
+      requestTimeoutMs: raw.litellm.requestTimeoutMs,
     },
   }
 }

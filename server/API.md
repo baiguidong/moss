@@ -591,6 +591,24 @@ http://127.0.0.1:54321/callback?code=<one-time-code>&state=<client-state>
 
 桌面端概览请求 `/api/v1/usage?host_kind=cloud`，只统计当前账号的云电脑 Host；不带 `host_kind` 时保留账号下所有 Host 的汇总，供管理后台使用。
 
+### GET `/api/v1/model-access`
+
+当服务端启用 LiteLLM 网关时，向当前用户签发受限的 LiteLLM virtual key。客户端使用返回的 `url`、`apiKey` 和逻辑模型名直接调用 LiteLLM；上游模型地址、上游 API Key 和真实模型名不会下发。
+
+```json
+{
+  "url": "https://models.example.com:4000",
+  "apiKey": "sk-user-scoped-key",
+  "model": "moss-default",
+  "fastModel": "moss-fast",
+  "expiresAt": 1790208000000
+}
+```
+
+### GET `/api/v1/model-usage`
+
+读取当前用户在 LiteLLM 中的统计和预算信息。数据源为 LiteLLM `/user/info`，Moss 不重复计算 token 或费用。
+
 ### GET `/api/v1/users/:userId/sessions`
 
 需要 scope：`admin:users`

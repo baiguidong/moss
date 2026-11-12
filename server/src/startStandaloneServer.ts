@@ -8,6 +8,7 @@ import { startServer } from './server.js'
 import { printBanner } from './serverBanner.js'
 import { createServerLogger } from './serverLog.js'
 import { getSystemSettings } from './systemSettings.js'
+import { LiteLLMService } from './litellm/service.js'
 import type { ServerConfig } from './types.js'
 
 export type StandaloneServerOptions = ServerConfig
@@ -45,6 +46,7 @@ export async function startStandaloneDirectConnectServer(
       config: getSystemSettings().openIM,
       authService,
     })
+    const litellmService = new LiteLLMService(config.litellm, config.rootDir)
     const server = await startServer(
       config,
       models,
@@ -52,6 +54,8 @@ export async function startStandaloneDirectConnectServer(
       logger,
       ragflowIntegration,
       openIMIntegration,
+      undefined,
+      litellmService,
     )
     activeServer = server
     const actualPort = (await server.ready) ?? config.port

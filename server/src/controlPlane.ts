@@ -6,6 +6,7 @@ import type { AuthContext } from './auth/token.js'
 import { hasScope } from './auth/token.js'
 import type { AuthService } from './auth/service.js'
 import { HostRepository } from './model/repositories/hosts.js'
+import type { LiteLLMService } from './litellm/service.js'
 
 const fail = (statusCode: number, message: string): never => { throw Object.assign(new Error(message), { statusCode }) }
 const string = (value: unknown, max = 128) => typeof value === 'string' && value.length > 0 && value.length <= max ? value : fail(400, 'Invalid field')
@@ -28,11 +29,12 @@ export async function authenticateHostReport(req: http.IncomingMessage, models: 
   return { rawToken: token, userId: String(host.user_id), orgId: String(host.org_id), role: 'host', scopes: ['hosts:report'], keyId: String(host.id) }
 }
 
-export async function handleControlPlaneRoute({ req, res, url, auth, authService, models, readJsonBody, writeJson }: {
+export async function handleControlPlaneRoute({ req, res, url, auth, authService, models, readJsonBody, writeJson, litellmService }: {
   req: http.IncomingMessage; res: http.ServerResponse; url: URL; auth: AuthContext; authService: AuthService;
   models: Awaited<ReturnType<typeof createModels>>;
   readJsonBody: (req: http.IncomingMessage, max?: number) => Promise<Record<string, unknown>>;
   writeJson: (res: http.ServerResponse, status: number, data: unknown) => void;
+  litellmService?: LiteLLMService;
 }) {
   if (!url.pathname.startsWith('/api/v1/hosts') && url.pathname !== '/api/v1/host-policy') return false
   const hosts = new HostRepository(models.db)
@@ -45,7 +47,7 @@ export async function handleControlPlaneRoute({ req, res, url, auth, authService
       for (const [key, value] of Object.entries(settings)) {
         if (!['agentTeamsEnabled', 'bypassPermissions', 'useEnterpriseModel'].includes(key) || typeof value !== 'boolean') fail(400, 'Unsupported policy field')
       }
-      if (settings.useEnterpriseModel === true && (!getSystemSettings().model || !getSystemSettings().url)) fail(400, '请先配置企业模型和 API 地址')
+      if (settings.useEnterpriseModel === true && !litellmService?.enabled()) fail(400, '请先配置 LiteLLM 网关')
       writeJson(res, 200, await hosts.setPolicy(auth.orgId, auth.userId, settings))
     } else fail(405, 'Method not allowed')
     return true
@@ -81,16 +83,9 @@ export async function handleControlPlaneRoute({ req, res, url, auth, authService
     const response = await hosts.heartbeat(auth, { id, kind, schedules,
       name: string(body.name, 255), version: string(body.version), platform: string(body.platform, 32), epoch: identifier(body.epoch),
       status: { tasks, activeSessions: count, paused: status.paused === true, policyRevision: Number(status.policyRevision) || 0 } })
-    const settings = getSystemSettings()
-    const modelConfig = response.access.allowed && response.policy?.settings.useEnterpriseModel === true
-      ? {
-        model: settings.model,
-        fastModel: settings.fastModel,
-        declaredContextByModel: settings.declaredContextByModel,
-        url: settings.url,
-        apiKey: settings.apiKey,
-        image: settings.image,
-      } : null
+    const modelConfig = response.access.allowed && litellmService?.enabled()
+      ? await litellmService.ensureUserKey({ rawToken: auth.rawToken, userId: auth.userId, orgId: auth.orgId, role: auth.role, scopes: auth.scopes, keyId: auth.keyId })
+      : null
     writeJson(res, 200, { ...response, modelConfig, ...(enrolling ? { token: await hosts.enroll(id) } : {}) })
     return true
   }

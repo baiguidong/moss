@@ -35,6 +35,7 @@ import { HostRepository } from './model/repositories/hosts.js'
 import { authenticateHostReport, handleControlPlaneRoute } from './controlPlane.js'
 import { listSessionTasks } from './sessionTasks.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
+import { LiteLLMService } from './litellm/service.js'
 
 import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
 import { fetchModelCatalog } from '../../shared/model-list.mjs'
@@ -507,6 +508,7 @@ export function startServer(
   ragflowIntegration?: RagflowIntegrationService,
   openIMIntegration?: OpenIMIntegrationService,
   cloudObjectStore?: ObjectStore,
+  litellmService?: LiteLLMService,
 ): {
   port: number | null
   ready: Promise<number | null>
@@ -768,7 +770,21 @@ export function startServer(
         throw new HttpError(401, 'Unauthorized')
       }
 
-      if (await handleControlPlaneRoute({ req, res, url, auth, authService, models, readJsonBody, writeJson })) return
+      if (await handleControlPlaneRoute({ req, res, url, auth, authService, models, readJsonBody, writeJson, litellmService })) return
+
+      if (req.method === 'GET' && pathname === '/api/v1/model-access') {
+        if (!litellmService?.enabled()) throw new HttpError(503, 'LiteLLM gateway is unavailable')
+        authService.requireAnyCurrentScope(auth, ['sessions:create', 'sessions:list', 'sessions:list:any'])
+        writeNoStoreJson(res, 200, await litellmService.ensureUserKey(auth))
+        return
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/model-usage') {
+        if (!litellmService?.enabled()) throw new HttpError(503, 'LiteLLM gateway is unavailable')
+        authService.requireAnyCurrentScope(auth, ['sessions:list', 'sessions:list:any', 'admin:users'])
+        writeNoStoreJson(res, 200, await litellmService.userInfo(auth))
+        return
+      }
 
       const traceResult = await handleTraceRoute(req, url, auth)
       if (traceResult) {

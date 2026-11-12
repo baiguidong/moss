@@ -6981,7 +6981,7 @@ hostControl = createHostControlClient({ home: MOSS_HOME, db: sessionDb, kind: is
   applyPolicy: async (policy, modelConfig) => {
     const modelChanged = JSON.stringify(modelConfig) !== JSON.stringify(hostManagedModel);
     if (!policy || (policy.revision === hostPolicyRevision && !modelChanged)) return;
-    hostManagedModel = policy.settings?.useEnterpriseModel === true ? modelConfig : null;
+    hostManagedModel = modelConfig || null;
     const next = policy.settings || {};
     const patch = {};
     for (const key of Object.keys(hostPolicy).filter(key => key !== 'useEnterpriseModel')) if (!(key in next)) { patch[key] = hostPolicyOriginal[key]; delete hostPolicyOriginal[key]; }
