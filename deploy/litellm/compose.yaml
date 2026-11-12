@@ -1,0 +1,51 @@
+name: ${COMPOSE_PROJECT_NAME:-moss-litellm}
+
+networks:
+  litellm:
+    driver: bridge
+  moss-integrations:
+    name: ${MOSS_INTEGRATION_NETWORK:-moss-integrations}
+    external: true
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: Asia/Shanghai
+    volumes:
+      - ${DATA_DIR}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+    networks: [litellm]
+
+  litellm:
+    image: ${LITELLM_IMAGE}
+    depends_on:
+      postgres: { condition: service_healthy }
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      UPSTREAM_API_KEY: ${UPSTREAM_API_KEY}
+      UPSTREAM_API_BASE: ${UPSTREAM_API_BASE}
+      UPSTREAM_MODEL: ${UPSTREAM_MODEL}
+      TZ: Asia/Shanghai
+    ports:
+      - ${LITELLM_BIND_IP}:${LITELLM_PORT}:4000
+    volumes:
+      - ./config/litellm.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: [CMD-SHELL, 'wget -qO- http://127.0.0.1:4000/health/liveliness >/dev/null']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+    networks: [litellm, moss-integrations]
