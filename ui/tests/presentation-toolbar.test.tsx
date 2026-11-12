@@ -55,3 +55,11 @@ test('promotes views with content into the main tab row', () => {
   expect(html).toContain('aria-label="浏览器"');
   expect(html).not.toContain('aria-label="更多右侧视图"');
 });
+
+test('shows the plugin view only when the session has loaded plugins', () => {
+  const empty = renderToStaticMarkup(<PresentationToolbar snapshot={snapshot()} action={() => {}} pluginsAvailable={false} />);
+  const withPlugins = renderToStaticMarkup(<PresentationToolbar snapshot={snapshot()} action={() => {}} pluginsAvailable />);
+
+  expect(empty).not.toContain('aria-label="插件"');
+  expect(withPlugins).toContain('aria-label="插件"');
+});

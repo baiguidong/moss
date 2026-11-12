@@ -51,6 +51,7 @@ import { UpdateModal } from '@/components/update-modal';
 import { TaskPanel } from '@/components/task-panel';
 import { usePresentation } from '@/lib/use-presentation';
 import { PresentationToolbar, PresentationContent } from '@/components/presentation/presentation-panel';
+import { SessionPluginsPanel, hasSessionPlugins } from '@/components/session-plugins-panel';
 import { startSessionTaskPolling } from '../session-tasks.mjs';
 import { AppWidgetHost } from '@/components/app-widget-host';
 import { SettingsView } from '@/components/settings-view';
@@ -2912,9 +2913,14 @@ export default function App() {
   );
 
   const activePresentationResource = presentation.snapshot?.resources.find(resource => resource.id === presentation.snapshot?.state.activeId);
+  const pluginsAvailable = hasSessionPlugins(activeDetail, apps);
+  const pluginsActive = presentation.snapshot?.state.activeId === 'plugins';
+  React.useEffect(() => {
+    if (pluginsActive && !pluginsAvailable) void presentation.action({ type: 'select', id: 'workspace' });
+  }, [pluginsActive, pluginsAvailable, presentation.action]);
   const sessionPanelTabs = sessionPanel.tabbed ? <SessionPanelTabs
     conversationTitle={activeDetail ? displaySessionTitle(activeDetail) : '会话'}
-    presentationTitle={activePresentationResource?.title || (presentation.snapshot?.state.activeId === 'browser' ? '浏览器' : presentation.snapshot?.state.activeId === 'workspace' ? '工作区' : '结果')}
+    presentationTitle={activePresentationResource?.title || (pluginsActive ? '插件' : presentation.snapshot?.state.activeId === 'browser' ? '浏览器' : presentation.snapshot?.state.activeId === 'workspace' ? '工作区' : '结果')}
     activeTab={sessionPanel.activeTab}
     onSelect={sessionPanel.selectTab}
     onRestoreSplit={sessionPanel.restoreSplit}
@@ -3361,12 +3367,16 @@ export default function App() {
                     action={presentation.action}
                     sessionTasks={activeDetail?.tasks || []}
                     tasksActive={tasksActive}
+                    pluginsAvailable={pluginsAvailable}
+                    pluginsActive={pluginsActive}
                     onSelectTasks={onSelectTasks}
+                    onSelectPlugins={() => presentation.action({ type: 'select', id: 'plugins' })}
                     onSelectPresentation={onSelectPresentation}
                   />
                 )}
                 showBrowser={presentation.snapshot?.state.activeId === 'browser' || presentation.snapshot?.resources.some(resource => resource.id === presentation.snapshot.state.activeId && resource.source.type === 'browser-tab' && resource.availability !== 'expired' && resource.availability !== 'unavailable')}
-                content={presentation.snapshot && !['workspace', 'browser'].includes(presentation.snapshot.state.activeId) ? <PresentationContent snapshot={presentation.snapshot} action={presentation.action}/> : undefined}
+                content={pluginsActive && activeDetail ? <SessionPluginsPanel session={activeDetail} apps={apps} installedAssistants={installedAssistants} />
+                  : presentation.snapshot && !['workspace', 'browser', 'plugins'].includes(presentation.snapshot.state.activeId) ? <PresentationContent snapshot={presentation.snapshot} action={presentation.action}/> : undefined}
                 collapsed={layout.rightCollapsed}
                 searchQuery={workspaceQuery}
                 onSearchChange={setWorkspaceQuery}

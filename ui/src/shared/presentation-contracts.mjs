@@ -53,7 +53,7 @@ export function transitionPresentation(state, event) {
     const next = { ...state, seq: event.seq };
     if (event.mode === 'background' || !event.foreground || !state.autoFollow || state.pinnedId || state.dirty
       || state.manualHold || event.userIntentVersion !== state.userIntentVersion || event.turnId !== state.turnId) return next;
-    if (event.fallback && state.visible && !['workspace', 'results'].includes(state.activeId)) return next;
+    if (event.fallback && state.visible && !['workspace', 'results', 'plugins'].includes(state.activeId)) return next;
     if (state.activeId === event.id && state.visible) return next;
     return { ...next, visible: true, activeId: event.id, activeOrigin: 'auto',
       openedIds: [...new Set([...state.openedIds, event.id])].slice(-32),

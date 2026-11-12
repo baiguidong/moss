@@ -2,7 +2,7 @@ import { CreationStatus, type CreationInfo } from './creation-status';
 import * as React from 'react';
 import { createPortal } from 'react-dom';
 import { WindowToolbarContext } from '@/components/window-chrome';
-import { ArrowLeft, Pin, PinOff, FolderOpen, Globe2, PanelsTopLeft, ListChecks, ChevronDown, MoreHorizontal } from 'lucide-react';
+import { ArrowLeft, Pin, PinOff, FolderOpen, Globe2, PanelsTopLeft, ListChecks, ChevronDown, MoreHorizontal, Blocks } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuRadioGroup, DropdownMenuRadioItem } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import './presentation-panel.css';
@@ -17,7 +17,10 @@ type PresentationToolbarProps = {
   action: Action;
   sessionTasks?: SessionTask[];
   tasksActive?: boolean;
+  pluginsAvailable?: boolean;
+  pluginsActive?: boolean;
   onSelectTasks?: () => void;
+  onSelectPlugins?: () => void;
   onSelectPresentation?: () => void;
 };
 
@@ -28,19 +31,23 @@ export function PresentationToolbar({
   action,
   sessionTasks = [],
   tasksActive = false,
+  pluginsAvailable = false,
+  pluginsActive = false,
   onSelectTasks,
+  onSelectPlugins,
   onSelectPresentation,
 }: PresentationToolbarProps) {
   const { presentation: toolbarTarget } = React.useContext(WindowToolbarContext);
   const state = snapshot?.state;
   const activeResource = snapshot?.resources.find(item => item.id === state?.activeId);
-  const activeView = tasksActive ? 'tasks' : !state || state.activeId === 'workspace' ? 'workspace'
+  const activeView = tasksActive ? 'tasks' : pluginsActive ? 'plugins' : !state || state.activeId === 'workspace' ? 'workspace'
     : state?.activeId === 'browser' || activeResource?.source.type === 'browser-tab' ? 'browser' : 'results';
   const resultCount = snapshot?.resources.filter(item => item.kind !== 'collection' && item.source.type !== 'browser-tab' && item.isResult !== false).length || 0;
   const browserHasContent = Boolean(snapshot?.resources.some(item => item.source.type === 'browser-tab'
     && item.availability !== 'expired' && item.availability !== 'unavailable'));
   const views = [
     ...(sessionTasks.length ? [{ id: 'tasks', title: '会话任务', icon: ListChecks, count: sessionTasks.length }] : []),
+    ...(pluginsAvailable ? [{ id: 'plugins', title: '插件', icon: Blocks, count: 0 }] : []),
     { id: 'workspace', title: '工作区', icon: FolderOpen, count: 0 },
     { id: 'results', title: '结果', icon: PanelsTopLeft, count: resultCount },
     { id: 'browser', title: '浏览器', icon: Globe2, count: 0 },
@@ -48,12 +55,14 @@ export function PresentationToolbar({
   const visibleViews = views.filter(view => view.id === 'workspace'
     || view.id === activeView
     || (view.id === 'tasks' && sessionTasks.length > 0)
+    || (view.id === 'plugins' && pluginsAvailable)
     || (view.id === 'results' && resultCount > 0)
     || (view.id === 'browser' && browserHasContent));
   const hiddenViews = views.filter(view => !visibleViews.some(visible => visible.id === view.id));
   const selected = views.find(view => view.id === activeView) || views[0];
   const selectView = (id: string) => {
     if (id === 'tasks') { onSelectTasks?.(); return; }
+    if (id === 'plugins') { onSelectPresentation?.(); onSelectPlugins?.(); return; }
     onSelectPresentation?.();
     action({ type: 'select', id });
   };

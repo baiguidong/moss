@@ -87,7 +87,7 @@ export function createPresentationService({ storageRoot, getSessionRecord, getSe
     for (const resource of value.resources.values()) if (resource.dirty) essential.add(resource.id);
     for (const id of essential) for (const member of value.resources.get(id)?.source.memberIds || []) essential.add(member);
     for (const id of value.resources.keys()) { if (value.resources.size <= 512) break; if (!essential.has(id)) value.resources.delete(id); }
-    value.state.openedIds = value.state.openedIds.filter(id => ['workspace', 'browser', 'results'].includes(id) || value.resources.has(id));
+    value.state.openedIds = value.state.openedIds.filter(id => ['workspace', 'browser', 'results', 'plugins'].includes(id) || value.resources.has(id));
   }
   async function submit(id, input, context = {}) {
     const value = await session(id), normalized = validatePresentationInput(input);
@@ -206,7 +206,7 @@ export function createPresentationService({ storageRoot, getSessionRecord, getSe
       if (!action || !['select', 'dismiss', 'close', 'back', 'pin', 'follow', 'dirty'].includes(action.type) || Object.keys(action).some(key => !['type', 'id', 'value'].includes(key))) throw new Error('Invalid presentation action');
       if (['pin', 'follow', 'dirty'].includes(action.type) && typeof action.value !== 'boolean') throw new Error('Invalid presentation value');
       if (['select', 'dismiss'].includes(action.type) && (typeof action.id !== 'string' || action.id.length > 128)) throw new Error('Invalid resource id');
-      if (action.type === 'select' && !['workspace', 'browser', 'results'].includes(action.id) && !value.resources.has(action.id)) throw new Error('Resource is unavailable');
+      if (action.type === 'select' && !['workspace', 'browser', 'results', 'plugins'].includes(action.id) && !value.resources.has(action.id)) throw new Error('Resource is unavailable');
       if (action.type === 'dirty' && action.id) {
         const resource = value.resources.get(action.id);
         if (!resource) throw new Error('Resource is unavailable');
