@@ -221,6 +221,7 @@ export default function PDFPages({ filePath, fileVersion, title, presentation = 
   };
   const controls = <>
     {office && <OfficeEditRequest target={annotationTarget} selection={sizes[page - 1] ? { kind: 'region', pageNumber: page, selector: `page:${page}`, text: '', nearbyText: `第 ${page} 页`, rect: { x: 0, y: 0, ...sizes[page - 1] } } : undefined} selectionLabel={`第 ${page} 页`} onSelectRegion={pdf ? () => { setSelecting(true); setSelection(null); } : undefined} />}
+    {office && canAnnotate && <button disabled={!pdf} className="inline-flex h-7 shrink-0 items-center justify-center rounded px-1.5 hover:bg-muted disabled:opacity-30" aria-pressed={selecting} aria-label="标注修改" onClick={() => { setSelecting(!selecting); setSelection(null); }}>{selecting ? '退出标注' : '标注修改'}</button>}
     <select aria-label="页面缩放" className="h-7 max-w-28 shrink-0 rounded bg-transparent text-xs" value={zoom} onChange={event => { setZoom(event.target.value); setSelection(null); }}>
       <option value="auto">自动{sizes[page - 1] && zoom === 'auto' ? ` ${Math.round(factor(sizes[page - 1]) * 100)}%` : ''}</option><option value="width">适合宽度</option><option value="page">适合页面</option>
       {Array.from(new Set(['0.25', '0.5', '0.75', '1', '1.25', '1.5', '2', '3', ...(!['auto', 'width', 'page'].includes(zoom) ? [zoom] : [])])).sort((a,b) => Number(a)-Number(b)).map(value => <option key={value} value={value}>{Math.round(Number(value) * 100)}%</option>)}

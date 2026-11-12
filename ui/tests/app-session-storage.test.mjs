@@ -58,7 +58,7 @@ test('Host binds UI creation once, rejects forged session roots, and refuses cro
 
 test('read-only App inspection does not provision an unused session scope', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'session-storage-readonly-'))
-  const sessions = new Map([['one', { id: 'one', workspace: root }]])
+  const sessions = new Map([['one', { id: 'one', workspace: root, sessionDir: path.join(root, 'session-data') }]])
   const storage = createAppSessionStorage({ getSession: id => sessions.get(id), getRuntime: () => null })
   const request = {
     appId: 'test.creator', instanceId: 'default',
@@ -72,6 +72,7 @@ test('read-only App inspection does not provision an unused session scope', asyn
 
     const started = await storage.prepare({ ...request, actionName: 'tasks.start' })
     expect(started.options.invocation.storage.directory).toBe(path.join(await fs.realpath(root), 'artifacts', 'test.creator', 'one'))
+    expect(await fs.stat(path.join(root, 'session-data')).catch(() => null)).toBeNull()
 
     const listedAgain = await storage.prepare(request)
     expect(listedAgain.options.invocation.storage.directory).toBe(started.options.invocation.storage.directory)

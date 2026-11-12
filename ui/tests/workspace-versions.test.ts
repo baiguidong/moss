@@ -275,6 +275,21 @@ describe('workspace versions with a real isolated Git repository', () => {
     expect((await service.save(workspace)).version.tag).toBe('1.1');
   });
 
+  test('allows a session workspace beside its version storage and rejects the storage itself', async () => {
+    const sessionRoot = path.join(temp, 'session');
+    const sessionWorkspace = path.join(sessionRoot, 'workspace');
+    const sessionVersions = path.join(sessionRoot, 'versions');
+    await mkdir(sessionWorkspace, { recursive: true });
+    await writeFile(path.join(sessionWorkspace, 'session-file.txt'), 'ok');
+
+    const owned = createWorkspaceVersionService({ rootDir });
+    await expect(owned.save(sessionWorkspace, 'session', sessionRoot)).resolves.toMatchObject({ created: true });
+    expect((await readdir(sessionRoot)).sort()).toEqual(['versions', 'workspace']);
+    expect((await owned.status(sessionWorkspace, sessionRoot)).versions).toHaveLength(1);
+    await mkdir(sessionVersions, { recursive: true });
+    await expect(owned.status(sessionVersions, sessionRoot)).rejects.toThrow('版本存储目录不能用作工作区');
+  });
+
   test('never overwrites an existing numeric tag', async () => {
     await put('a', 'one');
     const first = (await service.save(workspace)).version;

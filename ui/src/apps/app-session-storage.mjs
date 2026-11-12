@@ -18,11 +18,13 @@ export function createAppSessionStorage({ getSession, getSessions = () => [], cr
     if (![appId, instanceId, sessionId].every(safe)) throw new Error('会话存储标识无效')
     const session = record(sessionId, allowClosing)
     const workspace = session.workspace ? await fs.realpath(session.workspace) : null
-    const requestedRoot = session.sessionDir || path.join(workspace, '.moss-session', sessionId)
+    // Session creation artifacts are user-visible deliverables and belong to
+    // the active workspace. App-private state continues to use apps-data.
+    const requestedRoot = workspace
     if (create) await fs.mkdir(requestedRoot, { recursive: true, mode: 0o700 })
     const sessionRoot = await fs.realpath(requestedRoot)
     let directory = sessionRoot
-    for (const part of ['apps', appId, instanceId]) {
+    for (const part of ['artifacts', appId, sessionId]) {
       directory = path.join(directory, part)
       if (create) await fs.mkdir(directory, { mode: 0o700 }).catch(error => { if (error.code !== 'EEXIST') throw error })
       const resolved = await fs.realpath(directory)
@@ -49,7 +51,7 @@ export function createAppSessionStorage({ getSession, getSessions = () => [], cr
     scope,
     async forkSession(sourceId, targetId) {
       const source = record(sourceId), target = record(targetId)
-      const parent = path.join(source.sessionDir || path.join(source.workspace, '.moss-session', sourceId), 'apps')
+      const parent = path.join(source.workspace, 'artifacts')
       const apps = await fs.readdir(parent, { withFileTypes: true }).catch(error => { if (error.code === 'ENOENT') return []; throw error })
       const pairs = []
       for (const app of apps) {
@@ -97,7 +99,13 @@ export function createAppSessionStorage({ getSession, getSessions = () => [], cr
           return true
         } })
         await rewriteMetadata(copy.directory)
-        // The ordinary managed-workspace copy also copied the old namespace.
+        // The ordinary managed-workspace copy also copied the source namespace;
+        // keep only the fork's session-owned artifact directory.
+        const oldCopy = path.join(await fs.realpath(target.workspace), 'artifacts', appId, sourceId)
+        if (oldCopy !== original.directory) {
+          const oldOwner = await fs.readFile(path.join(oldCopy, '.moss-session.json'), 'utf8').then(JSON.parse).catch(() => null)
+          if (oldOwner?.sessionId === sourceId && oldOwner.appId === appId) await fs.rm(oldCopy, { recursive: true, force: true })
+        }
       }
       return rewrite
     },
@@ -118,7 +126,7 @@ export function createAppSessionStorage({ getSession, getSessions = () => [], cr
     },
     async removeSessionFiles(sessionId) {
       if (getSession(sessionId)?.agentMode === 'remote-direct') return
-      const session = record(sessionId, true), parent = path.join(session.sessionDir || path.join(session.workspace, '.moss-session', sessionId), 'apps')
+      const session = record(sessionId, true), parent = path.join(session.workspace, 'artifacts')
       const apps = await fs.readdir(parent, { withFileTypes: true }).catch(error => { if (error.code === 'ENOENT') return []; throw error })
       for (const app of apps) {
         if (!app.isDirectory() || !safe(app.name)) continue

@@ -124,7 +124,7 @@ export function createAppArtifactUrls({ sessionStorage = null, web = false, getW
       const target = await fs.realpath(path.join(root, input.relativePath))
       const relative = path.relative(root, target)
       if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || !(await fs.stat(target)).isFile()) {
-        throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Artifact is outside the App data directory')
+        throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Artifact is outside the App artifact directory')
       }
       const resources = web ? getWebResources() : desktopResources
       if (!resources) throw new AppServiceError(APP_ERROR_CODES.hostUnavailable, 'App artifact service is unavailable')

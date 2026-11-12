@@ -48,10 +48,16 @@ export function createWorkspaceVersionService({ rootDir, gitPath = () => process
     const root = await fsp.realpath(workspace);
     if (!(await fsp.stat(root)).isDirectory()) throw new Error('工作区不是目录。');
     const ownerStorageRoot = path.resolve(ownerRoot || storageRoot);
-    if (inside(ownerStorageRoot, root)) throw new Error('版本存储目录不能用作工作区。');
+    const ownerStorageRealRoot = await fsp.realpath(ownerStorageRoot).catch(() => ownerStorageRoot);
+    // Session-owned repositories live below `<session>/versions`; the session
+    // workspace itself is a sibling directory and must remain a valid workspace.
+    // Keep the guard scoped to the actual version storage directory so the new
+    // session layout does not reject its default workspace.
+    const versionStorageRoot = ownerRoot ? path.join(ownerStorageRealRoot, 'versions') : ownerStorageRealRoot;
+    if (inside(versionStorageRoot, root)) throw new Error('版本存储目录不能用作工作区。');
     const key = process.platform === 'win32' ? root.toLowerCase() : root;
-    const directory = path.join(ownerRoot ? ownerStorageRoot : ownerStorageRoot, ...(ownerRoot ? ['versions'] : []), hash(key));
-    return { root, key, directory, repo: path.join(directory, 'repository.git'), journal: path.join(directory, 'restore.json') };
+    const directory = path.join(versionStorageRoot, hash(key));
+    return { root, key, directory, storageRoot: versionStorageRoot, repo: path.join(directory, 'repository.git'), journal: path.join(directory, 'restore.json') };
   }
 
   async function run(workspace, operation, mutation = false, ownerRoot) {
@@ -198,7 +204,7 @@ export function createWorkspaceVersionService({ rootDir, gitPath = () => process
         const relative = prefix ? `${prefix}/${name}` : name;
         const absolute = path.join(directory, name);
         const stat = await fsp.lstat(absolute);
-        const reason = name.toLowerCase() === '.git' || inside(storageRoot, absolute) ? '版本内部数据'
+        const reason = name.toLowerCase() === '.git' || inside(ctx.storageRoot, absolute) ? '版本内部数据'
           : stat.isSymbolicLink() ? '符号链接'
           : stat.isDirectory() && OMIT_DIRS.has(name) ? '依赖或构建缓存'
           : /^\.env(?:\.|$)/.test(name) && !/\.(example|sample|template)$/.test(name) ? '环境配置'

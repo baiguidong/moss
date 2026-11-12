@@ -21,7 +21,7 @@ test('Host artifact URL survives Backend idling, supports ranges and revokes wit
     const context = { owner: { key: 'host' }, appId: 'test.pdf', instanceId: 'test.pdf--default', generation: 1,
       dataDir: root, assertCurrent() { if (!enabled) throw new Error('App disabled') } }
     await expect(artifacts.url({ relativePath: '../other.pdf' }, context)).rejects.toThrow(/Invalid App artifact path/)
-    await expect(artifacts.url({ relativePath: 'link.pdf' }, context)).rejects.toThrow(/outside the App data directory/)
+    await expect(artifacts.url({ relativePath: 'link.pdf' }, context)).rejects.toThrow(/outside the App artifact directory/)
     const first = await artifacts.url({ relativePath: 'result.pdf' }, context)
     expect((await artifacts.url({ relativePath: 'result.pdf' }, context)).url).toBe(first.url)
     const response = await fetch(first.url, { headers: { Range: 'bytes=2-5' } })

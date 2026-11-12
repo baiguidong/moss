@@ -3562,7 +3562,10 @@ async function runSessionPromptObserved({
   }
 
   if (sessionRecord.agentMode !== 'remote-direct' && sessionRecord.workspace) {
-    const versionNote = await workspaceVersionService.contextNote(sessionRecord.workspace).catch(error => {
+    const versionNote = await workspaceVersionService.contextNote(
+      sessionRecord.workspace,
+      getLocalSessionDir(sessionRecord.storageRootSessionId || sessionRecord.id),
+    ).catch(error => {
       mossLog('warn', 'workspace', 'Unable to read workspace version context', { error: error.message });
       return '';
     });
