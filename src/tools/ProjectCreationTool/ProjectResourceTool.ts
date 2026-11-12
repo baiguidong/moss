@@ -7,7 +7,7 @@ const inputSchema = z.strictObject({
   query: z.string().trim().max(200).optional(),
   id: z.string().trim().max(300).optional(),
   offset: z.number().int().min(0).default(0),
-  limit: z.number().int().min(1).max(30).default(10),
+  limit: z.number().int().min(1).max(10).default(6),
 })
 
 export type ProjectResourceInput = z.infer<typeof inputSchema>
@@ -30,7 +30,7 @@ export function createProjectResourceTool(provider: ProjectResourceProvider) {
     async prompt() {
       return [
         'Use only in the dedicated project-creation conversation.',
-        'List installed resources before searching the market.',
+        'This tool is optional. Do not call it merely to inspect what is installed; call it only when the user asks to choose or add a skill, expert, or App.',
         'When several candidates match, show their names and descriptions and ask the user to choose.',
         'Inspect exact IDs and App services before proposing a plan. Installation happens only after the host UI confirmation.',
         'Use the returned IDs in ProjectPlan and never invent resource IDs.',

@@ -28,7 +28,7 @@ const inputSchema = z.strictObject({
   expertIds: z.array(z.string().trim()).max(10).default([]),
   appIds: z.array(z.string().trim()).max(50).default([]),
   appServiceIds: z.array(z.string().trim()).max(100).default([]),
-  assistantName: z.string().trim().optional(),
+  assistantName: z.string().trim().optional().describe('Optional default expert runtime ID. Leave empty unless the user explicitly selected an expert; it must be one of expertIds.'),
   mode: z.enum(['chat', 'boss']).default('boss'),
   permissionMode: z.enum(['plan', 'acceptEdits', 'default', 'dontAsk', 'bypassPermissions']).default('bypassPermissions'),
   agentTeamsEnabled: z.boolean().default(true),
@@ -46,13 +46,13 @@ export function createProjectCreationTool(provider: ProjectCreationProvider) {
     async prompt() {
       return [
         'Use this only in the dedicated project-creation conversation.',
-        'The goal is to create a reusable project configuration, not to start or plan a task. Collect only durable project capabilities, project name, working directory and requested resources.',
+        'The goal is to create a reusable project configuration, not to start or plan a task. Collect only durable project settings, project name and working directory.',
         'Automatically design a simple custom vector icon using icon.kind=generated, paths and color. Include it in preview for user confirmation. Use builtin when requested; missing icons receive the default folder.',
         'Read the current draft with get before revising it, then submit the full plan with its current version.',
         'Keep the current icon when revising other fields. Redesign it only when the user asks.',
         'Treat one-off work in the user message (for example, organizing a particular case into a Word document) as a future project-session task. Do not put it in instructions or create a first task.',
         'Write instructions as a concise Chinese adaptation of the Codex /init AGENTS.md convention, not as a coding template: start with # AGENTS.md, state that it guides Moss, and include only durable project-specific scope, collaboration, source/material organization, output standards and confirmation rules. Add commands, tests or code style only when this project truly has software work. Omit sections that are unknown or irrelevant.',
-        'Ask about the project capabilities needed for future sessions and recommend suitable skills, Apps and experts. Do not interrogate the user about the details of a one-off task.',
+        'Skills, Apps and experts are optional. Based on the project goal, you may look up and recommend suitable resources, but recommendations must be presented as optional choices through AskUserQuestion. Always include a clear “不使用任何资源/暂不选择” choice when recommending; the user may decline, and a decline or no suitable match must leave all resource ID lists empty and assistantName empty. Never treat a recommendation as approval, never auto-select it, and do not repeat the question after the user declines.',
         'Call preview when ready to show an editable project configuration card. Do not ask for a separate chat confirmation.',
         'This tool never installs resources or creates projects. Only the host UI confirmation can do that.',
         'Use exact IDs returned by ProjectResource. Missing selected resources will be installed after confirmation.',
@@ -68,7 +68,13 @@ export function createProjectCreationTool(provider: ProjectCreationProvider) {
     },
     renderToolUseMessage() { return null },
     async call(input) {
-      return { data: JSON.stringify(await provider(input)) }
+      // Model turns can carry a stale display-name default from the host
+      // session after the user declined every expert. Drop it at the tool
+      // boundary; a selected expert still has to use an exact returned ID.
+      const safeInput = input.expertIds.length === 0 && input.assistantName
+        ? { ...input, assistantName: undefined }
+        : input
+      return { data: JSON.stringify(await provider(safeInput)) }
     },
     mapToolResultToToolResultBlockParam(data, toolUseID) {
       return { type: 'tool_result' as const, tool_use_id: toolUseID, content: data }

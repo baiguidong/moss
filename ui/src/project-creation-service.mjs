@@ -28,7 +28,7 @@ export function normalizeCreationPlan(input, { generated = true } = {}) {
   const skillIds = list(input.skillIds, 50), expertIds = list(input.expertIds, 10), appIds = list(input.appIds, 50), appServiceIds = list(input.appServiceIds);
   if (appServiceIds.some(id => !parseAppServiceKey(id))) throw new Error('App 服务选择无效。');
   const assistantName = input.assistantName ?? null;
-  if (assistantName !== null && (typeof assistantName !== 'string' || (assistantName && !expertIds.includes(assistantName)))) throw new Error('默认专家必须来自已选专家。');
+  if (assistantName !== null && assistantName !== '' && (typeof assistantName !== 'string' || !expertIds.includes(assistantName))) throw new Error('默认专家必须来自已选专家。');
   return {
     project: { name: input.name.trim(), icon: normalizeProjectIcon(input.icon, { strict: true }), instructions: generated ? normalizeGeneratedProjectInstructions(input.instructions) : input.instructions || '', workspaces, workspace, defaultWorkspace: workspace,
       mode: input.mode || 'boss', permissionMode: input.permissionMode || DEFAULT_PROJECT_PERMISSION_MODE, agentTeamsEnabled: input.agentTeamsEnabled !== false,

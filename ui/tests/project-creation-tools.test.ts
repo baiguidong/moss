@@ -26,3 +26,10 @@ test('project plans support generated and built-in icons without accepting raw S
     expect(tool.inputSchema.safeParse({ action: 'preview', name: '图标项目', icon }).success).toBe(false);
   }
 });
+
+test('stale default expert names are ignored when no expert was selected', async () => {
+  let received: any;
+  const tool = createProjectCreationTool(async input => { received = input; return { ok: true }; });
+  await tool.call({ action: 'preview', name: '无专家项目', assistantName: '小黑', expertIds: [], skillIds: [], appIds: [], appServiceIds: [] } as any, undefined as any, undefined as any, undefined as any);
+  expect(received.assistantName).toBeUndefined();
+});

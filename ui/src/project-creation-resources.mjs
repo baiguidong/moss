@@ -27,6 +27,28 @@ export function createProjectCreationResources({ installed, search, detail, inst
     if (!remote || remote.id !== id) throw new Error(`找不到资源：${id}`);
     return normalize(kind, remote, false);
   }
+  // Model-facing discovery does not need presentation assets. In particular,
+  // installed App icons are often base64 data URLs and can turn a small lookup
+  // into an oversized tool result that slows every subsequent model turn.
+  function modelResource(entry) {
+    return {
+      kind: entry.kind,
+      id: entry.id,
+      runtimeId: entry.runtimeId,
+      displayName: entry.displayName,
+      description: entry.description,
+      source: entry.source,
+      version: entry.version,
+      installed: entry.installed,
+      enabled: entry.enabled,
+      status: entry.status,
+      ...(entry.kind === 'app' ? {
+        toolSelection: entry.toolSelection,
+        services: entry.services,
+        permissions: entry.permissions,
+      } : {}),
+    };
+  }
   async function list({ kind, query = '', page = 1, pageSize = 30 } = {}) {
     if (!['skill', 'expert', 'app'].includes(kind)) throw new Error('资源类型无效。');
     page = Math.max(1, Math.floor(Number(page) || 1));
@@ -51,18 +73,18 @@ export function createProjectCreationResources({ installed, search, detail, inst
   async function discover(input = {}) {
     const { kind, action, query = '', id } = input;
     if (!['skill', 'expert', 'app'].includes(kind)) throw new Error('资源类型无效。');
-    if (action === 'inspect') return inspect({ kind, id });
-    const limit = Math.min(30, Math.max(1, Number(input.limit) || 10));
+    if (action === 'inspect') return modelResource(await inspect({ kind, id }));
+    const limit = Math.min(10, Math.max(1, Number(input.limit) || 6));
     const offset = Math.max(0, Number(input.offset) || 0);
     if (action === 'list_installed') {
       const entries = (await installed(kind)).filter(entry => matches(entry, query));
-      return { kind, source: 'installed', resources: entries.slice(offset, offset + limit).map(entry => normalize(kind, entry, true)),
+      return { kind, source: 'installed', resources: entries.slice(offset, offset + limit).map(entry => modelResource(normalize(kind, entry, true))),
         total: entries.length, nextOffset: offset + limit < entries.length ? offset + limit : null };
     }
     if (action === 'search') {
       if (!query.trim()) throw new Error('请提供搜索关键词。');
       const entries = await search(kind, query, limit);
-      return { kind, source: 'marketplace', resources: entries.map(entry => normalize(kind, entry, false)) };
+      return { kind, source: 'marketplace', resources: entries.map(entry => modelResource(normalize(kind, entry, false))) };
     }
     throw new Error('此工具仅支持列出、搜索和查看资源。安装只能在确认项目方案后进行。');
   }

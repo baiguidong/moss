@@ -3144,7 +3144,11 @@ export default function App() {
                 projectCreationReview={projectCreationDraft?.sessionId === activeSessionId && activeDetail?.projectCreationMode ? (
                   <ProjectCreationDraftCard
                     draft={projectCreationDraft}
-                    busy={projectCreationBusy || Boolean(activeDetail.busy)}
+                    // The model turn may still be closing after ProjectPlan
+                    // persisted the draft. Keep the review dialog usable at
+                    // that point; only the actual confirm/save IPC operation
+                    // should lock its controls.
+                    busy={projectCreationBusy}
                     onConfirm={() => { void handleProjectCreationConfirm(); }}
                     onCancel={() => { void handleProjectCreationCancel(); }}
                     onSave={handleProjectCreationSave}
