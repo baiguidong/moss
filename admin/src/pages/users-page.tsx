@@ -108,8 +108,6 @@ import {
   getUserBalance,
   rechargeUser,
   resetPassword,
-  setDepartmentTokenLimit,
-  setUserTokenLimit,
   updateDepartment,
   updateUser,
   createRole,
@@ -201,13 +199,6 @@ const passwordFormSchema = z.object({
   password: z.string().min(6, '密码至少 6 位'),
 })
 
-const tokenLimitFormSchema = z.object({
-  tokenLimit: z.string().refine(
-    (v) => v === '' || (Number.isInteger(Number(v)) && Number(v) > 0),
-    '请输入正整数，留空表示不限制',
-  ),
-})
-
 const rechargeFormSchema = z.object({
   amountUsd: z.string().refine(
     value => Number.isFinite(Number(value)) && Number(value) > 0,
@@ -218,7 +209,6 @@ const rechargeFormSchema = z.object({
 type UserFormData = z.infer<typeof userFormSchema>
 type DepartmentFormData = z.infer<typeof departmentFormSchema>
 type PasswordFormData = z.infer<typeof passwordFormSchema>
-type TokenLimitFormData = z.infer<typeof tokenLimitFormSchema>
 type RechargeFormData = z.infer<typeof rechargeFormSchema>
 
 function formatTimestamp(value: number | null): string {
@@ -351,13 +341,11 @@ function DepartmentTree({
   onEdit,
   onCreateChild,
   onDelete,
-  onSetTokenLimit,
 }: {
   nodes: DepartmentTreeNode[]
   onEdit: (department: AuthDepartment) => void
   onCreateChild: (department: AuthDepartment) => void
   onDelete: (department: AuthDepartment) => void
-  onSetTokenLimit: (department: AuthDepartment) => void
 }) {
   if (nodes.length === 0) {
     return (
@@ -377,7 +365,6 @@ function DepartmentTree({
           onEdit={onEdit}
           onCreateChild={onCreateChild}
           onDelete={onDelete}
-          onSetTokenLimit={onSetTokenLimit}
         />
       ))}
     </div>
@@ -390,14 +377,12 @@ function DepartmentTreeRow({
   onEdit,
   onCreateChild,
   onDelete,
-  onSetTokenLimit,
 }: {
   node: DepartmentTreeNode
   depth: number
   onEdit: (department: AuthDepartment) => void
   onCreateChild: (department: AuthDepartment) => void
   onDelete: (department: AuthDepartment) => void
-  onSetTokenLimit: (department: AuthDepartment) => void
 }) {
   return (
     <div className="space-y-3">
@@ -425,10 +410,6 @@ function DepartmentTreeRow({
             <Plus className="mr-2 size-4" />
             新建子部门
           </Button>
-          <Button variant="outline" size="sm" onClick={() => onSetTokenLimit(node)}>
-            <Coins className="mr-2 size-4" />
-            Token 限额{node.tokenLimit != null ? `：${node.tokenLimit.toLocaleString()}` : ''}
-          </Button>
           <Button variant="outline" size="sm" onClick={() => onEdit(node)}>
             <Pencil className="mr-2 size-4" />
             编辑
@@ -447,7 +428,6 @@ function DepartmentTreeRow({
           onEdit={onEdit}
           onCreateChild={onCreateChild}
           onDelete={onDelete}
-          onSetTokenLimit={onSetTokenLimit}
         />
       ))}
     </div>
@@ -511,10 +491,6 @@ export default function UsersPage() {
     description: string
     permissions: string[]
   }>({ open: false, role: null, name: '', description: '', permissions: [] })
-  const [tokenLimitTarget, setTokenLimitTarget] = useState<
-    { type: 'user'; data: AuthUser } | { type: 'department'; data: AuthDepartment } | null
-  >(null)
-  const [isSubmittingTokenLimit, setIsSubmittingTokenLimit] = useState(false)
   const [isSubmittingUser, setIsSubmittingUser] = useState(false)
   const [isSubmittingDepartment, setIsSubmittingDepartment] = useState(false)
   const [isSubmittingPassword, setIsSubmittingPassword] = useState(false)
@@ -549,11 +525,6 @@ export default function UsersPage() {
     defaultValues: {
       password: '',
     },
-  })
-
-  const tokenLimitForm = useForm<TokenLimitFormData>({
-    resolver: zodResolver(tokenLimitFormSchema),
-    defaultValues: { tokenLimit: '' },
   })
 
   const rechargeForm = useForm<RechargeFormData>({
@@ -678,15 +649,6 @@ export default function UsersPage() {
       passwordForm.reset({ password: '' })
     }
   }, [passwordForm, resetPasswordUser])
-
-  useEffect(() => {
-    if (!tokenLimitTarget) {
-      tokenLimitForm.reset({ tokenLimit: '' })
-      return
-    }
-    const current = tokenLimitTarget.data.tokenLimit
-    tokenLimitForm.reset({ tokenLimit: current != null ? String(current) : '' })
-  }, [tokenLimitForm, tokenLimitTarget])
 
   const filteredUsers = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase()
@@ -886,26 +848,6 @@ export default function UsersPage() {
       toast.error(error instanceof Error ? error.message : '删除部门失败')
     } finally {
       setPendingDepartmentActionId(null)
-    }
-  }
-
-  const handleSubmitTokenLimit = async (values: TokenLimitFormData) => {
-    if (!tokenLimitTarget) return
-    const tokenLimit = values.tokenLimit === '' ? null : Number(values.tokenLimit)
-    setIsSubmittingTokenLimit(true)
-    try {
-      if (tokenLimitTarget.type === 'user') {
-        await setUserTokenLimit(tokenLimitTarget.data.id, tokenLimit)
-      } else {
-        await setDepartmentTokenLimit(tokenLimitTarget.data.id, tokenLimit)
-      }
-      toast.success(tokenLimit == null ? '已清除 Token 限额' : `Token 限额已设为 ${tokenLimit.toLocaleString()}`)
-      setTokenLimitTarget(null)
-      await fetchData()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '设置失败')
-    } finally {
-      setIsSubmittingTokenLimit(false)
     }
   }
 
@@ -1283,10 +1225,6 @@ export default function UsersPage() {
                                     <LockKeyhole className="mr-2 size-4" />
                                     重置密码
                                   </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => setTokenLimitTarget({ type: 'user', data: user })}>
-                                    <Coins className="mr-2 size-4" />
-                                    设置 Token 限额
-                                  </DropdownMenuItem>
                                   <DropdownMenuItem onClick={() => setRechargeTarget(user)}>
                                     <Coins className="mr-2 size-4" />
                                     充值美元
@@ -1361,7 +1299,6 @@ export default function UsersPage() {
                       })
                     }
                     onDelete={setDepartmentToDelete}
-                    onSetTokenLimit={(department) => setTokenLimitTarget({ type: 'department', data: department })}
                   />
                 </CardContent>
               </Card>
@@ -1776,44 +1713,6 @@ export default function UsersPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!tokenLimitTarget} onOpenChange={(open) => !open && setTokenLimitTarget(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>设置 Token 限额</DialogTitle>
-            <DialogDescription>
-              为「{tokenLimitTarget?.data.name ?? ''}」设置每日 Token 用量上限，留空表示不限制。
-            </DialogDescription>
-          </DialogHeader>
-          <Form {...tokenLimitForm}>
-            <form onSubmit={tokenLimitForm.handleSubmit(handleSubmitTokenLimit)} className="space-y-4">
-              <FormField
-                control={tokenLimitForm.control}
-                name="tokenLimit"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Token 上限</FormLabel>
-                    <FormControl>
-                      <Input {...field} placeholder="留空表示不限制，例如：100000" />
-                    </FormControl>
-                    <FormDescription>单位：tokens，整数，留空清除限制。</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setTokenLimitTarget(null)}>
-                  取消
-                </Button>
-                <Button type="submit" disabled={isSubmittingTokenLimit}>
-                  {isSubmittingTokenLimit ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                  保存
-                </Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
-
       <Dialog open={!!resetPasswordUser} onOpenChange={(open) => !open && setResetPasswordUser(null)}>
         <DialogContent>
           <DialogHeader>
@@ -1992,10 +1891,6 @@ export default function UsersPage() {
                     <Badge variant={selectedUser.status === 'active' ? 'default' : 'secondary'}>
                       {selectedUser.status === 'active' ? '启用' : '禁用'}
                     </Badge>
-                  </div>
-                  <div className="flex justify-between gap-4">
-                    <span className="text-muted-foreground">Token 限额</span>
-                    <span>{selectedUser.tokenLimit != null ? selectedUser.tokenLimit.toLocaleString() : '不限制'}</span>
                   </div>
                   <div className="flex justify-between gap-4">
                     <span className="text-muted-foreground">创建时间</span>

@@ -74,6 +74,15 @@ test('converts dollar recharge amounts to New API quota units', async () => {
   assert.equal(manageRequests.at(-1)?.body?.value, 1_250_000)
 })
 
+test('synchronizes the status of an existing New API user', async () => {
+  const requests = mockNewApi()
+  const service = new NewAPIService(config, root)
+  await service.ensureUserKey({ ...auth, userId: 'status-user' })
+  await service.syncUserStatus('status-user', 'org', 'disabled')
+  const manageRequest = requests.filter(request => request.path === '/api/user/manage').at(-1)
+  assert.deepEqual(manageRequest?.body, { id: 42, action: 'disable' })
+})
+
 test('normalizes the New API balance response to dollars', async () => {
   const requests = mockNewApi()
   const service = new NewAPIService(config, root)

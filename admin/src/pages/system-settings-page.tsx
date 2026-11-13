@@ -16,16 +16,9 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
-import { getSystemModels, getSystemSettings, updateSystemSettings } from '@/lib/api/settings'
+import { getSystemSettings, updateSystemSettings } from '@/lib/api/settings'
 import { hasScope } from '@/lib/api/client'
 import { useAuth } from '@/lib/hooks/use-auth'
 import type {
@@ -35,16 +28,14 @@ import type {
 import {
   Copy,
   MessageSquare,
-  RefreshCw,
   Server,
-  Sparkles,
   TriangleAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
 type EditableSystemSettings = Pick<
   SystemSettings,
-  'model' | 'fastModel' | 'url' | 'apiKey' | 'image' | 'openIM'
+  'openIM'
 > & { webui: NonNullable<SystemSettings['webui']> }
 
 
@@ -64,13 +55,6 @@ type SettingsFieldProps = {
 function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
   return {
     webui: { snapshots: normalizeSnapshotPolicy(settings.webui?.snapshots) },
-    model: settings.model,
-    fastModel: settings.fastModel,
-    url: settings.url,
-    apiKey: settings.apiKey,
-    image: {
-      model: settings.image.model,
-    },
     openIM: { ...settings.openIM },
   }
 }
@@ -80,41 +64,6 @@ function buildSystemSettingsPatch(
   draft: EditableSystemSettings,
 ): UpdateSystemSettingsRequest {
   const patch: UpdateSystemSettingsRequest = {}
-
-  const textPatch: NonNullable<
-    NonNullable<UpdateSystemSettingsRequest['models']>['text']
-  > = {}
-  if (draft.model !== settings.model) {
-    textPatch.model = draft.model
-  }
-  if (draft.fastModel !== settings.fastModel) {
-    textPatch.fastModel = draft.fastModel
-  }
-  if (draft.url !== settings.url) {
-    textPatch.baseUrl = draft.url
-  }
-  if (draft.apiKey !== settings.apiKey) {
-    textPatch.apiKey = draft.apiKey
-  }
-  if (Object.keys(textPatch).length > 0) {
-    patch.models = {
-      ...patch.models,
-      text: textPatch,
-    }
-  }
-
-  const imagePatch: NonNullable<
-    NonNullable<UpdateSystemSettingsRequest['models']>['image']
-  > = {}
-  if (draft.image.model !== settings.image.model) {
-    imagePatch.model = draft.image.model
-  }
-  if (Object.keys(imagePatch).length > 0) {
-    patch.models = {
-      ...patch.models,
-      image: imagePatch,
-    }
-  }
 
   const openIMPatch: NonNullable<UpdateSystemSettingsRequest['openIM']> = {}
   const openIMFields = [
@@ -187,7 +136,7 @@ function SettingField({
 function SettingsSkeleton() {
   return (
     <div className="space-y-6">
-      {[...Array(3)].map((_, index) => (
+      {[...Array(2)].map((_, index) => (
         <Card key={index}>
           <CardHeader className="border-b">
             <Skeleton className="h-5 w-32" />
@@ -219,9 +168,6 @@ export default function SystemSettingsPage() {
   const [isSaving, setIsSaving] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [saveError, setSaveError] = useState('')
-  const [availableModels, setAvailableModels] = useState<string[]>([])
-  const [modelListState, setModelListState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
-  const [modelListError, setModelListError] = useState('')
   const settingsRef = useRef<SystemSettings | null>(null)
   const draftRef = useRef<EditableSystemSettings | null>(null)
   const lastFailedSnapshotRef = useRef<string | null>(null)
@@ -275,40 +221,6 @@ export default function SystemSettingsPage() {
       toast.error(`复制 ${label} 失败`)
     }
   }
-
-  const modelOptions = useMemo(() => {
-    const values = [
-      ...availableModels,
-      draft?.model || '',
-      draft?.fastModel || '',
-      draft?.image.model || '',
-    ]
-    return [...new Set(values.map(value => value.trim()).filter(Boolean))]
-  }, [availableModels, draft?.fastModel, draft?.image.model, draft?.model])
-
-  const handleFetchModels = async () => {
-    if (!draft?.url.trim()) {
-      setModelListState('error')
-      setModelListError('请先填写 API URL。')
-      return
-    }
-    setModelListState('loading')
-    setModelListError('')
-    try {
-      const models = await getSystemModels({ url: draft.url, apiKey: draft.apiKey })
-      setAvailableModels(models)
-      setModelListState('success')
-    } catch (error) {
-      setModelListState('error')
-      setModelListError(error instanceof Error ? error.message : '获取模型列表失败')
-    }
-  }
-
-  useEffect(() => {
-    setAvailableModels([])
-    setModelListState('idle')
-    setModelListError('')
-  }, [draft?.apiKey, draft?.url])
 
   useEffect(() => {
     if (!settings || !draft) {
@@ -372,7 +284,7 @@ export default function SystemSettingsPage() {
 
   if (!canManageSettings) {
     return (
-      <DashboardLayout title="系统设置" description="管理服务端模型、集成和会话运行时。">
+      <DashboardLayout title="系统设置" description="管理服务端集成和会话运行时。">
         <div className="rounded-xl border border-dashed px-6 py-16 text-center text-sm text-muted-foreground">
           当前账号没有“管理系统设置”权限，无法访问此页面。
         </div>
@@ -384,7 +296,7 @@ export default function SystemSettingsPage() {
     return (
       <DashboardLayout
         title="系统设置"
-        description="管理服务端模型、集成和会话运行时。"
+        description="管理服务端集成和会话运行时。"
       >
         <SettingsSkeleton />
       </DashboardLayout>
@@ -395,7 +307,7 @@ export default function SystemSettingsPage() {
     return (
       <DashboardLayout
         title="系统设置"
-        description="管理服务端模型、集成和会话运行时。"
+        description="管理服务端集成和会话运行时。"
       >
         <Alert variant="destructive" className="max-w-3xl">
           <TriangleAlert className="size-4" />
@@ -411,7 +323,7 @@ export default function SystemSettingsPage() {
   return (
     <DashboardLayout
       title="系统设置"
-      description="管理服务端模型、集成和会话运行时。"
+      description="管理服务端集成和会话运行时。"
     >
       <div className="space-y-6">
         {saveError ? (
@@ -423,85 +335,6 @@ export default function SystemSettingsPage() {
             </AlertDescription>
           </Alert>
         ) : null}
-
-        <SettingSection
-          icon={Sparkles}
-          title="模型"
-          description="设置供工作电脑使用的企业模型。需在工作电脑页启用“使用企业模型配置”策略；调用由电脑执行，个人模型设置保留。"
-        >
-          <SettingField label="API URL">
-            <Input
-              value={draft.url}
-              onChange={(event) => setDraft(current => current ? { ...current, url: event.target.value } : current)}
-              placeholder="https://model.example.com"
-            />
-          </SettingField>
-
-          <SettingField label="API Key">
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Input
-                type="password"
-                value={draft.apiKey}
-                className="font-mono text-xs"
-                onChange={(event) => setDraft(current => current ? { ...current, apiKey: event.target.value } : current)}
-                placeholder="your-model-api-key"
-              />
-              {draft.apiKey ? (
-                <Button variant="outline" size="sm" className="sm:shrink-0" onClick={() => void handleCopy(draft.apiKey, '模型 API Key')}>
-                  <Copy className="mr-2 size-4" />
-                  复制
-                </Button>
-              ) : null}
-            </div>
-          </SettingField>
-
-          <SettingField label="模型列表" description="从当前 API 获取可用模型，下面的模型选项会同步更新。">
-            <div className="flex flex-col items-start gap-2 sm:items-end">
-              <Button variant="outline" size="sm" disabled={modelListState === 'loading' || !draft.url.trim()} onClick={() => void handleFetchModels()}>
-                <RefreshCw className={`mr-2 size-4 ${modelListState === 'loading' ? 'animate-spin' : ''}`} />
-                {modelListState === 'loading' ? '获取中…' : '获取模型列表'}
-              </Button>
-              {modelListState === 'success' ? <span className="text-xs text-muted-foreground">已获取 {availableModels.length} 个模型</span> : null}
-              {modelListState === 'error' ? <span role="alert" className="text-xs text-destructive">{modelListError}</span> : null}
-            </div>
-          </SettingField>
-
-          <SettingField label="默认模型" description="新的本地会话会默认使用这个模型。">
-            <Select
-              value={draft.model}
-              onValueChange={(value) => setDraft(current => current ? { ...current, model: value } : current)}
-            >
-              <SelectTrigger className="w-full" aria-label="默认模型"><SelectValue placeholder="请选择模型" /></SelectTrigger>
-              <SelectContent>{modelOptions.map(model => <SelectItem key={model} value={model}>{model}</SelectItem>)}</SelectContent>
-            </Select>
-          </SettingField>
-
-          <SettingField
-            label="快速模型"
-            description="用于检索、网页提取、摘要等轻量任务；留空时使用主模型。"
-          >
-            <Select
-              value={draft.fastModel || undefined}
-              onValueChange={(value) => setDraft(current => current ? { ...current, fastModel: value === '__empty_fast_model__' ? '' : value } : current)}
-            >
-              <SelectTrigger className="w-full" aria-label="快速模型"><SelectValue placeholder="留空，使用默认模型" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__empty_fast_model__">留空，使用默认模型</SelectItem>
-                {modelOptions.map(model => <SelectItem key={model} value={model}>{model}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </SettingField>
-
-          <SettingField label="图片模型">
-            <Select
-              value={draft.image.model}
-              onValueChange={(value) => setDraft(current => current ? { ...current, image: { model: value } } : current)}
-            >
-              <SelectTrigger className="w-full" aria-label="图片模型"><SelectValue placeholder="请选择模型" /></SelectTrigger>
-              <SelectContent>{modelOptions.map(model => <SelectItem key={model} value={model}>{model}</SelectItem>)}</SelectContent>
-            </Select>
-          </SettingField>
-        </SettingSection>
 
         <SettingSection
           icon={MessageSquare}

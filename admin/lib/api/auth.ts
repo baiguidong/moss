@@ -129,20 +129,6 @@ export async function deleteRole(roleId: string): Promise<{ ok: true }> {
   return authClient.delete<{ ok: true }>(`/api/v1/roles/${encodeURIComponent(roleId)}`)
 }
 
-export async function setUserTokenLimit(
-  userId: string,
-  tokenLimit: number | null,
-): Promise<{ ok: boolean }> {
-  return authClient.patch<{ ok: boolean }>(`/api/v1/users/${userId}/token-limit`, { tokenLimit })
-}
-
-export async function setDepartmentTokenLimit(
-  departmentId: string,
-  tokenLimit: number | null,
-): Promise<{ ok: boolean }> {
-  return authClient.patch<{ ok: boolean }>(`/api/v1/departments/${departmentId}/token-limit`, { tokenLimit })
-}
-
 export async function getRagflowStatus(): Promise<RagflowIntegrationStatus> {
   return authClient.get<RagflowIntegrationStatus>('/api/v1/integrations/ragflow/status')
 }

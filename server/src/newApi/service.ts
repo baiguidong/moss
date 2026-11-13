@@ -147,6 +147,24 @@ export class NewAPIService {
     return await this.request('/api/usage/token/', String(cached.apiKey))
   }
 
+  /** Keep an existing New API account's login status aligned with Moss. */
+  async syncUserStatus(
+    userId: string,
+    orgId: string,
+    status: 'active' | 'disabled',
+  ): Promise<void> {
+    const cached = await this.credentials.get('new-api-user', `${orgId}:${userId}`)
+    const newApiUserId = Number(cached.userId)
+    if (!Number.isSafeInteger(newApiUserId) || newApiUserId <= 0) return
+    await this.request('/api/user/manage', this.adminKey(), {
+      method: 'POST',
+      body: JSON.stringify({
+        id: newApiUserId,
+        action: status === 'disabled' ? 'disable' : 'enable',
+      }),
+    })
+  }
+
   async balanceById(userId: string, orgId: string): Promise<{ availableUsd: number; usedUsd: number; totalUsd: number }> {
     const usage = await this.userInfoById(userId, orgId)
     if (!usage) return { availableUsd: 0, usedUsd: 0, totalUsd: 0 }

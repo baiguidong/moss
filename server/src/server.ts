@@ -1287,6 +1287,31 @@ export function startServer(
             })
           }
         }
+        if (
+          typeof body.status === 'string' &&
+          newApiService?.enabled() &&
+          typeof newApiService.syncUserStatus === 'function'
+        ) {
+          if (result.user.status === 'disabled') {
+            await newApiService.syncUserStatus(
+              result.user.id,
+              result.user.orgId,
+              result.user.status,
+            )
+          } else {
+            await newApiService
+              .syncUserStatus(
+                result.user.id,
+                result.user.orgId,
+                result.user.status,
+              )
+              .catch(error => {
+                logger.warn(
+                  `Unable to synchronize New API user ${result.user.id}: ${error instanceof Error ? error.message : String(error)}`,
+                )
+              })
+          }
+        }
         writeJson(res, 200, result)
         return
       }
