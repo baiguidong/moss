@@ -66,3 +66,18 @@ test('reads New API token usage with the user token', async () => {
   assert.equal(requests.at(-1)?.path, '/api/usage/token/')
   assert.equal(requests.at(-1)?.authorization, 'Bearer sk-user-key')
 })
+
+test('converts dollar recharge amounts to New API quota units', async () => {
+  const requests = mockNewApi()
+  await new NewAPIService(config, root).recharge(auth, 'other-user', 'org', 2.5)
+  const manageRequests = requests.filter(request => request.path === '/api/user/manage')
+  assert.equal(manageRequests.at(-1)?.body?.value, 1_250_000)
+})
+
+test('normalizes the New API balance response to dollars', async () => {
+  const requests = mockNewApi()
+  const service = new NewAPIService(config, root)
+  const balance = await service.balanceById('user', 'org')
+  assert.deepEqual(balance, { availableUsd: 0.000116, usedUsd: 0.000084, totalUsd: 0.0002 })
+  assert.equal(requests.at(-1)?.authorization, 'Bearer sk-user-key')
+})

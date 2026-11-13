@@ -91,6 +91,12 @@ export interface UsersListResponse {
   users: AuthUser[]
 }
 
+export interface NewApiBalance {
+  availableUsd: number
+  usedUsd: number
+  totalUsd: number
+}
+
 export interface CreateUserRequest {
   email?: string
   name: string

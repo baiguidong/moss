@@ -105,6 +105,8 @@ import {
   getDepartments,
   getRoles,
   getUsers,
+  getUserBalance,
+  rechargeUser,
   resetPassword,
   setDepartmentTokenLimit,
   setUserTokenLimit,
@@ -131,6 +133,7 @@ import type {
   RagflowAccountStatus,
   RagflowCredentials,
   RagflowIntegrationStatus,
+  NewApiBalance,
   RoleDefinition,
   Session,
 } from '@/lib/api/types'
@@ -205,10 +208,18 @@ const tokenLimitFormSchema = z.object({
   ),
 })
 
+const rechargeFormSchema = z.object({
+  amountUsd: z.string().refine(
+    value => Number.isFinite(Number(value)) && Number(value) > 0,
+    '请输入正数金额（美元）',
+  ),
+})
+
 type UserFormData = z.infer<typeof userFormSchema>
 type DepartmentFormData = z.infer<typeof departmentFormSchema>
 type PasswordFormData = z.infer<typeof passwordFormSchema>
 type TokenLimitFormData = z.infer<typeof tokenLimitFormSchema>
+type RechargeFormData = z.infer<typeof rechargeFormSchema>
 
 function formatTimestamp(value: number | null): string {
   if (!value) {
@@ -451,6 +462,7 @@ export default function UsersPage() {
   const canManageRagflowCredentials = hasScope(scopes, 'ragflow:credentials')
 
   const [users, setUsers] = useState<AuthUser[]>([])
+  const [balances, setBalances] = useState<Record<string, NewApiBalance>>({})
   const [departments, setDepartments] = useState<AuthDepartment[]>([])
   const [roles, setRoles] = useState<RoleDefinition[]>([])
   const [permissions, setPermissions] = useState<PermissionDefinition[]>([])
@@ -507,6 +519,8 @@ export default function UsersPage() {
   const [isSubmittingDepartment, setIsSubmittingDepartment] = useState(false)
   const [isSubmittingPassword, setIsSubmittingPassword] = useState(false)
   const [isSubmittingRole, setIsSubmittingRole] = useState(false)
+  const [isSubmittingRecharge, setIsSubmittingRecharge] = useState(false)
+  const [rechargeTarget, setRechargeTarget] = useState<AuthUser | null>(null)
   const [pendingRagflowAction, setPendingRagflowAction] = useState<string | null>(null)
   const [pendingUserActionId, setPendingUserActionId] = useState<string | null>(null)
   const [pendingDepartmentActionId, setPendingDepartmentActionId] = useState<string | null>(null)
@@ -540,6 +554,11 @@ export default function UsersPage() {
   const tokenLimitForm = useForm<TokenLimitFormData>({
     resolver: zodResolver(tokenLimitFormSchema),
     defaultValues: { tokenLimit: '' },
+  })
+
+  const rechargeForm = useForm<RechargeFormData>({
+    resolver: zodResolver(rechargeFormSchema),
+    defaultValues: { amountUsd: '' },
   })
 
   const roleCatalog = roles
@@ -578,6 +597,10 @@ export default function UsersPage() {
       ])
 
       setUsers(usersRes.users)
+      const balanceEntries = await Promise.all(usersRes.users.map(async user => {
+        try { return [user.id, await getUserBalance(user.id)] as const } catch { return null }
+      }))
+      setBalances(Object.fromEntries(balanceEntries.filter((entry): entry is readonly [string, NewApiBalance] => Boolean(entry))))
       setDepartments(departmentsRes.departments)
       setRoles(rolesRes.roles)
       setPermissions(permissionsRes.permissions)
@@ -596,6 +619,10 @@ export default function UsersPage() {
       setIsRefreshing(false)
     }
   }, [canManageUsers])
+
+  useEffect(() => {
+    if (!rechargeTarget) rechargeForm.reset({ amountUsd: '' })
+  }, [rechargeForm, rechargeTarget])
 
   useEffect(() => {
     void fetchData()
@@ -882,6 +909,23 @@ export default function UsersPage() {
     }
   }
 
+  const handleSubmitRecharge = async (values: RechargeFormData) => {
+    if (!rechargeTarget) return
+    setIsSubmittingRecharge(true)
+    try {
+      const result = await rechargeUser(rechargeTarget.id, Number(values.amountUsd))
+      const balance = await getUserBalance(rechargeTarget.id)
+      setBalances(previous => ({ ...previous, [rechargeTarget.id]: balance }))
+      toast.success(`${rechargeTarget.name} 已充值 $${result.amountUsd.toFixed(2)}`)
+      setRechargeTarget(null)
+      rechargeForm.reset({ amountUsd: '' })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '充值失败')
+    } finally {
+      setIsSubmittingRecharge(false)
+    }
+  }
+
   const handleSubmitRole = async () => {
     const name = roleDialog.name.trim()
     if (!name) {
@@ -1159,6 +1203,7 @@ export default function UsersPage() {
                         <TableHead>所属部门</TableHead>
                         <TableHead>角色</TableHead>
                         <TableHead>状态</TableHead>
+                        <TableHead>余额</TableHead>
                         <TableHead>最后登录</TableHead>
                         <TableHead className="text-right">操作</TableHead>
                       </TableRow>
@@ -1193,6 +1238,9 @@ export default function UsersPage() {
                               >
                                 {user.status === 'active' ? '启用' : '禁用'}
                               </Badge>
+                            </TableCell>
+                            <TableCell>
+                              {balances[user.id] ? `$${balances[user.id].availableUsd.toFixed(2)}` : '—'}
                             </TableCell>
                             <TableCell>{formatTimestamp(user.lastLoginAt)}</TableCell>
                             <TableCell className="text-right">
@@ -1239,6 +1287,10 @@ export default function UsersPage() {
                                     <Coins className="mr-2 size-4" />
                                     设置 Token 限额
                                   </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => setRechargeTarget(user)}>
+                                    <Coins className="mr-2 size-4" />
+                                    充值美元
+                                  </DropdownMenuItem>
                                   <DropdownMenuItem onClick={() => void handleToggleUserStatus(user)}>
                                     {user.status === 'active' ? (
                                       <>
@@ -1268,7 +1320,7 @@ export default function UsersPage() {
                       })}
                       {filteredUsers.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
+                          <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
                             没有匹配的用户。
                           </TableCell>
                         </TableRow>
@@ -2071,6 +2123,50 @@ export default function UsersPage() {
           ) : null}
         </SheetContent>
       </Sheet>
+
+      <Dialog
+        open={!!rechargeTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRechargeTarget(null)
+            rechargeForm.reset({ amountUsd: '' })
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>充值美元额度</DialogTitle>
+            <DialogDescription>
+              {rechargeTarget ? `为 ${rechargeTarget.name} 充值，余额和扣费由 New API 维护。` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...rechargeForm}>
+            <form onSubmit={rechargeForm.handleSubmit(handleSubmitRecharge)} className="space-y-4">
+              <FormField
+                control={rechargeForm.control}
+                name="amountUsd"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>充值金额（美元）</FormLabel>
+                    <FormControl>
+                      <Input {...field} type="number" min="0.01" step="0.01" placeholder="例如 100" />
+                    </FormControl>
+                    <FormDescription>New API 按美元额度计量。</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setRechargeTarget(null)}>取消</Button>
+                <Button type="submit" disabled={isSubmittingRecharge}>
+                  {isSubmittingRecharge ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                  确认充值
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={!!revealedRagflowCredentials}

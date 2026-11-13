@@ -12,6 +12,15 @@ type NewAPIAccount = {
   tokenId: number
 }
 
+const NEW_API_QUOTA_PER_USD = 500_000
+
+function quotaValue(usage: NewAPIUsage, name: 'total_available' | 'total_used'): number {
+  const data = usage?.data as any
+  const quota = data?.user_quota ?? data?.quota ?? data
+  const value = Number(quota?.[name] ?? usage?.[name])
+  return Number.isFinite(value) ? Math.max(0, value) : 0
+}
+
 function trimUrl(value: string): string { return value.replace(/\/+$/, '') }
 function accountKey(auth: Pick<AuthContext, 'orgId' | 'userId'>): string { return `${auth.orgId}:${auth.userId}` }
 
@@ -137,10 +146,24 @@ export class NewAPIService {
     return await this.request('/api/usage/token/', String(cached.apiKey))
   }
 
-  async recharge(auth: AuthContext, userId: string, orgId: string, quota: number): Promise<{ ok: true }> {
-    if (!Number.isSafeInteger(quota) || quota <= 0) throw Object.assign(new Error('充值额度必须是正整数'), { statusCode: 400 })
+  async balanceById(userId: string, orgId: string): Promise<{ availableUsd: number; usedUsd: number; totalUsd: number }> {
+    const usage = await this.userInfoById(userId, orgId)
+    if (!usage) return { availableUsd: 0, usedUsd: 0, totalUsd: 0 }
+    const availableUsd = quotaValue(usage, 'total_available') / NEW_API_QUOTA_PER_USD
+    const usedUsd = quotaValue(usage, 'total_used') / NEW_API_QUOTA_PER_USD
+    return {
+      availableUsd: Number(availableUsd.toFixed(6)),
+      usedUsd: Number(usedUsd.toFixed(6)),
+      totalUsd: Number((availableUsd + usedUsd).toFixed(6)),
+    }
+  }
+
+  async recharge(auth: AuthContext, userId: string, orgId: string, amountUsd: number): Promise<{ ok: true; amountUsd: number }> {
+    if (!Number.isFinite(amountUsd) || amountUsd <= 0) throw Object.assign(new Error('充值金额必须是正数（美元）'), { statusCode: 400 })
+    const quota = Math.round(amountUsd * NEW_API_QUOTA_PER_USD)
+    if (!Number.isSafeInteger(quota) || quota <= 0) throw Object.assign(new Error('充值金额超出范围'), { statusCode: 400 })
     const account = await this.ensureAccount({ ...auth, userId, orgId })
     await this.changeQuota(account.userId, quota)
-    return { ok: true }
+    return { ok: true, amountUsd: Number((quota / NEW_API_QUOTA_PER_USD).toFixed(6)) }
   }
 }

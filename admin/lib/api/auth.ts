@@ -18,6 +18,7 @@ import type {
   RagflowAccountStatus,
   RagflowCredentials,
   RagflowIntegrationStatus,
+  NewApiBalance,
 } from './types'
 
 export async function login(
@@ -59,6 +60,17 @@ export async function updateUser(
 
 export async function deleteUser(userId: string): Promise<{ ok: true }> {
   return authClient.delete<{ ok: true }>(`/api/v1/users/${encodeURIComponent(userId)}`)
+}
+
+export async function getUserBalance(userId: string): Promise<NewApiBalance> {
+  return authClient.get<NewApiBalance>(`/api/v1/users/${encodeURIComponent(userId)}/balance`)
+}
+
+export async function rechargeUser(userId: string, amountUsd: number): Promise<{ ok: true; amountUsd: number }> {
+  return authClient.post<{ ok: true; amountUsd: number }>(
+    `/api/v1/users/${encodeURIComponent(userId)}/recharge`,
+    { amountUsd },
+  )
 }
 
 export async function resetPassword(

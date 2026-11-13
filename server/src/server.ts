@@ -786,6 +786,17 @@ export function startServer(
         return
       }
 
+      const userBalanceMatch = pathname.match(/^\/api\/v1\/users\/([^/]+)\/balance$/)
+      if (req.method === 'GET' && userBalanceMatch) {
+        authService.requireScope(auth, 'admin:users')
+        if (!newApiService?.enabled()) throw new HttpError(503, 'New API gateway is unavailable')
+        const userId = userBalanceMatch[1] || ''
+        const target = await authService.getUserOrNull(userId, auth.orgId, auth)
+        if (!target) throw new HttpError(404, 'Unknown user_id')
+        writeNoStoreJson(res, 200, await newApiService.balanceById(userId, auth.orgId))
+        return
+      }
+
       const traceResult = await handleTraceRoute(req, url, auth)
       if (traceResult) {
         writeNoStoreJson(res, traceResult.status, traceResult.body)
@@ -1382,8 +1393,8 @@ export function startServer(
         const target = await authService.getUserOrNull(userId, auth.orgId, auth)
         if (!target) throw new HttpError(404, 'Unknown user_id')
         const body = await readJsonBody(req)
-        const quota = Number(body.quota)
-        writeJson(res, 200, await newApiService.recharge(auth, userId, auth.orgId, quota))
+        const amountUsd = Number(body.amountUsd)
+        writeJson(res, 200, await newApiService.recharge(auth, userId, auth.orgId, amountUsd))
         return
       }
 
