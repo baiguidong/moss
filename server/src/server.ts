@@ -1523,10 +1523,12 @@ export function startServer(
         authService.requireScope(auth, 'admin:settings')
         const body = await readJsonBody(req)
         try {
-          const catalog = await fetchModelCatalog({
-            url: typeof body.url === 'string' ? body.url : '',
-            apiKey: typeof body.apiKey === 'string' ? body.apiKey : '',
-          })
+          const catalog = newApiService?.enabled()
+            ? await newApiService.modelCatalog(auth)
+            : await fetchModelCatalog({
+              url: typeof body.url === 'string' ? body.url : '',
+              apiKey: typeof body.apiKey === 'string' ? body.apiKey : '',
+            })
           writeJson(res, 200, catalog)
         } catch (error) {
           throw new HttpError(502, error instanceof Error ? error.message : String(error))

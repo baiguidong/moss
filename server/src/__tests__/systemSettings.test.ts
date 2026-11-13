@@ -76,6 +76,7 @@ describe('system settings model layout', () => {
               baseUrl: 'https://model.initial.test',
               apiKey: 'model-key-initial',
               model: 'initial-model',
+              availableModels: ['initial-model', 'initial-fast-model'],
               fastModel: 'initial-fast-model',
               maxTurns: 12,
               thinking: {
@@ -127,6 +128,7 @@ describe('system settings model layout', () => {
     expect(mod.getSystemSettings()).toMatchObject({
       model: 'initial-model',
       fastModel: 'initial-fast-model',
+      availableModels: ['initial-model', 'initial-fast-model'],
       maxTurns: 12,
       thinkingMode: 'enabled',
       thinkingBudgetTokens: 4096,
@@ -158,6 +160,7 @@ describe('system settings model layout', () => {
           baseUrl: 'https://model.updated.test',
           apiKey: 'model-key-updated',
           model: 'updated-model',
+          availableModels: ['updated-model', 'updated-fast-model'],
           fastModel: 'updated-fast-model',
           maxTurns: 34,
           thinking: {
@@ -182,6 +185,7 @@ describe('system settings model layout', () => {
       bypassPermissions: true,
       model: 'updated-model',
       fastModel: 'updated-fast-model',
+      availableModels: ['updated-model', 'updated-fast-model'],
       maxTurns: 34,
       thinkingMode: 'disabled',
       thinkingBudgetTokens: 8192,
@@ -205,6 +209,7 @@ describe('system settings model layout', () => {
       apiKey: 'model-key-updated',
       model: 'updated-model',
       fastModel: 'updated-fast-model',
+      availableModels: ['updated-model', 'updated-fast-model'],
       declaredContextByModel: {
         'initial-model': 200_000,
         'initial-fast-model': 200_000,

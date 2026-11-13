@@ -20,7 +20,8 @@ New API 仍使用开源镜像，Moss 不修改其源码。`QuotaForNewUser`、�
 账号初始化额度默认均为 0，用户余额只能通过 Moss 管理页的充值操作增加。持续运行的
 `new-api-user-sync` 服务按 `moss_<sha256(org_id:user_id)>` 对齐两边账号，并将 OIDC
 `sub` 写为同一个 `org_id:user_id`；没有对应 Moss 身份的 `oidc_*` 账号会被禁用并清零，
-避免 OIDC 重复注册或赠送额度。
+避免 OIDC 重复注册或赠送额度。模型目录和默认模型由 New API 的渠道配置决定，Moss
+通过每个用户 Key 的 `/v1/models` 动态读取，不再在 Moss 环境文件中维护模型名单。
 
 ## Requirements
 

@@ -152,11 +152,11 @@ export const serverFileConfigSchema = lazySchema(() =>
       publicBaseUrl: z.string().url().optional(),
       apiKey: z.string().min(1).optional(),
       initialQuota: z.number().int().nonnegative().default(0),
-      defaultModel: z.string().min(1).default('gpt-6.1-sol'),
+      defaultModel: z.string().min(1).optional(),
       availableModels: z.array(z.string().min(1)).default([]),
-      fastModel: z.string().min(1).default('gpt-6.1-sol'),
+      fastModel: z.string().min(1).optional(),
       requestTimeoutMs: z.number().int().min(1000).default(15000),
-    }).default({ enabled: false, initialQuota: 0, defaultModel: 'gpt-6.1-sol', availableModels: [], fastModel: 'gpt-6.1-sol', requestTimeoutMs: 15000 }),
+    }).default({ enabled: false, initialQuota: 0, availableModels: [], requestTimeoutMs: 15000 }),
     oidc: z.object({
       enabled: z.boolean().default(true),
       issuer: z.string().url().optional(),
@@ -222,9 +222,9 @@ export type ServerConfig = {
     publicBaseUrl?: string
     apiKey?: string
     initialQuota: number
-    defaultModel: string
+    defaultModel?: string
     availableModels: string[]
-    fastModel: string
+    fastModel?: string
     requestTimeoutMs: number
   }
   oidc: {

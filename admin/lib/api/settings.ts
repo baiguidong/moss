@@ -13,3 +13,7 @@ export function updateSystemSettings(
 ): Promise<SystemSettings> {
   return authClient.patch<SystemSettings>('/api/v1/settings/system', data)
 }
+
+export function getSystemModelCatalog(): Promise<{ models: string[] }> {
+  return authClient.post<{ models: string[] }>('/api/v1/settings/models', {})
+}

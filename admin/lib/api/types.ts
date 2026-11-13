@@ -201,6 +201,7 @@ export interface SystemSettings {
   webui?: { snapshots: { maxSnapshotsPerEnvironment: number; maxBytesPerEnvironment: number } }
   bypassPermissions: boolean
   model: string
+  availableModels: string[]
   fastModel: string
   maxTurns: number
   thinkingMode: ThinkingMode
@@ -223,6 +224,7 @@ export interface UpdateSystemSettingsRequest {
       baseUrl?: string
       apiKey?: string
       model?: string
+      availableModels?: string[]
       fastModel?: string
       maxTurns?: number
       thinking?: {

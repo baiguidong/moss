@@ -2,6 +2,7 @@ import { randomBytes, createHash } from 'node:crypto'
 import { ServerCredentialStore } from '../security/credentialStore.js'
 import type { AuthContext } from '../auth/token.js'
 import type { ServerConfig } from '../types.js'
+import { getSystemSettings } from '../systemSettings.js'
 
 type NewAPIUsage = Record<string, unknown>
 type NewAPIAccount = {
@@ -62,6 +63,54 @@ export class NewAPIService {
 
   private adminKey(): string { return this.requireConfig().apiKey }
 
+  private modelPolicy(catalog: string[]): { model: string; fastModel: string; allowed: string[] } {
+    const settings = getSystemSettings()
+    const visible = settings.availableModels.length
+      ? settings.availableModels.filter(model => catalog.includes(model))
+      : catalog
+    const allowed = visible.length ? visible : catalog
+    if (!allowed.length) throw Object.assign(new Error('New API 没有返回可用模型，请先配置渠道'), { statusCode: 503 })
+    const model = settings.model && allowed.includes(settings.model) ? settings.model : allowed[0]!
+    const fastModel = settings.fastModel && allowed.includes(settings.fastModel) ? settings.fastModel : model
+    return { model, fastModel, allowed }
+  }
+
+  async modelCatalog(auth: AuthContext): Promise<{ models: string[] }> {
+    const account = await this.ensureAccount(auth)
+    const catalog = await this.request('/v1/models', account.apiKey)
+    const models = Array.from(new Set<string>((Array.isArray(catalog?.data) ? catalog.data : [])
+      .map((item: any) => String(item?.id || '').trim()).filter(Boolean) as string[]))
+    return { models }
+  }
+
+  private async syncTokenModelPolicy(account: NewAPIAccount, allowed: string[]): Promise<void> {
+    const settings = getSystemSettings()
+    const enabled = settings.availableModels.length > 0
+    const currentResponse = await this.request(`/api/token/${account.tokenId}`, account.apiKey)
+    const current = currentResponse?.data || currentResponse?.token || currentResponse
+    if (!current || Number(current?.id || current?.Id) !== account.tokenId) return
+    const normalize = (value: unknown): string => Array.isArray(value)
+      ? value.map(item => String(item).trim()).filter(Boolean).sort().join(',')
+      : String(value || '').split(',').map(item => item.trim()).filter(Boolean).sort().join(',')
+    if (Boolean(current.model_limits_enabled) === enabled && normalize(current.model_limits) === normalize(enabled ? allowed : '')) return
+    await this.request('/api/token/', account.apiKey, {
+      method: 'PUT',
+      body: JSON.stringify({
+        id: account.tokenId,
+        name: current.name || `moss-${account.userId}`,
+        expired_time: Number(current.expired_time ?? -1),
+        remain_quota: Number(current.remain_quota ?? 0),
+        unlimited_quota: Boolean(current.unlimited_quota),
+        model_limits_enabled: enabled,
+        model_limits: enabled ? allowed.join(',') : '',
+        allow_ips: current.allow_ips || '',
+        group: current.group || 'default',
+        cross_group_retry: Boolean(current.cross_group_retry),
+        allow_user_quota_query: current.allow_user_quota_query !== false,
+      }),
+    })
+  }
+
   private usernameFor(key: string): string {
     // New API limits usernames and display names to 20 characters.
     return `moss_${createHash('sha256').update(key).digest('hex').slice(0, 14)}`
@@ -95,10 +144,11 @@ export class NewAPIService {
         allow_user_quota_query: true,
         expired_time: -1,
         group: 'default',
-        model_limits_enabled: true,
-        model_limits: this.config.availableModels.length
-          ? this.config.availableModels.join(',')
-          : this.config.defaultModel,
+        model_limits_enabled: getSystemSettings().availableModels.length > 0,
+        model_limits: (() => {
+          const configured = getSystemSettings().availableModels
+          return configured.length ? configured.join(',') : ''
+        })(),
       }),
     })
     const tokens = await this.request('/api/token/?p=1&size=100', userKey)
@@ -134,12 +184,10 @@ export class NewAPIService {
 
   async ensureUserKey(auth: AuthContext): Promise<{ url: string; apiKey: string; model: string; availableModels: string[]; fastModel: string; expiresAt: number }> {
     const account = await this.ensureAccount(auth)
-    const availableModels = [...new Set([
-      ...(this.config.availableModels || []),
-      this.config.defaultModel,
-      this.config.fastModel,
-    ].map(model => model.trim()).filter(Boolean))]
-    return { url: this.config.publicBaseUrl || this.config.baseUrl!, apiKey: account.apiKey, model: this.config.defaultModel, availableModels, fastModel: this.config.fastModel, expiresAt: 0 }
+    const catalog = await this.modelCatalog(auth)
+    const policy = this.modelPolicy(catalog.models)
+    await this.syncTokenModelPolicy(account, policy.allowed)
+    return { url: this.config.publicBaseUrl || this.config.baseUrl!, apiKey: account.apiKey, model: policy.model, availableModels: policy.allowed, fastModel: policy.fastModel, expiresAt: 0 }
   }
 
   async userInfo(auth: AuthContext): Promise<NewAPIUsage> {

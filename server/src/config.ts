@@ -80,9 +80,9 @@ export function getDefaultServerConfig(): ServerFileConfig {
     newApi: {
       enabled: false,
       initialQuota: 0,
-      defaultModel: 'gpt-6.1-sol',
+      defaultModel: undefined,
       availableModels: [],
-      fastModel: 'gpt-6.1-sol',
+      fastModel: undefined,
       requestTimeoutMs: 15_000,
     },
     oidc: {

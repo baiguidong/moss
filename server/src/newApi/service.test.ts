@@ -36,8 +36,11 @@ function mockNewApi() {
     if (url.pathname === '/api/user/login') return new Response(JSON.stringify({ success: true, data: { access_token: 'user-session', user: { id: 42 } } }), { status: 200 })
     if (url.pathname === '/api/user/manage') return new Response(JSON.stringify({ success: true }), { status: 200 })
     if (url.pathname === '/api/token/' && init?.method === 'POST') return new Response(JSON.stringify({ success: true }), { status: 200 })
+    if (url.pathname === '/api/token/' && init?.method === 'PUT') return new Response(JSON.stringify({ success: true }), { status: 200 })
     if (url.pathname === '/api/token/' && init?.method !== 'POST') return new Response(JSON.stringify({ success: true, data: { items: [{ id: 7, name: 'moss-org-user' }] } }), { status: 200 })
+    if (url.pathname === '/api/token/7' && init?.method !== 'PUT') return new Response(JSON.stringify({ success: true, data: { id: 7, name: 'moss-org-user', expired_time: -1, remain_quota: 0, unlimited_quota: true, model_limits_enabled: false, model_limits: '', allow_ips: '', group: 'default', cross_group_retry: false, allow_user_quota_query: true } }), { status: 200 })
     if (url.pathname === '/api/token/7/key') return new Response(JSON.stringify({ success: true, data: { key: 'sk-user-key' } }), { status: 200 })
+    if (url.pathname === '/v1/models') return new Response(JSON.stringify({ data: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }] }), { status: 200 })
     if (url.pathname === '/api/usage/token/') return new Response(JSON.stringify({ code: true, data: { total_used: 42, total_available: 58 } }), { status: 200 })
     throw new Error(`unexpected ${url.pathname}`)
   }) as typeof fetch
@@ -47,16 +50,16 @@ function mockNewApi() {
 test('creates a New API user and returns its direct gateway token', async () => {
   const requests = mockNewApi()
   const access = await new NewAPIService(config, root).ensureUserKey(auth)
-  assert.deepEqual(access, { url: 'https://models.test/router', apiKey: 'sk-user-key', model: 'gpt-4o', availableModels: ['gpt-4o', 'gpt-4o-mini'], fastModel: 'gpt-4o-mini', expiresAt: 0 })
-  assert.deepEqual(requests.map(request => request.path), ['/api/user/', '/api/user/login', '/api/user/manage', '/api/token/', '/api/token/', '/api/token/7/key'])
+  assert.deepEqual(access, { url: 'https://models.test/router', apiKey: 'sk-user-key', model: 'gpt-4o', availableModels: ['gpt-4o', 'gpt-4o-mini'], fastModel: 'gpt-4o', expiresAt: 0 })
+  assert.deepEqual(requests.map(request => request.path), ['/api/user/', '/api/user/login', '/api/user/manage', '/api/token/', '/api/token/', '/api/token/7/key', '/v1/models', '/api/token/7'])
   assert.deepEqual(requests.find(request => request.path === '/api/token/' && request.method === 'POST')?.body, {
     name: 'moss-org-user',
     unlimited_quota: true,
     allow_user_quota_query: true,
     expired_time: -1,
     group: 'default',
-    model_limits_enabled: true,
-    model_limits: 'gpt-4o',
+    model_limits_enabled: false,
+    model_limits: '',
   })
 })
 

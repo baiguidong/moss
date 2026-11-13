@@ -28,6 +28,7 @@ export type SystemSettingsOpenIM = {
 export type SystemSettingsPayload = {
   bypassPermissions: boolean
   model: string
+  availableModels: string[]
   fastModel: string
   declaredContextByModel: Record<string, number>
   maxTurns: number
@@ -66,6 +67,7 @@ const DEFAULT_SYSTEM_SETTINGS: Omit<
 > = {
   bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
   model: '',
+  availableModels: [],
   fastModel: '',
   declaredContextByModel: {},
   maxTurns: 100,
@@ -167,6 +169,11 @@ function normalizeDeclaredContextByModel(value: unknown): Record<string, number>
   }))
 }
 
+function normalizeModelList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.filter(item => typeof item === 'string').map(item => item.trim()).filter(Boolean))]
+}
+
 function deleteManagedEndpointEnvKeys(env: Record<string, unknown>): void {
   for (const key of Object.keys(env)) {
     if (
@@ -205,6 +212,11 @@ function normalizeSystemSettings(
     stringField(result, 'fastModel') ??
     stringField(existingText, 'fastModel') ??
     DEFAULT_SYSTEM_SETTINGS.fastModel
+
+  result.availableModels = normalizeModelList(
+    source.availableModels ?? sourceText.availableModels ??
+    result.availableModels ?? existingText.availableModels,
+  )
 
   const declaredContextByModel = normalizeDeclaredContextByModel(
     source.declaredContextByModel ?? sourceText.declaredContextByModel ??
@@ -355,6 +367,7 @@ function readSystemSettingsState(): SystemSettingsState {
     for (const [field, value] of Object.entries({
       model: text.model,
       fastModel: text.fastModel,
+      availableModels: text.availableModels,
       url: text.baseUrl,
       apiKey: text.apiKey,
       maxTurns: text.maxTurns,
@@ -386,6 +399,7 @@ function toSystemSettingsPayload(
   return {
     bypassPermissions: state.value.bypassPermissions,
     model: state.value.model,
+    availableModels: state.value.availableModels,
     fastModel: state.value.fastModel,
     declaredContextByModel: state.value.declaredContextByModel,
     maxTurns: state.value.maxTurns,
@@ -458,6 +472,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
       apiKey: nextSettings.apiKey,
       model: nextSettings.model,
       fastModel: nextSettings.fastModel,
+      ...(nextSettings.availableModels.length ? { availableModels: nextSettings.availableModels } : { availableModels: undefined }),
       maxTurns: nextSettings.maxTurns,
       thinking: {
         ...existingTextThinking,
@@ -502,6 +517,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
   return {
     bypassPermissions: nextSettings.bypassPermissions,
     model: nextSettings.model,
+    availableModels: nextSettings.availableModels,
     fastModel: nextSettings.fastModel,
     declaredContextByModel: nextSettings.declaredContextByModel,
     maxTurns: nextSettings.maxTurns,

@@ -18,7 +18,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
-import { getSystemSettings, updateSystemSettings } from '@/lib/api/settings'
+import { getSystemModelCatalog, getSystemSettings, updateSystemSettings } from '@/lib/api/settings'
 import { hasScope } from '@/lib/api/client'
 import { useAuth } from '@/lib/hooks/use-auth'
 import type {
@@ -35,7 +35,7 @@ import { toast } from 'sonner'
 
 type EditableSystemSettings = Pick<
   SystemSettings,
-  'openIM'
+  'openIM' | 'model' | 'availableModels' | 'fastModel' | 'image'
 > & { webui: NonNullable<SystemSettings['webui']> }
 
 
@@ -56,6 +56,10 @@ function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
   return {
     webui: { snapshots: normalizeSnapshotPolicy(settings.webui?.snapshots) },
     openIM: { ...settings.openIM },
+    model: settings.model,
+    availableModels: [...settings.availableModels],
+    fastModel: settings.fastModel,
+    image: { ...settings.image },
   }
 }
 
@@ -64,6 +68,21 @@ function buildSystemSettingsPatch(
   draft: EditableSystemSettings,
 ): UpdateSystemSettingsRequest {
   const patch: UpdateSystemSettingsRequest = {}
+
+  if (draft.model !== settings.model ||
+      JSON.stringify(draft.availableModels) !== JSON.stringify(settings.availableModels) ||
+      draft.fastModel !== settings.fastModel) {
+    patch.models = {
+      ...(draft.model !== settings.model ? { text: { model: draft.model } } : {}),
+    }
+    const textPatch = patch.models.text || {}
+    if (JSON.stringify(draft.availableModels) !== JSON.stringify(settings.availableModels)) textPatch.availableModels = draft.availableModels
+    if (draft.fastModel !== settings.fastModel) textPatch.fastModel = draft.fastModel
+    patch.models.text = textPatch
+  }
+  if (draft.image.model !== settings.image.model) {
+    patch.models = { ...(patch.models || {}), image: { model: draft.image.model } }
+  }
 
   const openIMPatch: NonNullable<UpdateSystemSettingsRequest['openIM']> = {}
   const openIMFields = [
@@ -168,6 +187,8 @@ export default function SystemSettingsPage() {
   const [isSaving, setIsSaving] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [saveError, setSaveError] = useState('')
+  const [modelCatalog, setModelCatalog] = useState<string[]>([])
+  const [modelCatalogState, setModelCatalogState] = useState<'idle' | 'loading' | 'error'>('idle')
   const settingsRef = useRef<SystemSettings | null>(null)
   const draftRef = useRef<EditableSystemSettings | null>(null)
   const lastFailedSnapshotRef = useRef<string | null>(null)
@@ -198,6 +219,19 @@ export default function SystemSettingsPage() {
       setIsLoading(false)
     }
   }, [canManageSettings])
+
+  const fetchModelCatalog = useCallback(async () => {
+    setModelCatalogState('loading')
+    try {
+      const response = await getSystemModelCatalog()
+      setModelCatalog([...new Set(response.models)])
+      setModelCatalogState('idle')
+      toast.success('模型列表已更新')
+    } catch (error) {
+      setModelCatalogState('error')
+      toast.error(error instanceof Error ? error.message : '获取模型列表失败')
+    }
+  }, [])
 
   useEffect(() => {
     if (canManageSettings) void loadSettings()
@@ -335,6 +369,71 @@ export default function SystemSettingsPage() {
             </AlertDescription>
           </Alert>
         ) : null}
+
+        <SettingSection
+          icon={Server}
+          title="模型"
+          description="模型目录来自当前 New API。URL 和 API Key 由服务端管理，客户端只接收可用模型配置。"
+        >
+          <SettingField label="模型列表" description="从当前 API 获取可用模型，下面的模型选项会同步更新。">
+            <div className="flex flex-wrap items-center gap-3">
+              <Button type="button" variant="outline" onClick={() => void fetchModelCatalog()} disabled={modelCatalogState === 'loading'}>
+                {modelCatalogState === 'loading' ? '获取中…' : '获取模型列表'}
+              </Button>
+              {modelCatalogState === 'error' ? <span className="text-sm text-destructive">获取失败</span> : null}
+            </div>
+          </SettingField>
+
+          <SettingField label="允许切换的模型" description="从上面获取到的模型列表中勾选允许在会话里切换的模型；不勾选时允许全部模型。">
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {modelCatalog.map(model => {
+                const checked = draft.availableModels.length === 0 || draft.availableModels.includes(model)
+                return (
+                  <label key={model} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={event => setDraft(current => current ? {
+                        ...current,
+                        availableModels: event.target.checked
+                          ? [...new Set([...current.availableModels, model])]
+                          : current.availableModels.length === 0
+                            ? modelCatalog.filter(item => item !== model)
+                            : current.availableModels.filter(item => item !== model),
+                      } : current)}
+                    />
+                    <span className="truncate">{model}</span>
+                  </label>
+                )
+              })}
+              {!modelCatalog.length ? <p className="text-sm text-muted-foreground">请先获取模型列表。</p> : null}
+            </div>
+          </SettingField>
+
+          <SettingField label="默认模型" description="当前默认模型：用于新会话和未指定模型的请求。">
+            <Input
+              value={draft.model}
+              onChange={event => setDraft(current => current ? { ...current, model: event.target.value } : current)}
+              placeholder="从模型列表中选择或输入模型名称"
+            />
+          </SettingField>
+
+          <SettingField label="快速模型" description="用于检索、网页提取、摘要等轻量任务；留空时使用主模型。">
+            <Input
+              value={draft.fastModel}
+              onChange={event => setDraft(current => current ? { ...current, fastModel: event.target.value } : current)}
+              placeholder="留空时使用默认模型"
+            />
+          </SettingField>
+
+          <SettingField label="图片模型">
+            <Input
+              value={draft.image.model}
+              onChange={event => setDraft(current => current ? { ...current, image: { model: event.target.value } } : current)}
+              placeholder="gpt-image-2"
+            />
+          </SettingField>
+        </SettingSection>
 
         <SettingSection
           icon={MessageSquare}

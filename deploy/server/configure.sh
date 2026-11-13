@@ -73,9 +73,6 @@ apply_setting MOSS_NEW_API_ENABLED 0
 apply_setting MOSS_NEW_API_BASE_URL http://new-api:3000
 apply_setting MOSS_NEW_API_API_KEY ''
 apply_setting MOSS_NEW_API_INITIAL_QUOTA 0
-apply_setting MOSS_NEW_API_DEFAULT_MODEL gpt-6.1-sol
-apply_setting MOSS_NEW_API_MODELS ''
-apply_setting MOSS_NEW_API_FAST_MODEL gpt-6.1-sol
 apply_setting NEW_API_REDIS_PASSWORD "$(openssl rand -hex 32)"
 apply_setting MOSS_OIDC_NEW_API_CLIENT_ID new-api
 apply_setting MOSS_OIDC_NEW_API_CLIENT_SECRET "$(openssl rand -hex 32)"
@@ -95,7 +92,7 @@ apply_setting MOSS_DB_PASSWORD moss_internal_password
 apply_setting MOSS_DB_ROOT_PASSWORD moss_root_internal_password
 
 # Remove configuration from the retired standalone LiteLLM deployment.
-for obsolete_key in MOSS_LITELLM_ENABLED MOSS_LITELLM_BASE_URL MOSS_LITELLM_PUBLIC_BASE_URL MOSS_LITELLM_KEY_TTL_SEC MOSS_LITELLM_MASTER_KEY; do
+for obsolete_key in MOSS_LITELLM_ENABLED MOSS_LITELLM_BASE_URL MOSS_LITELLM_PUBLIC_BASE_URL MOSS_LITELLM_KEY_TTL_SEC MOSS_LITELLM_MASTER_KEY MOSS_NEW_API_DEFAULT_MODEL MOSS_NEW_API_MODELS MOSS_NEW_API_FAST_MODEL; do
   sed -i.bak "/^${obsolete_key}=/d" "$ENV_FILE"
 done
 rm -f "$ENV_FILE.bak"
