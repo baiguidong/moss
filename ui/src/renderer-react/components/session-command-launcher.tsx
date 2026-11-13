@@ -49,13 +49,22 @@ export function ModelSelector({
   disabled = false,
 }: Pick<Props, 'currentModel' | 'onModelChange' | 'modelSettings' | 'disabled'>) {
   const [models, setModels] = React.useState<string[]>(modelSettings?.availableModels || []);
+  const [defaultModel, setDefaultModel] = React.useState(currentModel || '');
   const [changing, setChanging] = React.useState(false);
   React.useEffect(() => {
     let cancelled = false;
-    setModels(modelSettings?.availableModels || []);
+    const configured = modelSettings?.availableModels || [];
+    setModels(configured);
+    setDefaultModel(currentModel || configured[0] || '');
     void window.agentDesktop.listModels({ url: modelSettings?.url || '', apiKey: modelSettings?.apiKey || '' })
       .then(catalog => {
-        if (!cancelled) setModels([...new Set([...(modelSettings?.availableModels || []), ...(catalog.models || [])])]);
+        if (!cancelled) {
+          // When the user has configured an allow-list, keep the session
+          // selector restricted to it. An empty local list may fall back to
+          // the server-managed catalog.
+          if (!configured.length) setModels(catalog.models || []);
+          setDefaultModel(currentModel || (catalog as typeof catalog & { defaultModel?: string }).defaultModel || configured[0] || catalog.models?.[0] || '');
+        }
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -68,17 +77,17 @@ export function ModelSelector({
     finally { setChanging(false); }
   };
   return (
-    <label className="composer-control inline-flex h-9 max-w-56 shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground has-[:disabled]:opacity-50">
+    <label className="composer-control inline-flex h-9 max-w-56 shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 px-2.5 text-xs text-foreground transition-colors hover:bg-muted/60 has-[:disabled]:opacity-50">
       <Cpu className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
       <select
-        value={currentModel || 'default'}
+        value={currentModel && options.includes(currentModel) ? currentModel : 'default'}
         onChange={(event) => { void handleChange(event); }}
         disabled={disabled || !onModelChange || changing}
         title="选择模型"
         aria-label="选择模型"
         className="min-w-0 max-w-48 cursor-pointer appearance-none bg-transparent pr-1 text-xs outline-none"
       >
-        <option value="default">默认模型{currentModel ? `（${currentModel}）` : ''}</option>
+        <option value="default">默认模型{defaultModel ? `（${defaultModel}）` : ''}</option>
         {options.map(model => <option key={model} value={model}>{model}</option>)}
       </select>
     </label>

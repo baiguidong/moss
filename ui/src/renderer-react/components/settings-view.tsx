@@ -969,6 +969,16 @@ export function SettingsView({
     return [...new Set(values.map(value => value.trim()).filter(Boolean))];
   }, [availableModels, imageDraft.model, settingsDraft?.availableModels, settingsDraft?.fastModel, settingsDraft?.model]);
 
+  const sessionModelOptions = React.useMemo(() => {
+    const values = [
+      settingsDraft?.model || '',
+      ...availableModels,
+      ...(settingsDraft?.availableModels || []),
+      settingsDraft?.fastModel || '',
+    ];
+    return [...new Set(values.map(value => value.trim()).filter(Boolean))];
+  }, [availableModels, settingsDraft?.availableModels, settingsDraft?.fastModel, settingsDraft?.model]);
+
   const fetchModels = React.useCallback(async () => {
     if (!settingsDraft) return;
     setModelListState('loading');
@@ -2307,13 +2317,13 @@ export function SettingsView({
 
                       <SettingsRow
                         title="允许切换的模型"
-                        description="从上面获取到的模型列表中勾选允许在会话里切换的模型。默认模型会始终保留。"
+                        description={<span>从上面获取到的模型列表中勾选允许在会话里切换的模型。当前默认模型：<strong className="font-mono text-foreground">{settingsDraft.model || '未设置'}</strong></span>}
                         stacked
                       >
                         <div className="w-full rounded-xl border border-border/60 bg-muted/15 p-3">
-                          {modelOptions.length ? (
-                            <div className="grid gap-2 sm:grid-cols-2">
-                              {modelOptions.map(model => {
+                          {sessionModelOptions.length ? (
+                            <div className="grid max-h-56 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                              {sessionModelOptions.map(model => {
                                 const checked = (settingsDraft.availableModels || []).includes(model);
                                 const isDefault = model === settingsDraft.model;
                                 return (

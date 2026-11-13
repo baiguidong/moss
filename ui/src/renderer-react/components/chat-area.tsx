@@ -1714,6 +1714,9 @@ function HomeLanding({
   permissionMode,
   onPermissionModeChange,
   permissionModeChanging,
+  currentModel,
+  onModelChange,
+  modelSettings,
   onSend,
   installedAssistants,
   selectedAssistant,
@@ -1744,6 +1747,9 @@ function HomeLanding({
   permissionMode: PermissionMode;
   onPermissionModeChange: (mode: PermissionMode) => void | Promise<void>;
   permissionModeChanging?: boolean;
+  currentModel?: string;
+  onModelChange?: (model: string) => Promise<void>;
+  modelSettings?: Pick<DesktopSettings, 'url' | 'apiKey' | 'availableModels'>;
   onSend: (files?: Array<{ name: string; path: string }>, skills?: SkillMentionItem[], agent?: DesktopAgentDefinition) => void;
   installedAssistants?: InstalledAssistant[];
   selectedAssistant?: InstalledAssistant | null;
@@ -1792,6 +1798,9 @@ function HomeLanding({
         permissionMode={permissionMode}
         onPermissionModeChange={onPermissionModeChange}
         permissionModeChanging={permissionModeChanging}
+        currentModel={currentModel}
+        onModelChange={onModelChange}
+        modelSettings={modelSettings}
         onSend={onSend}
         installedAssistants={installedAssistants}
         selectedAssistant={selectedAssistant ?? null}
@@ -2787,6 +2796,9 @@ export function ChatArea({
           permissionMode={permissionMode}
           onPermissionModeChange={onPermissionModeChange}
           permissionModeChanging={permissionModeChanging}
+          currentModel={currentModel}
+          onModelChange={onModelChange}
+          modelSettings={modelSettings}
           onSend={handleHomeLandingSend}
           installedAssistants={installedAssistants}
           selectedAssistant={selectedAssistant ?? null}

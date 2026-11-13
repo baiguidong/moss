@@ -8593,7 +8593,7 @@ ipcMain.handle('agent:test-model', async (_event, payload = {}) => {
 ipcMain.handle('agent:list-models', async (_event, payload = {}) => {
   const settings = normalizeDesktopSettings(payload, desktopSettings);
   const runtimeSettings = settings.url?.trim() ? settings : getRuntimeModelSettings();
-  if (!runtimeSettings.url?.trim()) return { models: getRuntimeAvailableModels(runtimeSettings) };
+  if (!runtimeSettings.url?.trim()) return { models: getRuntimeAvailableModels(runtimeSettings), defaultModel: runtimeSettings.model || '' };
   return fetchModelCatalog({ url: runtimeSettings.url, apiKey: runtimeSettings.apiKey });
 });
 ipcMain.handle('agent:get-runtime-stats', () => sessionRuntimePool.stats());
