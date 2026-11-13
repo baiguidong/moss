@@ -71,7 +71,6 @@ apply_setting SILO_ROOT_PASSWORD "$(openssl rand -hex 32)"
 apply_setting MOSS_INTEGRATION_NETWORK moss-integrations
 apply_setting MOSS_NEW_API_ENABLED 0
 apply_setting MOSS_NEW_API_BASE_URL http://new-api:3000
-apply_setting MOSS_NEW_API_PUBLIC_BASE_URL https://127.0.0.1/router
 apply_setting MOSS_NEW_API_API_KEY ''
 apply_setting MOSS_NEW_API_INITIAL_QUOTA 5000000
 apply_setting MOSS_NEW_API_DEFAULT_MODEL gpt-6.1-sol
@@ -87,6 +86,12 @@ apply_setting MOSS_DB_NAME moss
 apply_setting MOSS_DB_USER moss
 apply_setting MOSS_DB_PASSWORD moss_internal_password
 apply_setting MOSS_DB_ROOT_PASSWORD moss_root_internal_password
+
+# Remove configuration from the retired standalone LiteLLM deployment.
+for obsolete_key in MOSS_LITELLM_ENABLED MOSS_LITELLM_BASE_URL MOSS_LITELLM_PUBLIC_BASE_URL MOSS_LITELLM_KEY_TTL_SEC MOSS_LITELLM_MASTER_KEY; do
+  sed -i.bak "/^${obsolete_key}=/d" "$ENV_FILE"
+done
+rm -f "$ENV_FILE.bak"
 
 [[ "$(read_value MOSS_DB_NAME)" =~ ^[A-Za-z0-9_]+$ ]] || die 'MOSS_DB_NAME must contain only letters, numbers and underscores'
 [[ "$(read_value MOSS_DB_USER)" =~ ^[A-Za-z0-9_]+$ && "$(read_value MOSS_DB_USER)" != root ]] || die 'MOSS_DB_USER must be a non-root application username'
@@ -128,6 +133,12 @@ else
 fi
 public_url="https://${public_authority}"
 [[ "$https_port" == 443 ]] || public_url="${public_url}:${https_port}"
+
+new_api_public_base_url="$(read_file_value "$SOURCE_ENV" MOSS_NEW_API_PUBLIC_BASE_URL)"
+if [[ -z "$new_api_public_base_url" ]]; then
+  new_api_public_base_url="http://${public_authority}:3000"
+fi
+set_env MOSS_NEW_API_PUBLIC_BASE_URL "$new_api_public_base_url"
 
 web_port="$(read_value MOSS_WEB_HTTPS_PORT)"
 [[ "$web_port" =~ ^[0-9]+$ ]] && ((web_port >= 1 && web_port <= 65535)) \
