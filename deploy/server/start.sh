@@ -46,7 +46,7 @@ fi
 
 "$SCRIPT_DIR/scripts/cleanup-legacy.sh"
 log 'Starting Moss Server and cloud WebUI with HTTPS'
-if ! compose up -d mysql server web-gateway nginx; then
+if ! compose up -d mysql new-api server web-gateway nginx new-api-oidc-init new-api-user-sync; then
   show_failure_logs
   die 'failed to start Moss Server'
 fi

@@ -11,12 +11,18 @@ import { databaseConfigSchema } from '../model/config.js'
 import { MysqlDriver } from '../model/drivers/mysql.js'
 
 const originalMossServerHome = process.env.MOSS_SERVER_HOME
+const originalNewApiInitialQuota = process.env.MOSS_NEW_API_INITIAL_QUOTA
 
 afterEach(() => {
   if (originalMossServerHome === undefined) {
     delete process.env.MOSS_SERVER_HOME
   } else {
     process.env.MOSS_SERVER_HOME = originalMossServerHome
+  }
+  if (originalNewApiInitialQuota === undefined) {
+    delete process.env.MOSS_NEW_API_INITIAL_QUOTA
+  } else {
+    process.env.MOSS_NEW_API_INITIAL_QUOTA = originalNewApiInitialQuota
   }
 })
 
@@ -82,5 +88,17 @@ describe('server config defaults', () => {
     if (config.driver !== 'mysql') throw new Error('Expected MySQL config')
     expect(config.port).toBe(3306)
     expect(() => new MysqlDriver(config)).toThrow(/environment variables/)
+  })
+
+  test('honors an explicit zero New API initial quota', async () => {
+    const serverHome = await mkdtemp(join(tmpdir(), 'moss-server-config-'))
+    process.env.MOSS_SERVER_HOME = serverHome
+    process.env.MOSS_NEW_API_INITIAL_QUOTA = '0'
+    try {
+      const { config } = await readServerConfig(join(serverHome, 'server.json'))
+      expect(config.newApi.initialQuota).toBe(0)
+    } finally {
+      await rm(serverHome, { recursive: true, force: true })
+    }
   })
 })

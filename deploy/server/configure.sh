@@ -72,7 +72,7 @@ apply_setting MOSS_INTEGRATION_NETWORK moss-integrations
 apply_setting MOSS_NEW_API_ENABLED 0
 apply_setting MOSS_NEW_API_BASE_URL http://new-api:3000
 apply_setting MOSS_NEW_API_API_KEY ''
-apply_setting MOSS_NEW_API_INITIAL_QUOTA 5000000
+apply_setting MOSS_NEW_API_INITIAL_QUOTA 0
 apply_setting MOSS_NEW_API_DEFAULT_MODEL gpt-6.1-sol
 apply_setting MOSS_NEW_API_FAST_MODEL gpt-6.1-sol
 apply_setting NEW_API_REDIS_PASSWORD "$(openssl rand -hex 32)"

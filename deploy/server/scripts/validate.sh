@@ -7,7 +7,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 bash -n "$ROOT/"*.sh "$ROOT/scripts/"*.sh
 
 for required in .env.example compose.yaml nginx.conf configure.sh install.sh upgrade.sh \
-  package.sh start.sh stop.sh webui.sh scripts/cleanup-legacy.sh scripts/common.sh scripts/validate.sh scripts/cloud-storage-init.sh scripts/silo-init.sh scripts/new-api-oidc-init.sh; do
+  package.sh start.sh stop.sh webui.sh scripts/cleanup-legacy.sh scripts/common.sh scripts/validate.sh scripts/cloud-storage-init.sh scripts/silo-init.sh scripts/new-api-oidc-init.sh scripts/new-api-user-sync.sh; do
   [[ -f "$ROOT/$required" ]] || { echo "ERROR: missing $required" >&2; exit 1; }
 done
 
@@ -30,7 +30,7 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
     and (.services.mysql.volumes | any(.target == "/var/lib/mysql"))
     and .networks["moss-storage"].internal == true
     and (.services.silo.ports // [] | length) == 0
-    and (.services | keys | sort) == ["mysql", "new-api", "new-api-database-init", "new-api-oidc-init", "nginx", "redis", "server", "silo", "web-gateway"]
+    and (.services | keys | sort) == ["mysql", "new-api", "new-api-database-init", "new-api-oidc-init", "new-api-user-sync", "nginx", "redis", "server", "silo", "web-gateway"]
     and .services.silo.image == "docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z"
     and (.services.server.networks["moss-integration"].aliases | index("moss-server")) != null
     and (.services["web-gateway"].volumes | any(.target == "/state"))
@@ -41,6 +41,7 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
     and .services.nginx.depends_on["web-gateway"].condition == "service_healthy"
     and .services.nginx.depends_on["new-api"].condition == "service_healthy"
     and .services["new-api"].depends_on["new-api-database-init"].condition == "service_completed_successfully"
+    and .services["new-api-user-sync"].depends_on["new-api"].condition == "service_healthy"
     and .services["new-api"].environment.SQL_DSN == "root:moss_root_internal_password@tcp(mysql:3306)/new-api"
     and .services["new-api"].environment.REDIS_CONN_STRING == "redis://:change-this-redis-password@redis:6379"
     and .services.redis.command[0] == "redis-server"

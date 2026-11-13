@@ -135,7 +135,7 @@ services:
     depends_on:
       new-api: { condition: service_healthy }
       server: { condition: service_healthy }
-    entrypoint: [/bin/sh, /opt/moss/deploy/server/scripts/new-api-oidc-init.sh]
+    entrypoint: [/bin/bash, /opt/moss/deploy/server/scripts/new-api-oidc-init.sh]
     environment:
       NEW_API_INTERNAL_URL: http://new-api:3000
       NEW_API_ADMIN_USERNAME: ${NEW_API_ADMIN_USERNAME:-admin}
@@ -147,6 +147,24 @@ services:
     volumes:
       - ./scripts/new-api-oidc-init.sh:/opt/moss/deploy/server/scripts/new-api-oidc-init.sh:ro
     networks: [moss-server]
+
+  new-api-user-sync:
+    image: ${MYSQL_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      mysql: { condition: service_healthy }
+      new-api: { condition: service_healthy }
+      server: { condition: service_healthy }
+    entrypoint: [/bin/sh, /opt/moss/deploy/server/scripts/new-api-user-sync.sh]
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_ROOT_PASSWORD: ${MOSS_DB_ROOT_PASSWORD}
+      MOSS_DB_NAME: ${MOSS_DB_NAME:-moss}
+      NEW_API_DB_NAME: new-api
+      SYNC_INTERVAL_SECONDS: 5
+    volumes:
+      - ./scripts/new-api-user-sync.sh:/opt/moss/deploy/server/scripts/new-api-user-sync.sh:ro
+    networks: [moss-db]
 
   new-api-database-init:
     image: ${MYSQL_IMAGE}
@@ -243,7 +261,7 @@ services:
       MOSS_NEW_API_BASE_URL: ${MOSS_NEW_API_BASE_URL:-}
       MOSS_NEW_API_PUBLIC_BASE_URL: ${MOSS_NEW_API_PUBLIC_BASE_URL:-}
       MOSS_NEW_API_API_KEY: ${MOSS_NEW_API_API_KEY:-}
-      MOSS_NEW_API_INITIAL_QUOTA: ${MOSS_NEW_API_INITIAL_QUOTA:-5000000}
+      MOSS_NEW_API_INITIAL_QUOTA: ${MOSS_NEW_API_INITIAL_QUOTA:-0}
       MOSS_NEW_API_DEFAULT_MODEL: ${MOSS_NEW_API_DEFAULT_MODEL:-gpt-6.1-sol}
       MOSS_NEW_API_FAST_MODEL: ${MOSS_NEW_API_FAST_MODEL:-gpt-6.1-sol}
       MOSS_OAUTH_WEB_CALLBACKS: ${MOSS_WEB_ORIGIN}/api/oauth/callback,${MOSS_WEB_ORIGIN}/api/oidc/callback

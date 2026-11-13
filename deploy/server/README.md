@@ -13,8 +13,14 @@ Moss Server 提供标准 OIDC Provider：`/.well-known/openid-configuration`、
 Desktop 使用带 PKCE 的 `moss-desktop` 客户端，云电脑 WebUI 使用
 `moss-web` 客户端，New API 使用 `new-api` 客户端。`configure.sh` 会生成客户端
 密钥，Compose 中的一次性 `new-api-oidc-init` 服务会初始化 New API 管理员并写入
-OIDC 配置；管理员账号密码来自 `NEW_API_ADMIN_USERNAME` 和
-`NEW_API_ADMIN_PASSWORD`。
+OIDC 配置；新安装时管理员账号密码来自 `NEW_API_ADMIN_USERNAME` 和
+`NEW_API_ADMIN_PASSWORD`。已有安装如果没有设置 New API 管理员密码，会保留已有配置。
+
+New API 仍使用开源镜像，Moss 不修改其源码。`QuotaForNewUser`、邀请赠送和 Moss
+账号初始化额度默认均为 0，用户余额只能通过 Moss 管理页的充值操作增加。持续运行的
+`new-api-user-sync` 服务按 `moss_<sha256(org_id:user_id)>` 对齐两边账号，并将 OIDC
+`sub` 写为同一个 `org_id:user_id`；没有对应 Moss 身份的 `oidc_*` 账号会被禁用并清零，
+避免 OIDC 重复注册或赠送额度。
 
 ## Requirements
 

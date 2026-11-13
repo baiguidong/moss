@@ -9,7 +9,13 @@ client_secret="${MOSS_OIDC_NEW_API_CLIENT_SECRET:-}"
 issuer="${MOSS_OIDC_ISSUER:-${MOSS_PUBLIC_URL:-}}"
 new_api_public="${MOSS_NEW_API_PUBLIC_BASE_URL:-http://localhost:3000}"
 
-[[ -n "$admin_password" ]] || { echo 'NEW_API_ADMIN_PASSWORD is required for OIDC initialization' >&2; exit 1; }
+if [[ -z "$admin_password" ]]; then
+  # Existing installations may already be initialized and intentionally keep
+  # the administrator password outside Compose. The database reconciler below
+  # still enforces the Moss-owned quota defaults.
+  echo 'New API administrator password is not configured; keeping existing OIDC settings.'
+  exit 0
+fi
 [[ -n "$client_secret" ]] || { echo 'MOSS_OIDC_NEW_API_CLIENT_SECRET is required for OIDC initialization' >&2; exit 1; }
 for _ in $(seq 1 60); do
   curl -fsS "$base/api/status" >/dev/null 2>&1 && break
@@ -42,4 +48,8 @@ set_option oidc.well_known "${issuer%/}/.well-known/openid-configuration"
 set_option oidc.authorization_endpoint "${issuer%/}/oidc/authorize"
 set_option oidc.token_endpoint "${base%/}/oidc/token"
 set_option oidc.user_info_endpoint "${base%/}/oidc/userinfo"
+# Moss is the user/credit authority. New API must not grant a sign-up bonus.
+set_option QuotaForNewUser 0
+set_option QuotaForInvitee 0
+set_option QuotaForInviter 0
 echo 'New API OIDC configuration is ready.'
