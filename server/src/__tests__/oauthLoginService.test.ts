@@ -485,9 +485,10 @@ describe('OAuth browser login service', () => {
   }, 15_000)
 })
 
- test('Web callbacks require exact configured HTTPS URLs without query, fragments or alternate paths', () => {
-  const allowed = ['https://portal.example/api/oauth/callback']
+ test('Web callbacks require exact configured URLs without query, fragments or alternate paths', () => {
+  const allowed = ['https://portal.example/api/oauth/callback', 'http://new-api:3000/oauth/oidc']
   expect(requireOAuthRedirectUri(allowed[0], allowed)).toBe(allowed[0])
+  expect(requireOAuthRedirectUri(allowed[1], allowed)).toBe(allowed[1])
   for (const uri of ['https://evil.example/api/oauth/callback', 'https://portal.example/api/oauth/callback/extra', 'https://portal.example/api/oauth/callback?next=evil', 'http://portal.example/api/oauth/callback', 'https://portal.example/api/oauth/callback#code']) {
     expect(() => requireOAuthRedirectUri(uri, allowed)).toThrow('redirect_uri')
   }

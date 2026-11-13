@@ -56,7 +56,10 @@ export function requireOAuthRedirectUri(value: string, trustedWebCallbacks: stri
   } catch {
     throw new OAuthLoginError(400, 'Invalid redirect_uri')
   }
-  if (url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash && trustedWebCallbacks.includes(url.toString())) return url.toString()
+  // Explicitly configured callbacks may use HTTP for an internal service such
+  // as New API. The exact URI is still required, so an untrusted HTTP callback
+  // continues through the loopback-only check below.
+  if ((url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password && !url.search && !url.hash && trustedWebCallbacks.includes(url.toString())) return url.toString()
   const loopbackHosts = new Set(['127.0.0.1', '[::1]'])
   if (
     url.protocol !== 'http:' ||
