@@ -86,29 +86,41 @@ export class NewAPIService {
   private async syncTokenModelPolicy(account: NewAPIAccount, allowed: string[]): Promise<void> {
     const settings = getSystemSettings()
     const enabled = settings.availableModels.length > 0
-    const currentResponse = await this.request(`/api/token/${account.tokenId}`, account.apiKey)
+    let currentResponse: any
+    try {
+      currentResponse = await this.request(`/api/token/${account.tokenId}`, account.apiKey)
+    } catch {
+      // Some New API deployments do not grant API-key management scope to
+      // runtime keys. Model access must remain available in that case; the
+      // gateway still enforces its existing token policy.
+      return
+    }
     const current = currentResponse?.data || currentResponse?.token || currentResponse
     if (!current || Number(current?.id || current?.Id) !== account.tokenId) return
     const normalize = (value: unknown): string => Array.isArray(value)
       ? value.map(item => String(item).trim()).filter(Boolean).sort().join(',')
       : String(value || '').split(',').map(item => item.trim()).filter(Boolean).sort().join(',')
     if (Boolean(current.model_limits_enabled) === enabled && normalize(current.model_limits) === normalize(enabled ? allowed : '')) return
-    await this.request('/api/token/', account.apiKey, {
-      method: 'PUT',
-      body: JSON.stringify({
-        id: account.tokenId,
-        name: current.name || `moss-${account.userId}`,
-        expired_time: Number(current.expired_time ?? -1),
-        remain_quota: Number(current.remain_quota ?? 0),
-        unlimited_quota: Boolean(current.unlimited_quota),
-        model_limits_enabled: enabled,
-        model_limits: enabled ? allowed.join(',') : '',
-        allow_ips: current.allow_ips || '',
-        group: current.group || 'default',
-        cross_group_retry: Boolean(current.cross_group_retry),
-        allow_user_quota_query: current.allow_user_quota_query !== false,
-      }),
-    })
+    try {
+      await this.request('/api/token/', account.apiKey, {
+        method: 'PUT',
+        body: JSON.stringify({
+          id: account.tokenId,
+          name: current.name || `moss-${account.userId}`,
+          expired_time: Number(current.expired_time ?? -1),
+          remain_quota: Number(current.remain_quota ?? 0),
+          unlimited_quota: Boolean(current.unlimited_quota),
+          model_limits_enabled: enabled,
+          model_limits: enabled ? allowed.join(',') : '',
+          allow_ips: current.allow_ips || '',
+          group: current.group || 'default',
+          cross_group_retry: Boolean(current.cross_group_retry),
+          allow_user_quota_query: current.allow_user_quota_query !== false,
+        }),
+      })
+    } catch {
+      // Keep model access usable when policy synchronization is unavailable.
+    }
   }
 
   private usernameFor(key: string): string {
