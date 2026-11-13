@@ -182,7 +182,7 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
         const challenge = createHash('sha256').update(verifier, 'ascii').digest('base64url');
         const redirectUri = `${origin}/api/oidc/callback`;
         oidcLogins.set(state, { verifier, redirectUri, expiresAt: Date.now() + 10 * 60_000 });
-        const authorization = new URL(`${authBase}/oidc/authorize`);
+        const authorization = new URL(`${env.MOSS_OIDC_ISSUER || origin}/oidc/authorize`);
         authorization.search = new URLSearchParams({ client_id: env.MOSS_OIDC_WEB_CLIENT_ID || 'moss-web', redirect_uri: redirectUri, response_type: 'code', scope: 'openid profile email', state, code_challenge: challenge, code_challenge_method: 'S256' }).toString();
         return redirect(res, authorization.toString());
       }
