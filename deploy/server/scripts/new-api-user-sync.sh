@@ -46,6 +46,13 @@ SET new_api_user.status = CASE WHEN moss_user.status = 'active' THEN 1 ELSE 2 EN
 UPDATE \`${new_api_database}\`.users
 SET status = 2, quota = 0
 WHERE username LIKE 'oidc_%' AND (oidc_id = '' OR oidc_id IS NULL);
+
+-- Moss controls the visible model switch list. Do not leave old per-token
+-- model limits from an earlier deployment on ordinary Moss user keys; those
+-- limits also hide models from /v1/models.
+UPDATE \`${new_api_database}\`.tokens
+SET model_limits_enabled = 0, model_limits = ''
+WHERE name LIKE 'moss-%';
 "
 
 while :; do

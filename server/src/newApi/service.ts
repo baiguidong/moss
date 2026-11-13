@@ -92,9 +92,11 @@ export class NewAPIService {
     return { models }
   }
 
-  private async syncTokenModelPolicy(account: NewAPIAccount, allowed: string[]): Promise<void> {
-    const settings = getSystemSettings()
-    const enabled = settings.availableModels.length > 0
+  private async syncTokenModelPolicy(account: NewAPIAccount, _allowed: string[]): Promise<void> {
+    // Model visibility is controlled by Moss Server's model policy. Keep the
+    // New API user key unrestricted so /v1/models remains the full gateway
+    // catalog and the key can serve any model allowed by Moss.
+    const enabled = false
     let currentResponse: any
     try {
       currentResponse = await this.request(`/api/token/${account.tokenId}`, account.apiKey)
@@ -109,7 +111,7 @@ export class NewAPIService {
     const normalize = (value: unknown): string => Array.isArray(value)
       ? value.map(item => String(item).trim()).filter(Boolean).sort().join(',')
       : String(value || '').split(',').map(item => item.trim()).filter(Boolean).sort().join(',')
-    if (Boolean(current.model_limits_enabled) === enabled && normalize(current.model_limits) === normalize(enabled ? allowed : '')) return
+    if (Boolean(current.model_limits_enabled) === enabled && normalize(current.model_limits) === '') return
     try {
       await this.request('/api/token/', account.apiKey, {
         method: 'PUT',
@@ -120,7 +122,7 @@ export class NewAPIService {
           remain_quota: Number(current.remain_quota ?? 0),
           unlimited_quota: Boolean(current.unlimited_quota),
           model_limits_enabled: enabled,
-          model_limits: enabled ? allowed.join(',') : '',
+          model_limits: '',
           allow_ips: current.allow_ips || '',
           group: current.group || 'default',
           cross_group_retry: Boolean(current.cross_group_retry),
@@ -165,11 +167,8 @@ export class NewAPIService {
         allow_user_quota_query: true,
         expired_time: -1,
         group: 'default',
-        model_limits_enabled: getSystemSettings().availableModels.length > 0,
-        model_limits: (() => {
-          const configured = getSystemSettings().availableModels
-          return configured.length ? configured.join(',') : ''
-        })(),
+        model_limits_enabled: false,
+        model_limits: '',
       }),
     })
     const tokens = await this.request('/api/token/?p=1&size=100', userKey)
