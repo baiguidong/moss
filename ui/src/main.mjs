@@ -8606,6 +8606,21 @@ ipcMain.handle('agent:test-model', async (_event, payload = {}) => {
 ipcMain.handle('agent:list-models', async (_event, payload = {}) => {
   const settings = normalizeDesktopSettings(payload, desktopSettings);
   const runtimeSettings = settings.url?.trim() ? settings : getRuntimeModelSettings();
+  const managedRuntime = getRuntimeModelSettings();
+  const usingManagedModel = Boolean(
+    hostManagedModel && !hostAccessDenied && !hostControlPaused &&
+    managedRuntime.url?.trim() &&
+    runtimeSettings.url === managedRuntime.url &&
+    runtimeSettings.apiKey === managedRuntime.apiKey,
+  );
+  if (usingManagedModel) {
+    const access = await requestAppAccount('/api/v1/model-access');
+    const models = Array.isArray(access?.availableModels)
+      ? [...new Set(access.availableModels.map(value => String(value).trim()).filter(Boolean))]
+      : [];
+    if (!models.length) throw new Error('Moss Server 未返回可用模型，请检查服务端模型设置和 New API 渠道。');
+    return { models, contextWindows: {}, defaultModel: access.model || models[0] };
+  }
   if (!runtimeSettings.url?.trim()) return { models: getRuntimeAvailableModels(runtimeSettings), defaultModel: runtimeSettings.model || '' };
   return fetchModelCatalog({ url: runtimeSettings.url, apiKey: runtimeSettings.apiKey });
 });
