@@ -85,6 +85,8 @@ export class NewAPIService {
         allow_user_quota_query: true,
         expired_time: -1,
         group: 'auto',
+        model_limits_enabled: true,
+        model_limits: this.config.defaultModel,
       }),
     })
     const tokens = await this.request('/api/token/?p=1&size=100', userKey)

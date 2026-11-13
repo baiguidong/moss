@@ -22,10 +22,15 @@ const config = {
 const auth = { rawToken: 'moss', userId: 'user', orgId: 'org', role: 'user', scopes: [], keyId: 'user' } as any
 
 function mockNewApi() {
-  const requests: Array<{ path: string; method: string; authorization: string }> = []
+  const requests: Array<{ path: string; method: string; authorization: string; body?: any }> = []
   globalThis.fetch = (async (input, init) => {
     const url = new URL(String(input))
-    requests.push({ path: url.pathname, method: init?.method || 'GET', authorization: new Headers(init?.headers).get('authorization') || '' })
+    requests.push({
+      path: url.pathname,
+      method: init?.method || 'GET',
+      authorization: new Headers(init?.headers).get('authorization') || '',
+      body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+    })
     if (url.pathname === '/api/user/') return new Response(JSON.stringify({ success: true }), { status: 200 })
     if (url.pathname === '/api/user/login') return new Response(JSON.stringify({ success: true, data: { access_token: 'user-session', user: { id: 42 } } }), { status: 200 })
     if (url.pathname === '/api/user/manage') return new Response(JSON.stringify({ success: true }), { status: 200 })
@@ -43,6 +48,15 @@ test('creates a New API user and returns its direct gateway token', async () => 
   const access = await new NewAPIService(config, root).ensureUserKey(auth)
   assert.deepEqual(access, { url: 'https://models.test/router', apiKey: 'sk-user-key', model: 'gpt-4o', fastModel: 'gpt-4o-mini', expiresAt: 0 })
   assert.deepEqual(requests.map(request => request.path), ['/api/user/', '/api/user/login', '/api/user/manage', '/api/token/', '/api/token/', '/api/token/7/key'])
+  assert.deepEqual(requests.find(request => request.path === '/api/token/' && request.method === 'POST')?.body, {
+    name: 'moss-org-user',
+    unlimited_quota: true,
+    allow_user_quota_query: true,
+    expired_time: -1,
+    group: 'auto',
+    model_limits_enabled: true,
+    model_limits: 'gpt-4o',
+  })
 })
 
 test('reads New API token usage with the user token', async () => {
