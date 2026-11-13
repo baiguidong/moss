@@ -552,6 +552,7 @@ export default function App() {
   const [selectedFilePath, setSelectedFilePath] = React.useState<string | null>(null);
   const [previewTabs, setPreviewTabs] = React.useState<WorkspacePreviewData[]>([]);
   const [desktopSettings, setDesktopSettings] = React.useState<DesktopSettings | null>(null);
+  const modelSettings = desktopSettings?.runtimeModel || desktopSettings;
   const [serverAccount, setServerAccount] = React.useState<{ userName: string; userEmail: string } | null>(null);
   const [serverLogoutState, setServerLogoutState] = React.useState<'idle' | 'loading'>('idle');
   const [serverLogoutError, setServerLogoutError] = React.useState('');
@@ -3229,9 +3230,9 @@ export default function App() {
                 permissionMode={activeDetail?.permissionMode ?? desktopSettings?.permissionMode ?? 'default'}
                 onPermissionModeChange={handleSessionPermissionModeChange}
                 permissionModeChanging={permissionModeSettingSessionId === activeSessionId}
-                currentModel={activeDetail?.model || desktopSettings?.model}
+                currentModel={activeDetail?.model || modelSettings?.model}
                 onModelChange={activeDetail?.agentMode !== 'remote-direct' && !activeDetail?.isSubAgent ? handleSessionModelChange : undefined}
-                modelSettings={desktopSettings ? { url: desktopSettings.url, apiKey: desktopSettings.apiKey, availableModels: desktopSettings.availableModels } : undefined}
+                modelSettings={modelSettings ? { url: modelSettings.url, apiKey: modelSettings.apiKey, availableModels: modelSettings.availableModels } : undefined}
                 sessionUsage={sessionUsage}
                 value={input}
                 loading={Boolean(activeDetail?.busy || pendingSendRequests.has(activeSessionId) || pendingFirstMessage?.sessionId === activeSessionId)}
@@ -3333,9 +3334,9 @@ export default function App() {
                   onOpenProject: handleNewProjectSession,
                 } : undefined}
                 sessionTitle=""
-                currentModel={newSessionModel || desktopSettings?.model}
+                currentModel={newSessionModel || modelSettings?.model}
                 onModelChange={draftProject ? undefined : handleSessionModelChange}
-                modelSettings={desktopSettings ? { url: desktopSettings.url, apiKey: desktopSettings.apiKey, availableModels: desktopSettings.availableModels } : undefined}
+                modelSettings={modelSettings ? { url: modelSettings.url, apiKey: modelSettings.apiKey, availableModels: modelSettings.availableModels } : undefined}
                 sessionWorkspace={undefined}
                 homeWorkspace={appDraftWorkspace}
                 workspaceOptions={draftProject?.workspaces}

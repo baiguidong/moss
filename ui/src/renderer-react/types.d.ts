@@ -784,6 +784,7 @@ export type DesktopAgentDraft = {
 };
 
 export type DesktopSettings = {
+  runtimeModel?: Pick<DesktopSettings, 'model' | 'fastModel' | 'availableModels' | 'url' | 'apiKey'>;
   managedPolicy?: Record<string, boolean>;
   appWidgets?: { enabled: boolean };
   desktopControl?: { version: number; enabled: boolean; apps: Array<{ bundleId: string; name: string }> };

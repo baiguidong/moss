@@ -1078,10 +1078,21 @@ function getDesktopSettingsPayload(extra = {}) {
   const detecting = Boolean(
     webSearchProbePromise && webSearchProbeFingerprint === fingerprint,
   );
+  const runtimeModel = getRuntimeModelSettings();
   return {
     ...desktopSettingsStore.getPayload(extra),
     settingsRevision: desktopSettingsRevision,
     ...(isWebHost && process.env.MOSS_WEB_OWNER_ID ? { enterpriseEnabled: true } : {}),
+    // The renderer uses this effective connection for model selection. Keep
+    // it separate from persisted settings so a server-issued key is never
+    // written back as a local model configuration.
+    runtimeModel: {
+      model: runtimeModel.model,
+      fastModel: runtimeModel.fastModel,
+      availableModels: runtimeModel.availableModels,
+      url: runtimeModel.url,
+      apiKey: runtimeModel.apiKey,
+    },
     managedPolicy: { ...hostPolicy },
     webSearch: toPublicWebSearchSettings(
       desktopSettings.webSearch,
@@ -6975,7 +6986,9 @@ let hostAccessDenied = hostControlState.accessDenied || null;
 const hostAccessAccounts = hostControlState.accessAccounts || {};
 let hostPolicyRevision = hostControlState.revision || 0;
 let hostPolicy = hostControlState.policy || {};
-let hostManagedModel = hostControlState.modelConfig || null;
+// A server-issued model key is valid only after the current process has
+// completed a heartbeat. Do not revive a previous account's key on startup.
+let hostManagedModel = null;
 let hostPolicyOriginal = hostControlState.original || {};
 let hostControlAccount = hostControlState.account || null;
 const hostPausedAccounts = hostControlState.pausedAccounts || {};

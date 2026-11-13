@@ -46,9 +46,15 @@ fi
 
 "$SCRIPT_DIR/scripts/cleanup-legacy.sh"
 log 'Starting Moss Server and cloud WebUI with HTTPS'
-if ! compose up -d mysql new-api server web-gateway nginx new-api-oidc-init new-api-user-sync; then
+if ! compose up -d mysql new-api server web-gateway new-api-oidc-init new-api-user-sync; then
   show_failure_logs
   die 'failed to start Moss Server'
+fi
+# Nginx resolves Docker service names when it starts. Recreate it after a
+# server replacement so it cannot retain the previous container IP address.
+if ! compose up -d --force-recreate nginx; then
+  show_failure_logs
+  die 'failed to start Moss Server reverse proxy'
 fi
 wait_for_server
 if ! "$SCRIPT_DIR/scripts/cloud-storage-init.sh"; then
