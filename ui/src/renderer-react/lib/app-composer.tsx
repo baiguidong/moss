@@ -28,7 +28,14 @@ export function useAppComposerResources(sessionId?: string, workspace?: string, 
   const [hasMore, setHasMore] = React.useState(false);
   const [error, setError] = React.useState('');
   const [revision, setRevision] = React.useState(0);
-  React.useEffect(() => window.agentDesktop.onAppsChanged(() => setRevision(v => v + 1)), []);
+  React.useEffect(() => window.agentDesktop.onAppsChanged(payload => {
+    // Backend lifecycle notifications are delivered separately and must not
+    // restart resource discovery. Resource discovery itself may start an App
+    // Backend, so treating those notifications as catalog changes creates a
+    // refresh loop and pins the Electron main process.
+    if (payload?.action === 'runtime') return;
+    setRevision(v => v + 1);
+  }), []);
   React.useEffect(() => window.agentDesktop.onEvent(({payload}) => { if (payload.subtype === 'app_view') setRevision(v => v + 1) }), []);
   React.useEffect(() => { setOffset(0); setItems([]) }, [sessionId, workspace, query, enabled, revision]);
   React.useEffect(() => {

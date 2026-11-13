@@ -5,6 +5,6 @@ import { shouldRefreshAppCatalogForRuntimeEvent } from '../src/apps/app-runtime-
 test('Backend health reports do not rebuild the App catalog', () => {
   assert.equal(shouldRefreshAppCatalogForRuntimeEvent({ type: 'status', state: 'running', backendStatus: 'ready' }), false)
   assert.equal(shouldRefreshAppCatalogForRuntimeEvent({ type: 'status', state: 'running', backendStatus: 'degraded' }), false)
-  assert.equal(shouldRefreshAppCatalogForRuntimeEvent({ type: 'status', state: 'stopped' }), true)
+  assert.equal(shouldRefreshAppCatalogForRuntimeEvent({ type: 'status', state: 'stopped' }), false)
   assert.equal(shouldRefreshAppCatalogForRuntimeEvent({ type: 'installation-changed' }), true)
 })
