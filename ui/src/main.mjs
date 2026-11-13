@@ -8761,6 +8761,10 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
     const authenticated = await promise;
     controller.signal.throwIfAborted();
     const settings = await refreshDesktopSettings({
+      // A successful Server login also enables the control-plane heartbeat.
+      // Without this flag the access token is stored, but the Desktop never
+      // enrolls and therefore never receives the user's New API model key.
+      enterpriseEnabled: true,
       enterpriseAccountServerUrl: rawServerUrl,
       enterpriseAccountCredentialMode: 'password',
       enterpriseAccountUserName: typeof authenticated.user?.name === 'string' ? authenticated.user.name.trim() : '',
