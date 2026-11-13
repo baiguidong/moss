@@ -76,6 +76,12 @@ apply_setting MOSS_NEW_API_INITIAL_QUOTA 5000000
 apply_setting MOSS_NEW_API_DEFAULT_MODEL gpt-6.1-sol
 apply_setting MOSS_NEW_API_FAST_MODEL gpt-6.1-sol
 apply_setting NEW_API_REDIS_PASSWORD "$(openssl rand -hex 32)"
+apply_setting MOSS_OIDC_NEW_API_CLIENT_ID new-api
+apply_setting MOSS_OIDC_NEW_API_CLIENT_SECRET "$(openssl rand -hex 32)"
+apply_setting MOSS_OIDC_WEB_CLIENT_ID moss-web
+apply_setting MOSS_OIDC_DESKTOP_CLIENT_ID moss-desktop
+apply_setting NEW_API_ADMIN_USERNAME admin
+apply_setting NEW_API_ADMIN_PASSWORD "$(openssl rand -hex 16)"
 apply_setting MOSS_SERVER_HOME /data/moss-server
 apply_setting MOSS_HTTPS_PORT 443
 apply_setting MOSS_ADMIN_USERNAME admin

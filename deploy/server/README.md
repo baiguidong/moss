@@ -6,6 +6,16 @@ cloud computer. Only the gateway has the host Docker socket; Server has no Runne
 The deployment also creates the external `moss-integrations` network so managed
 dependencies can use stable container DNS names instead of host IP addresses.
 
+## 统一 OIDC 登录
+
+Moss Server 提供标准 OIDC Provider：`/.well-known/openid-configuration`、
+`/oidc/authorize`、`/oidc/token`、`/oidc/userinfo` 和 `/oidc/jwks.json`。
+Desktop 使用带 PKCE 的 `moss-desktop` 客户端，云电脑 WebUI 使用
+`moss-web` 客户端，New API 使用 `new-api` 客户端。`configure.sh` 会生成客户端
+密钥，Compose 中的一次性 `new-api-oidc-init` 服务会初始化 New API 管理员并写入
+OIDC 配置；管理员账号密码来自 `NEW_API_ADMIN_USERNAME` 和
+`NEW_API_ADMIN_PASSWORD`。
+
 ## Requirements
 
 - Linux x86_64 for published releases; source builds also support ARM64 with compatible dependency images

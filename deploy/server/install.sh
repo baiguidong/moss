@@ -36,6 +36,7 @@ required=(
   scripts/cleanup-legacy.sh
   scripts/cloud-storage-init.sh
   scripts/silo-init.sh
+  scripts/new-api-oidc-init.sh
   scripts/validate.sh
 )
 for file in "${required[@]}"; do
@@ -53,7 +54,7 @@ if [[ "$stage_real" != "$install_real" ]]; then
   for file in configure.sh install.sh upgrade.sh package.sh start.sh stop.sh webui.sh; do
     install -m 0755 "$STAGE_DIR/$file" "$INSTALL_DIR/$file"
   done
-  for script in cloud-storage-init.sh silo-init.sh cleanup-legacy.sh; do
+  for script in cloud-storage-init.sh silo-init.sh new-api-oidc-init.sh cleanup-legacy.sh; do
     install -m 0755 "$STAGE_DIR/scripts/$script" "$INSTALL_DIR/scripts/$script"
   done
   install -m 0755 "$STAGE_DIR/scripts/common.sh" "$INSTALL_DIR/scripts/common.sh"

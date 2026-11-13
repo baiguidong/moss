@@ -157,6 +157,16 @@ export const serverFileConfigSchema = lazySchema(() =>
       fastModel: z.string().min(1).default('gpt-6.1-sol'),
       requestTimeoutMs: z.number().int().min(1000).default(15000),
     }).default({ enabled: false, initialQuota: 5000000, defaultModel: 'gpt-6.1-sol', availableModels: [], fastModel: 'gpt-6.1-sol', requestTimeoutMs: 15000 }),
+    oidc: z.object({
+      enabled: z.boolean().default(true),
+      issuer: z.string().url().optional(),
+      newApiClientId: z.string().min(1).default('new-api'),
+      newApiClientSecret: z.string().min(16).optional(),
+      desktopClientId: z.string().min(1).default('moss-desktop'),
+      webClientId: z.string().min(1).default('moss-web'),
+      webClientSecret: z.string().min(16).optional(),
+      trustedRedirectUris: z.array(z.string().url()).default([]),
+    }).default({ enabled: true, newApiClientId: 'new-api', desktopClientId: 'moss-desktop', webClientId: 'moss-web', trustedRedirectUris: [] }),
   }),
 )
 
@@ -216,6 +226,16 @@ export type ServerConfig = {
     availableModels: string[]
     fastModel: string
     requestTimeoutMs: number
+  }
+  oidc: {
+    enabled: boolean
+    issuer?: string
+    newApiClientId: string
+    newApiClientSecret?: string
+    desktopClientId: string
+    webClientId: string
+    webClientSecret?: string
+    trustedRedirectUris: string[]
   }
 }
 

@@ -128,6 +128,19 @@ export async function startWebServer({ registry, home, rendererRoot, env = proce
         res.writeHead(ok ? 200 : 400, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'" });
         res.end(`<meta charset="utf-8"><title>Moss 授权</title><h1>${ok ? '授权结果已接收' : '授权回调已失效'}</h1><p>请返回 Moss 查看登录结果，可以关闭此页面。</p>`); return;
       }
+      if (req.method === 'GET' && url.pathname === '/api/login/oidc') {
+        if (auth.mode !== 'server') return json(res, 400, { error: '当前 Web Host 未配置 Moss 账号认证。' });
+        res.writeHead(303, { Location: auth.beginOidc(), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' }); res.end(); return;
+      }
+      if (req.method === 'GET' && url.pathname === '/api/oidc/callback') {
+        try {
+          const token = await auth.completeOidc(url.toString());
+          const id = await auth.login({ accessToken: token.access_token }, { trustedToken: true });
+          const secure = originFor(req).startsWith('https:') ? '; Secure' : '';
+          res.writeHead(303, { Location: '/', 'Set-Cookie': `moss_web=${id}; Path=/; HttpOnly; SameSite=Strict${secure}`, 'Cache-Control': 'no-store' }); res.end();
+        } catch (error) { res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(`<meta charset="utf-8"><title>登录失败</title><h1>登录失败</h1><p>${String(error.message || error).replaceAll('&', '&amp;').replaceAll('<', '&lt;')}</p>`); }
+        return;
+      }
       if (req.method === 'GET' && url.pathname === '/healthz') return json(res, 200, { ok: true, protocol: MOSS_PROTOCOL_VERSION, version: lifecycle.version });
       if (url.pathname.startsWith('/internal/')) {
         if (!lifecycle.authorized(req)) return json(res, 403, { error: 'Forbidden' });

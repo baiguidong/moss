@@ -7,6 +7,7 @@ import { extname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { handleAgentMailRoute } from './agentMail/agentMailRoutes.js'
 import { AgentMailService } from './agentMail/agentMailService.js'
 import { OAuthLoginError, OAuthLoginService } from './auth/oauth.js'
+import { OidcService } from './auth/oidc.js'
 import { AuthService, AuthServiceError } from './auth/service.js'
 import { hasScope, type AuthContext } from './auth/token.js'
 import { CloudSharesRepository } from './model/repositories/cloudShares.js'
@@ -526,7 +527,20 @@ export function startServer(
   )
   const cloudShares = new CloudSharesService(new CloudSharesRepository(models.db), cloudStorage,
     (orgId, userId) => authService.requireSharingOwner(orgId, userId))
-  const oauthLoginService = new OAuthLoginService(authService)
+  const oidcConfig = config.oidc ?? {
+    enabled: true,
+    newApiClientId: 'new-api',
+    desktopClientId: 'moss-desktop',
+    webClientId: 'moss-web',
+    trustedRedirectUris: [],
+  }
+  const oauthCallbacks = [
+    ...(process.env.MOSS_OAUTH_WEB_CALLBACKS || '').split(',').map(value => value.trim()).filter(Boolean),
+    ...oidcConfig.trustedRedirectUris,
+  ]
+  const oauthLoginService = new OAuthLoginService(authService, Date.now, [...new Set(oauthCallbacks)])
+  const oidcOrigin = oidcConfig.issuer || config.publicUrl || `http://localhost:${config.port}`
+  const oidcService = new OidcService({ ...config, oidc: oidcConfig }, authService, oauthLoginService, oidcOrigin)
   const handleTraceRoute = createTraceRoutes({
     config,
     getSession: id => models.sessions.getSession(id),
@@ -570,6 +584,31 @@ export function startServer(
           ok: true,
           ready: true,
         })
+        return
+      }
+
+      if (oidcConfig.enabled && (req.method === 'GET' || isHead) && pathname === '/.well-known/openid-configuration') {
+        writeNoStoreJson(res, 200, oidcService.discovery())
+        return
+      }
+      if (oidcConfig.enabled && (req.method === 'GET' || isHead) && pathname === '/oidc/jwks.json') {
+        writeNoStoreJson(res, 200, oidcService.jwks())
+        return
+      }
+      if (oidcConfig.enabled && req.method === 'GET' && pathname === '/oidc/authorize') {
+        const result = await oidcService.authorize(url.searchParams)
+        redirectNoStore(res, result.location)
+        return
+      }
+      if (oidcConfig.enabled && req.method === 'POST' && pathname === '/oidc/token') {
+        const form = await readOAuthFormBody(req, 32 * 1024)
+        writeNoStoreJson(res, 200, await oidcService.token(form, typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined))
+        return
+      }
+      if (oidcConfig.enabled && (req.method === 'GET' || req.method === 'POST') && pathname === '/oidc/userinfo') {
+        const token = getBearerToken(req)
+        if (!token) throw new OAuthLoginError(401, 'Missing bearer token')
+        writeNoStoreJson(res, 200, await oidcService.userinfo(token))
         return
       }
 

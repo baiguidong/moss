@@ -85,6 +85,13 @@ export function getDefaultServerConfig(): ServerFileConfig {
       fastModel: 'gpt-6.1-sol',
       requestTimeoutMs: 15_000,
     },
+    oidc: {
+      enabled: true,
+      newApiClientId: 'new-api',
+      desktopClientId: 'moss-desktop',
+      webClientId: 'moss-web',
+      trustedRedirectUris: [],
+    },
   }
 }
 
@@ -173,9 +180,23 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
       defaultModel: process.env.MOSS_NEW_API_DEFAULT_MODEL || raw.newApi.defaultModel,
       availableModels: (process.env.MOSS_NEW_API_MODELS
         ? process.env.MOSS_NEW_API_MODELS.split(',')
-        : raw.newApi.availableModels).map(model => model.trim()).filter(Boolean),
+        : (raw.newApi.availableModels || [])).map(model => model.trim()).filter(Boolean),
       fastModel: process.env.MOSS_NEW_API_FAST_MODEL || raw.newApi.fastModel,
       requestTimeoutMs: raw.newApi.requestTimeoutMs,
+    },
+    oidc: {
+      enabled: process.env.MOSS_OIDC_ENABLED === '0' || process.env.MOSS_OIDC_ENABLED === 'false'
+        ? false
+        : raw.oidc.enabled,
+      issuer: process.env.MOSS_OIDC_ISSUER || raw.oidc.issuer || raw.server.publicUrl,
+      newApiClientId: process.env.MOSS_OIDC_NEW_API_CLIENT_ID || raw.oidc.newApiClientId,
+      newApiClientSecret: process.env.MOSS_OIDC_NEW_API_CLIENT_SECRET || raw.oidc.newApiClientSecret,
+      desktopClientId: process.env.MOSS_OIDC_DESKTOP_CLIENT_ID || raw.oidc.desktopClientId,
+      webClientId: process.env.MOSS_OIDC_WEB_CLIENT_ID || raw.oidc.webClientId,
+      webClientSecret: process.env.MOSS_OIDC_WEB_CLIENT_SECRET || raw.oidc.webClientSecret,
+      trustedRedirectUris: (process.env.MOSS_OIDC_TRUSTED_REDIRECT_URIS
+        ? process.env.MOSS_OIDC_TRUSTED_REDIRECT_URIS.split(',')
+        : raw.oidc.trustedRedirectUris).map(value => value.trim()).filter(Boolean),
     },
   }
 }

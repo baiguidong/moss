@@ -35,6 +35,8 @@ services:
       MOSS_WEB_AUTH_SERVER: http://server:43127
       MOSS_WEB_IMAGE: ${MOSS_WEB_IMAGE:-ghcr.io/baiguidong/moss-webui:latest}
       MOSS_WEB_ORIGIN: ${MOSS_WEB_ORIGIN:-}
+      MOSS_OIDC_WEB_CLIENT_ID: ${MOSS_OIDC_WEB_CLIENT_ID:-moss-web}
+      MOSS_OIDC_WEB_CLIENT_SECRET: ${MOSS_OIDC_WEB_CLIENT_SECRET:-}
       MOSS_CLOUD_STATE: /state
       MOSS_CLOUD_SNAPSHOTS: /snapshots
       MOSS_CLOUD_MAX_USERS: ${MOSS_CLOUD_MAX_USERS:-20}
@@ -126,6 +128,25 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  new-api-oidc-init:
+    image: ${MOSS_SERVER_IMAGE}
+    restart: "no"
+    depends_on:
+      new-api: { condition: service_healthy }
+      server: { condition: service_healthy }
+    entrypoint: [/bin/sh, /opt/moss/deploy/server/scripts/new-api-oidc-init.sh]
+    environment:
+      NEW_API_INTERNAL_URL: http://new-api:3000
+      NEW_API_ADMIN_USERNAME: ${NEW_API_ADMIN_USERNAME:-admin}
+      NEW_API_ADMIN_PASSWORD: ${NEW_API_ADMIN_PASSWORD:-}
+      MOSS_PUBLIC_URL: ${MOSS_WEB_ORIGIN:-}
+      MOSS_NEW_API_PUBLIC_BASE_URL: ${MOSS_NEW_API_PUBLIC_BASE_URL:-http://${MOSS_PUBLIC_HOST:-localhost}:3000}
+      MOSS_OIDC_NEW_API_CLIENT_ID: ${MOSS_OIDC_NEW_API_CLIENT_ID:-new-api}
+      MOSS_OIDC_NEW_API_CLIENT_SECRET: ${MOSS_OIDC_NEW_API_CLIENT_SECRET:-}
+    volumes:
+      - ./scripts/new-api-oidc-init.sh:/opt/moss/deploy/server/scripts/new-api-oidc-init.sh:ro
+    networks: [moss-server]
 
   new-api-database-init:
     image: ${MYSQL_IMAGE}
@@ -225,7 +246,13 @@ services:
       MOSS_NEW_API_INITIAL_QUOTA: ${MOSS_NEW_API_INITIAL_QUOTA:-5000000}
       MOSS_NEW_API_DEFAULT_MODEL: ${MOSS_NEW_API_DEFAULT_MODEL:-gpt-6.1-sol}
       MOSS_NEW_API_FAST_MODEL: ${MOSS_NEW_API_FAST_MODEL:-gpt-6.1-sol}
-      MOSS_OAUTH_WEB_CALLBACKS: ${MOSS_WEB_ORIGIN}/api/oauth/callback
+      MOSS_OAUTH_WEB_CALLBACKS: ${MOSS_WEB_ORIGIN}/api/oauth/callback,${MOSS_WEB_ORIGIN}/api/oidc/callback
+      MOSS_OIDC_TRUSTED_REDIRECT_URIS: ${MOSS_WEB_ORIGIN}/api/oidc/callback,${MOSS_NEW_API_PUBLIC_BASE_URL:-http://${MOSS_PUBLIC_HOST:-localhost}:3000}/oauth/oidc
+      MOSS_OIDC_NEW_API_CLIENT_ID: ${MOSS_OIDC_NEW_API_CLIENT_ID:-new-api}
+      MOSS_OIDC_NEW_API_CLIENT_SECRET: ${MOSS_OIDC_NEW_API_CLIENT_SECRET:-}
+      MOSS_OIDC_WEB_CLIENT_ID: ${MOSS_OIDC_WEB_CLIENT_ID:-moss-web}
+      MOSS_OIDC_WEB_CLIENT_SECRET: ${MOSS_OIDC_WEB_CLIENT_SECRET:-}
+      MOSS_OIDC_DESKTOP_CLIENT_ID: ${MOSS_OIDC_DESKTOP_CLIENT_ID:-moss-desktop}
       NODE_ENV: production
       TZ: ${TZ}
     volumes:

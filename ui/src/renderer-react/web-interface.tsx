@@ -44,7 +44,10 @@ function LoginScreen({ mode, onLogin }: { mode: string; onLogin: (values: Record
           <div className="moss-login-card-icon"><Monitor aria-hidden="true" /></div>
           <h2 id="moss-login-title">登录你的云电脑</h2>
           <p className="moss-login-subtitle">{server ? '欢迎回来，使用 Moss 账号继续。' : '输入此云电脑的访问密钥以继续。'}</p>
-          <form onSubmit={submit} aria-busy={pending}>
+          {server ? <div className="moss-login-oidc">
+            <button className="moss-login-submit" type="button" onClick={() => { if (!pending) { setPending(true); location.assign('/api/login/oidc'); } }} disabled={pending}>{pending ? <><LoaderCircle className="moss-web-spinner" />正在跳转 Moss 登录…</> : <>使用 Moss 账号登录<ArrowRight aria-hidden="true" /></>}</button>
+            {error && <p id="moss-login-error" className="moss-login-error" role="alert">{error}</p>}
+          </div> : <form onSubmit={submit} aria-busy={pending}>
             <fieldset disabled={pending}>
               {server && <label className="moss-login-field" htmlFor="moss-username">账号
                 <span className="moss-login-input"><UserRound aria-hidden="true" /><input id="moss-username" name="username" autoComplete="username" autoCapitalize="none" spellCheck={false} placeholder="输入你的账号" required /></span>
@@ -59,7 +62,7 @@ function LoginScreen({ mode, onLogin }: { mode: string; onLogin: (values: Record
               <button className="moss-login-submit" type="submit">{pending ? <><LoaderCircle className="moss-web-spinner" />正在进入云电脑…</> : <>登录<ArrowRight aria-hidden="true" /></>}</button>
             </fieldset>
             <p className="moss-login-hint" role="status">{pending ? '正在准备你的工作空间，请保持页面打开。' : <><Check aria-hidden="true" />下次登录，继续上次的工作</>}</p>
-          </form>
+          </form>}
           <div className="moss-desktop-downloads" aria-label="下载 Moss 桌面客户端">
             <span>桌面客户端 · v{desktopVersion}</span>
             <div>{desktopDownloads.map(item => <a key={item.label} href={item.href} target="_blank" rel="noopener noreferrer">{item.label}</a>)}</div>

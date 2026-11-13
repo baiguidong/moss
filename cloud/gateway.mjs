@@ -15,6 +15,7 @@ import { createIdentityProvider } from './identity.mjs';
 import { Snapshots } from './snapshots.mjs';
 import { normalizeSnapshotPolicy } from '../shared/webui-snapshot-policy.mjs';
 
+const redirect = (res, location) => { res.writeHead(303, { Location: location, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' }); res.end(); };
 const publicOperation = op => op ? Object.fromEntries(['id', 'environmentId', 'input', 'snapshotId', 'protectionId', 'status', 'phase', 'createdAt', 'updatedAt', 'transferredBytes', 'error', 'resumeError', 'cleanupError'].map(key => [key, op[key]])) : null;
 const hash = value => createHash('sha256').update(String(value || '')).digest();
 const sameIdentity = (identity, row) => identity.user?.id === row.userId && (identity.organization?.id || '') === row.orgId;
@@ -81,7 +82,7 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
     } catch {}
     return { policy: normalizeSnapshotPolicy(), source: 'default' };
   } });
-  const sessions = new Map(); const sockets = new Map(); const loginAttempts = new Map();
+  const sessions = new Map(); const sockets = new Map(); const loginAttempts = new Map(); const oidcLogins = new Map();
   const getCookie = req => /(?:^|;\s*)moss_cloud=([A-Za-z0-9_-]+)/.exec(req.headers.cookie || '')?.[1];
   function removeSession(id) { sessions.delete(id); for (const socket of sockets.get(id) || []) socket.destroy(); sockets.delete(id); }
   const cleanup = setInterval(() => {
@@ -89,6 +90,7 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
     for (const [token, entry] of portRoutes) if (entry.expiresAt < Date.now()) portRoutes.delete(token);
     for (const [token, entry] of resourceRoutes) if (entry.expiresAt < Date.now()) resourceRoutes.delete(token);
     for (const [state, entry] of oauthCallbacks) if (entry.expiresAt < Date.now()) oauthCallbacks.delete(state);
+    for (const [state, entry] of oidcLogins) if (entry.expiresAt < Date.now()) oidcLogins.delete(state);
     for (const [ip, attempts] of loginAttempts) if (attempts.until < Date.now()) loginAttempts.delete(ip);
   }, 10000); cleanup.unref();
   async function checkHostAccess(token, row) {
@@ -115,6 +117,22 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
     if (row.generation) await computers.control(row, 'generation', { generation: row.generation });
     session.hostCookie = (await computers.control(row, 'login', { accessToken: session.accessToken })).cookie;
     session.hostGeneration = row.generation || 0;
+  }
+  async function establishSession(accessToken, expiresIn, management = false) {
+    if (!accessToken) throw Object.assign(new Error('认证中心未返回凭据'), { status: 401 });
+    const identity = await authRequest(authBase, '/api/v1/auth/me', null, accessToken);
+    let row = store.ensure(identity);
+    await checkHostAccess(accessToken, row);
+    if (!management || !row.containerId) {
+      try { row = await computers.ensure(identity); }
+      catch (error) { row = store.get(row.id); store.update(row.id, { state: row.operation ? row.state : 'error', error: error.message }); }
+    }
+    const id = randomBytes(32).toString('base64url');
+    const session = { environmentId: row.id, accessToken, account: publicAccount(identity), checkedAt: Date.now(), expiresAt: Date.now() + Math.min(Number(expiresIn) || 3600, 43200) * 1000 };
+    if (!management && !row.operation && row.state === 'ready') await grant(session, row).catch(() => {});
+    if (sessions.size >= 1000) removeSession(sessions.keys().next().value);
+    sessions.set(id, session);
+    return { id, row };
   }
   function proxyHeaders(req, session) {
     const headers = { ...req.headers, cookie: session.hostCookie, host: 'moss-host' };
@@ -157,6 +175,30 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
       const url = new URL(req.url, origin);
       if (url.origin !== origin || url.pathname.startsWith('//')) return json(res, 400, { error: 'Invalid request URL' });
       if (url.pathname === '/healthz') return json(res, 200, { ok: true, mode: 'cloud' });
+      if (req.method === 'GET' && url.pathname === '/api/login/oidc') {
+        if (!authBase) return json(res, 400, { error: '当前部署未配置 Moss 账号认证。' });
+        const state = randomBytes(32).toString('base64url');
+        const verifier = randomBytes(48).toString('base64url');
+        const challenge = createHash('sha256').update(verifier, 'ascii').digest('base64url');
+        const redirectUri = `${origin}/api/oidc/callback`;
+        oidcLogins.set(state, { verifier, redirectUri, expiresAt: Date.now() + 10 * 60_000 });
+        const authorization = new URL(`${authBase}/oidc/authorize`);
+        authorization.search = new URLSearchParams({ client_id: env.MOSS_OIDC_WEB_CLIENT_ID || 'moss-web', redirect_uri: redirectUri, response_type: 'code', scope: 'openid profile email', state, code_challenge: challenge, code_challenge_method: 'S256' }).toString();
+        return redirect(res, authorization.toString());
+      }
+      if (req.method === 'GET' && url.pathname === '/api/oidc/callback') {
+        const state = url.searchParams.get('state') || '', transaction = oidcLogins.get(state);
+        if (url.search.length > 8192 || url.searchParams.getAll('state').length !== 1 || url.searchParams.getAll('code').length > 1) return json(res, 400, { error: 'OIDC 回调格式无效。' });
+        oidcLogins.delete(state);
+        if (!transaction || transaction.expiresAt < Date.now()) return json(res, 400, { error: 'OIDC 登录已过期，请重试。' });
+        if (url.searchParams.get('error')) return json(res, 400, { error: url.searchParams.get('error_description') || 'OIDC 登录未完成。' });
+        const response = await fetch(`${authBase}/oidc/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'authorization_code', client_id: env.MOSS_OIDC_WEB_CLIENT_ID || 'moss-web', ...(env.MOSS_OIDC_WEB_CLIENT_SECRET ? { client_secret: env.MOSS_OIDC_WEB_CLIENT_SECRET } : {}), code: url.searchParams.get('code') || '', redirect_uri: transaction.redirectUri, code_verifier: transaction.verifier }).toString(), redirect: 'error', signal: AbortSignal.timeout(10000) });
+        const token = await response.json();
+        if (!response.ok || !token.access_token) return json(res, 401, { error: token.error || 'OIDC 登录失败。' });
+        const established = await establishSession(token.access_token, token.expires_in, false);
+        res.setHeader('Set-Cookie', `moss_cloud=${established.id}; Path=/; HttpOnly; SameSite=Strict${origin.startsWith('https:') ? '; Secure' : ''}`);
+        return redirect(res, '/');
+      }
       if (url.pathname.startsWith('/_moss-auth/')) {
         const row = store.get(String(req.headers['x-moss-environment'] || ''));
         if (!row || !timingSafeEqual(hash(row.controlToken), hash(req.headers['x-moss-host-token']))) return json(res, 403, { error: 'Forbidden' });
@@ -241,21 +283,8 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
         if (url.pathname === '/api/desktop/login' && !desktopToken) return json(res, 401, { error: '需要企业账号授权。' });
         const token = desktopToken ? { access_token: desktopToken, expires_in: 3600 }
           : await authRequest(authBase, '/api/v1/auth/login', { username: input.username, password: input.password, token: input.token });
-        if (!token.access_token) throw new Error('认证中心未返回凭据');
-        const identity = await authRequest(authBase, '/api/v1/auth/me', null, token.access_token);
-        let row = store.ensure(identity);
-        await checkHostAccess(token.access_token, row);
-        // The recovery page must authenticate independently of a damaged Host.
-        // Only first-time users need provisioning; existing environments stay put.
-        if (input.management !== true || !row.containerId) {
-          try { row = await computers.ensure(identity); } catch (error) { row = store.get(row.id); store.update(row.id, { state: row.operation ? row.state : 'error', error: error.message }); }
-        }
-        const id = randomBytes(32).toString('base64url');
-        const session = { environmentId: row.id, accessToken: token.access_token, account: publicAccount(identity), checkedAt: Date.now(), expiresAt: Date.now() + Math.min(Number(token.expires_in) || 3600, 43200) * 1000 };
-        if (input.management !== true && !row.operation && row.state === 'ready') await grant(session, row).catch(() => {});
-        if (sessions.size >= 1000) removeSession(sessions.keys().next().value);
-        sessions.set(id, session);
-        res.setHeader('Set-Cookie', `moss_cloud=${id}; Path=/; HttpOnly; SameSite=Strict${origin.startsWith('https:') ? '; Secure' : ''}`);
+        const established = await establishSession(token.access_token, token.expires_in, input.management === true);
+        res.setHeader('Set-Cookie', `moss_cloud=${established.id}; Path=/; HttpOnly; SameSite=Strict${origin.startsWith('https:') ? '; Secure' : ''}`);
         return json(res, 200, { ok: true, reload: true });
       }
       const auth = await authenticated(req);

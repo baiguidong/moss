@@ -7,7 +7,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 bash -n "$ROOT/"*.sh "$ROOT/scripts/"*.sh
 
 for required in .env.example compose.yaml nginx.conf configure.sh install.sh upgrade.sh \
-  package.sh start.sh stop.sh webui.sh scripts/cleanup-legacy.sh scripts/common.sh scripts/validate.sh scripts/cloud-storage-init.sh scripts/silo-init.sh; do
+  package.sh start.sh stop.sh webui.sh scripts/cleanup-legacy.sh scripts/common.sh scripts/validate.sh scripts/cloud-storage-init.sh scripts/silo-init.sh scripts/new-api-oidc-init.sh; do
   [[ -f "$ROOT/$required" ]] || { echo "ERROR: missing $required" >&2; exit 1; }
 done
 
@@ -30,7 +30,7 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
     and (.services.mysql.volumes | any(.target == "/var/lib/mysql"))
     and .networks["moss-storage"].internal == true
     and (.services.silo.ports // [] | length) == 0
-    and (.services | keys | sort) == ["mysql", "new-api", "new-api-database-init", "nginx", "redis", "server", "silo", "web-gateway"]
+    and (.services | keys | sort) == ["mysql", "new-api", "new-api-database-init", "new-api-oidc-init", "nginx", "redis", "server", "silo", "web-gateway"]
     and .services.silo.image == "docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z"
     and (.services.server.networks["moss-integration"].aliases | index("moss-server")) != null
     and (.services["web-gateway"].volumes | any(.target == "/state"))

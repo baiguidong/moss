@@ -28,6 +28,7 @@ files=(
   scripts/cleanup-legacy.sh
   scripts/cloud-storage-init.sh
   scripts/silo-init.sh
+  scripts/new-api-oidc-init.sh
   scripts/validate.sh
 )
 for file in "${files[@]}"; do

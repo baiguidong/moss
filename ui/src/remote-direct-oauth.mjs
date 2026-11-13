@@ -166,7 +166,7 @@ async function cancelServerAuthorization({ serverUrl, redirectUri, state, code, 
   }
 }
 
-export async function performRemoteDirectOAuth({
+async function performLegacyRemoteDirectOAuth({
   serverUrl,
   openAuthorization,
   fetchImpl = fetch,
@@ -282,4 +282,83 @@ export async function performRemoteDirectOAuth({
         }),
     ]);
   }
+}
+
+async function performOidcRemoteOAuth({
+  serverUrl, discovery, openAuthorization, fetchImpl = fetch, timeoutMs = LOGIN_TIMEOUT_MS,
+  requestTimeoutMs = 20_000, signal, callbackListener = createCallbackListener,
+}) {
+  const state = randomBase64Url();
+  const clientId = discovery.desktop_client_id || 'moss-desktop';
+  const codeVerifier = randomBase64Url(48);
+  const codeChallenge = createHash('sha256').update(codeVerifier, 'ascii').digest('base64url');
+  const listener = await callbackListener(state);
+  const abortController = new AbortController();
+  let timeout;
+  let rejectStopped;
+  let stopped = false;
+  const stoppedPromise = new Promise((_, reject) => { rejectStopped = reject; });
+  const stop = error => { if (stopped) return; stopped = true; rejectStopped(error); abortController.abort(error); };
+  const handleExternalAbort = () => stop(signal?.reason instanceof Error ? signal.reason : new Error('认证已取消。'));
+  if (signal?.aborted) handleExternalAbort(); else signal?.addEventListener('abort', handleExternalAbort, { once: true });
+  timeout = setTimeout(() => stop(new Error('Moss Server 认证超时。')), timeoutMs); timeout.unref?.();
+  let closeAuthorization = () => {};
+  const request = async (url, init) => Promise.race([
+    (async () => readJsonResponse(await fetchImpl(url, { ...init, redirect: 'error', signal: AbortSignal.any([abortController.signal, AbortSignal.timeout(requestTimeoutMs)]) })))(),
+    stoppedPromise,
+  ]);
+  try {
+    const authorizationUrl = new URL(discovery.authorization_endpoint);
+    authorizationUrl.search = new URLSearchParams({
+      client_id: clientId, redirect_uri: listener.redirectUri, response_type: 'code',
+      scope: 'openid profile email', state, code_challenge: codeChallenge, code_challenge_method: 'S256',
+    }).toString();
+    const opened = await Promise.race([
+      Promise.resolve(openAuthorization(authorizationUrl.toString(), { redirectUri: listener.redirectUri, state, signal: abortController.signal })),
+      stoppedPromise,
+    ]);
+    if (typeof opened === 'function') closeAuthorization = opened;
+    const code = await Promise.race([listener.callback, stoppedPromise]);
+    const form = new URLSearchParams({ grant_type: 'authorization_code', client_id: clientId, code, redirect_uri: listener.redirectUri, code_verifier: codeVerifier });
+    const exchanged = await request(discovery.token_endpoint, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form.toString() });
+    if (typeof exchanged.access_token !== 'string' || !exchanged.access_token) throw new Error('Moss Server response is missing an access token.');
+    let user = null;
+    if (discovery.userinfo_endpoint) {
+      try { user = await request(discovery.userinfo_endpoint, { headers: { authorization: `Bearer ${exchanged.access_token}` } }); } catch {}
+    }
+    return { serverUrl, authToken: exchanged.access_token, user };
+  } finally {
+    clearTimeout(timeout); signal?.removeEventListener('abort', handleExternalAbort); closeAuthorization();
+    await listener.close();
+  }
+}
+
+export async function performRemoteDirectOAuth(options) {
+  const normalizedServerUrl = normalizeServerUrl(options.serverUrl);
+  try {
+    const fetchDiscovery = options.fetchImpl || fetch;
+    const discoveryTimeout = Math.min(options.requestTimeoutMs || 20_000, options.timeoutMs || LOGIN_TIMEOUT_MS);
+    const controller = new AbortController();
+    const abort = () => controller.abort(options.signal?.reason || new Error('Discovery timed out.'));
+    const timer = setTimeout(abort, discoveryTimeout);
+    options.signal?.addEventListener('abort', abort, { once: true });
+    const response = await Promise.race([
+      fetchDiscovery(`${normalizedServerUrl}/.well-known/openid-configuration`, {
+        headers: { accept: 'application/json' }, redirect: 'error', signal: controller.signal,
+      }),
+      new Promise((_, reject) => {
+        const done = () => reject(new Error('OIDC discovery timed out.'));
+        timer.unref?.();
+        controller.signal.addEventListener('abort', done, { once: true });
+      }),
+    ]);
+    clearTimeout(timer); options.signal?.removeEventListener('abort', abort);
+    if (response.ok) {
+      const discovery = await response.json();
+      if (typeof discovery.authorization_endpoint === 'string' && typeof discovery.token_endpoint === 'string') {
+        return await performOidcRemoteOAuth({ ...options, serverUrl: normalizedServerUrl, discovery });
+      }
+    }
+  } catch {}
+  return await performLegacyRemoteDirectOAuth({ ...options, serverUrl: normalizedServerUrl });
 }

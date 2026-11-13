@@ -7,7 +7,7 @@ const MAX_PENDING_RECORDS = 1_000
 const MAX_PASSWORD_ATTEMPTS = 5
 const RANDOM_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/
 const PKCE_VERIFIER_PATTERN = /^[A-Za-z0-9._~-]{43,128}$/
-const STATE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/
+const STATE_PATTERN = /^[A-Za-z0-9_-]{16,128}$/
 
 type OAuthTokenResult = ReturnType<
   AuthService['issueTokenForOAuthUser']
@@ -278,8 +278,9 @@ export class OAuthLoginService {
 
   async exchange(input: {
     code: string
-    codeVerifier: string
+    codeVerifier?: string
     redirectUri: string
+    allowWithoutPkce?: boolean
   }): Promise<OAuthTokenResult> {
     await this.pruneExpired()
     const code = requireValue(input.code, 'code', RANDOM_ID_PATTERN)
@@ -291,15 +292,11 @@ export class OAuthLoginService {
       throw new OAuthLoginError(400, '授权码无效或已过期，请重新认证。')
     }
     const redirectUri = requireOAuthRedirectUri(input.redirectUri, this.trustedWebCallbacks)
-    const codeVerifier = requireValue(
-      input.codeVerifier,
-      'code_verifier',
-      PKCE_VERIFIER_PATTERN,
-    )
-    if (
-      redirectUri !== authorization.redirectUri ||
-      !valuesMatch(sha256Base64Url(codeVerifier), authorization.codeChallenge)
-    ) {
+    const codeVerifier = input.codeVerifier?.trim()
+    const validPkce = codeVerifier && PKCE_VERIFIER_PATTERN.test(codeVerifier)
+      ? valuesMatch(sha256Base64Url(codeVerifier), authorization.codeChallenge)
+      : Boolean(input.allowWithoutPkce && !codeVerifier)
+    if (redirectUri !== authorization.redirectUri || !validPkce) {
       throw new OAuthLoginError(400, '授权码校验失败，请重新认证。')
     }
 
