@@ -63,7 +63,8 @@ export class NewAPIService {
   private adminKey(): string { return this.requireConfig().apiKey }
 
   private usernameFor(key: string): string {
-    return `moss_${createHash('sha256').update(key).digest('hex').slice(0, 32)}`
+    // New API limits usernames and display names to 20 characters.
+    return `moss_${createHash('sha256').update(key).digest('hex').slice(0, 14)}`
   }
 
   private async createAccount(auth: AuthContext, key: string): Promise<NewAPIAccount> {
