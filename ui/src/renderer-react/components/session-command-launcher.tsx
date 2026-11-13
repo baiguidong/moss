@@ -48,22 +48,40 @@ export function ModelSelector({
   modelSettings,
   disabled = false,
 }: Pick<Props, 'currentModel' | 'onModelChange' | 'modelSettings' | 'disabled'>) {
-  const [open, setOpen] = React.useState(false);
+  const [models, setModels] = React.useState<string[]>(modelSettings?.availableModels || []);
+  const [changing, setChanging] = React.useState(false);
+  React.useEffect(() => {
+    let cancelled = false;
+    setModels(modelSettings?.availableModels || []);
+    void window.agentDesktop.listModels({ url: modelSettings?.url || '', apiKey: modelSettings?.apiKey || '' })
+      .then(catalog => {
+        if (!cancelled) setModels([...new Set([...(modelSettings?.availableModels || []), ...(catalog.models || [])])]);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [modelSettings?.apiKey, modelSettings?.availableModels, modelSettings?.url]);
+  const options = [...new Set([...(models || []), currentModel || ''].filter(Boolean))];
+  const handleChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
+    if (!onModelChange || changing) return;
+    setChanging(true);
+    try { await onModelChange(event.target.value); }
+    finally { setChanging(false); }
+  };
   return (
-    <>
-      <button
-        type="button"
-        disabled={disabled || !onModelChange}
-        onClick={() => setOpen(true)}
+    <label className="composer-control inline-flex h-9 max-w-56 shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground has-[:disabled]:opacity-50">
+      <Cpu className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
+      <select
+        value={currentModel || 'default'}
+        onChange={(event) => { void handleChange(event); }}
+        disabled={disabled || !onModelChange || changing}
         title="选择模型"
         aria-label="选择模型"
-        className="composer-control inline-flex h-8 max-w-48 shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 px-3 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
+        className="min-w-0 max-w-48 cursor-pointer appearance-none bg-transparent pr-1 text-xs outline-none"
       >
-        <Cpu className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
-        <span className="max-w-32 truncate">{currentModel || '默认模型'}</span>
-      </button>
-      <ModelPickerDialog open={open} currentModel={currentModel} settings={modelSettings} onSelect={onModelChange} onClose={() => setOpen(false)} />
-    </>
+        <option value="default">默认模型{currentModel ? `（${currentModel}）` : ''}</option>
+        {options.map(model => <option key={model} value={model}>{model}</option>)}
+      </select>
+    </label>
   );
 }
 
