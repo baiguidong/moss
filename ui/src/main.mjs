@@ -1114,7 +1114,7 @@ function getRuntimeModelSettings() {
   // A complete local model connection remains the user's explicit choice.
   // The control plane only fills the connection when the desktop has none.
   const hasLocalModel = Boolean(desktopSettings.model?.trim() && desktopSettings.url?.trim());
-  if (hostManagedModel && !hasLocalModel) {
+  if (hostManagedModel && !hostAccessDenied && !hostControlPaused && !hasLocalModel) {
     return {
       ...desktopSettings,
       ...hostManagedModel,

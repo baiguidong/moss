@@ -27,7 +27,14 @@ export function createHostControlClient({ home, db, kind, environmentId, version
     let connection;
     try { connection = await getConnection(); }
     catch (error) {
-      if (current === generation && !stopped && [401, 403].includes(error.status)) await applyAccess({ allowed: false, reason: '企业账号已停用或凭据失效。' });
+      if (current === generation && !stopped && [401, 403].includes(error.status)) {
+        // A stale Moss token must not leave the previous account's model key
+        // active while the UI already reports that the user is logged out.
+        activeAccount = null;
+        activeConnection = null;
+        onAccountChange(null);
+        await applyAccess({ allowed: false, reason: '企业账号已停用或凭据失效。' });
+      }
       throw error;
     }
     if (current !== generation || stopped) return;
@@ -44,6 +51,9 @@ export function createHostControlClient({ home, db, kind, environmentId, version
         body: JSON.stringify(body), signal: AbortSignal.timeout(15000) });
       if (!response.ok) {
         if (current === generation && !stopped && [401, 403].includes(response.status)) {
+          activeAccount = null;
+          activeConnection = null;
+          onAccountChange(null);
           await applyAccess({ allowed: false, reason: '企业身份验证失败，请重新登录或联系管理员。' });
           if (response.status === 401) { delete account.token; save(); }
         }
