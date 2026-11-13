@@ -52,6 +52,8 @@ fi
 grep -Fq 'proxy_set_header Upgrade $http_upgrade;' "$ROOT/nginx.conf"
 grep -Fq 'ssl_certificate /etc/nginx/tls/server.crt;' "$ROOT/nginx.conf"
 grep -Fq 'proxy_pass http://web-gateway:43128;' "$ROOT/nginx.conf"
+grep -Fq 'proxy_pass http://new-api:3000/;' "$ROOT/nginx.conf"
+grep -Fq 'location ^~ /router/v1/' "$ROOT/nginx.conf"
 grep -Fq 'MOSS_SERVER_HOME=/data/moss-server' "$ROOT/.env.example"
 grep -Fq 'MOSS_INTEGRATION_NETWORK=moss-integrations' "$ROOT/.env.example"
 grep -Fq 'apply_setting MOSS_SERVER_HOME /data/moss-server' "$ROOT/configure.sh"
