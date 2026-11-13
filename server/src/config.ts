@@ -80,8 +80,8 @@ export function getDefaultServerConfig(): ServerFileConfig {
     newApi: {
       enabled: false,
       initialQuota: 5_000_000,
-      defaultModel: 'moss-default',
-      fastModel: 'moss-fast',
+      defaultModel: 'gpt-6.1-sol',
+      fastModel: 'gpt-6.1-sol',
       requestTimeoutMs: 15_000,
     },
   }

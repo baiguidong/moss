@@ -152,10 +152,10 @@ export const serverFileConfigSchema = lazySchema(() =>
       publicBaseUrl: z.string().url().optional(),
       apiKey: z.string().min(1).optional(),
       initialQuota: z.number().int().nonnegative().default(5000000),
-      defaultModel: z.string().min(1).default('moss-default'),
-      fastModel: z.string().min(1).default('moss-fast'),
+      defaultModel: z.string().min(1).default('gpt-6.1-sol'),
+      fastModel: z.string().min(1).default('gpt-6.1-sol'),
       requestTimeoutMs: z.number().int().min(1000).default(15000),
-    }).default({ enabled: false, initialQuota: 5000000, defaultModel: 'moss-default', fastModel: 'moss-fast', requestTimeoutMs: 15000 }),
+    }).default({ enabled: false, initialQuota: 5000000, defaultModel: 'gpt-6.1-sol', fastModel: 'gpt-6.1-sol', requestTimeoutMs: 15000 }),
   }),
 )
 

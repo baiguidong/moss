@@ -597,10 +597,10 @@ http://127.0.0.1:54321/callback?code=<one-time-code>&state=<client-state>
 
 ```json
 {
-  "url": "https://moss.example.com/router",
+  "url": "http://moss.example.com:3000",
   "apiKey": "sk-new-api-token",
-  "model": "gpt-4o",
-  "fastModel": "gpt-4o-mini",
+  "model": "gpt-6.1-sol",
+  "fastModel": "gpt-6.1-sol",
   "expiresAt": 0
 }
 ```

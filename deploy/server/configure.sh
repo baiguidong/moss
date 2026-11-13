@@ -74,8 +74,8 @@ apply_setting MOSS_NEW_API_BASE_URL http://new-api:3000
 apply_setting MOSS_NEW_API_PUBLIC_BASE_URL https://127.0.0.1/router
 apply_setting MOSS_NEW_API_API_KEY ''
 apply_setting MOSS_NEW_API_INITIAL_QUOTA 5000000
-apply_setting MOSS_NEW_API_DEFAULT_MODEL gpt-4o
-apply_setting MOSS_NEW_API_FAST_MODEL gpt-4o-mini
+apply_setting MOSS_NEW_API_DEFAULT_MODEL gpt-6.1-sol
+apply_setting MOSS_NEW_API_FAST_MODEL gpt-6.1-sol
 apply_setting NEW_API_REDIS_PASSWORD "$(openssl rand -hex 32)"
 apply_setting MOSS_SERVER_HOME /data/moss-server
 apply_setting MOSS_HTTPS_PORT 443
