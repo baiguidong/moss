@@ -552,7 +552,13 @@ export default function App() {
   const [selectedFilePath, setSelectedFilePath] = React.useState<string | null>(null);
   const [previewTabs, setPreviewTabs] = React.useState<WorkspacePreviewData[]>([]);
   const [desktopSettings, setDesktopSettings] = React.useState<DesktopSettings | null>(null);
-  const modelSettings = desktopSettings?.runtimeModel || desktopSettings;
+  // A server-issued model key is usable only while this desktop has a live
+  // Moss login. This prevents a stale runtimeModel snapshot from surviving a
+  // logout or an expired account token in the renderer.
+  const hasManagedModelAuth = Boolean(window.mossWeb || desktopSettings?.enterpriseAccountAccessToken);
+  const modelSettings = hasManagedModelAuth
+    ? (desktopSettings?.runtimeModel || desktopSettings)
+    : desktopSettings;
   const [serverAccount, setServerAccount] = React.useState<{ userName: string; userEmail: string } | null>(null);
   const [serverLogoutState, setServerLogoutState] = React.useState<'idle' | 'loading'>('idle');
   const [serverLogoutError, setServerLogoutError] = React.useState('');
