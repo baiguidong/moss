@@ -27,7 +27,7 @@ compose() {
 
 show_failure_logs() {
   compose ps || true
-  compose logs --tail=160 mysql server web-gateway nginx || true
+  compose logs --tail=160 mysql new-api new-api-database-init redis server web-gateway nginx || true
 }
 
 wait_for_server() {

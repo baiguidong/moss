@@ -1,3 +1,16 @@
+# New-API Docker Compose Configuration
+#
+# Quick Start:
+#   1. docker compose up -d
+#   2. Access at http://localhost:3000 (or through Moss HTTPS /router)
+#
+# Using the Moss Server MySQL instead of PostgreSQL:
+#   The shared mysql service below owns the Moss database. The
+#   new-api-database-init service creates the separate `new-api` database in
+#   that same MySQL instance before New API starts.
+#
+# ⚠️ IMPORTANT: Change all default passwords before deploying to production!
+
 name: ${COMPOSE_PROJECT_NAME}
 
 networks:
@@ -62,6 +75,116 @@ services:
     restart: unless-stopped
     networks: [moss-db]
 
+  # New API is the model gateway. It owns channel routing, token accounting,
+  # user quota and billing; Moss Server only authenticates Moss users and
+  # provisions their New API accounts/tokens.
+  new-api:
+    image: calciumion/new-api:latest
+    container_name: new-api
+    restart: always
+    command: --log-dir /app/logs
+    ports:
+      - "3000:3000"
+    volumes:
+      - ${MOSS_SERVER_HOME}/new-api/data:/data
+      - ${MOSS_SERVER_HOME}/new-api/logs:/app/logs
+    environment:
+      # The New API database is created by new-api-database-init below.
+      - SQL_DSN=root:${MOSS_DB_ROOT_PASSWORD}@tcp(mysql:3306)/new-api # Point to the shared Moss MySQL service.
+      # - LOG_SQL_DSN=postgresql://root:123456@postgres:5432/new-api-log # OPTIONAL: If you want a separate database for logging, uncomment and set this
+      # - LOG_SQL_DSN=clickhouse://default:123456@clickhouse:9000/new_api_logs # OPTIONAL: Use ClickHouse for logs only; also uncomment clickhouse in depends_on and the clickhouse service below
+      # - LOG_SQL_CLICKHOUSE_TTL_DAYS=0 # OPTIONAL: ClickHouse log retention days. Unset or 0 disables automatic deletion; set to e.g. 30 to keep 30 days
+      - REDIS_CONN_STRING=redis://:${NEW_API_REDIS_PASSWORD:-123456}@redis:6379
+      - TZ=Asia/Shanghai
+      - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
+      - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch updates)
+      - NODE_NAME=new-api-node-1  # 节点名称，用于审计日志中标识节点身份；多节点/容器部署时建议设置 (Node name used to identify the node in audit logs; recommended for multi-node/container deployments)
+      # - DEFAULT_LANGUAGE=zh-CN  # 默认语言：日志输出，以及对方没有指定语言时返回的提示、邮件和通知；可选 en、zh-CN、zh-TW，不设置为 en (Default language for logs and when no language is specified: en, zh-CN, zh-TW; en if unset)
+      # - STREAMING_TIMEOUT=300  # 流模式无响应超时时间，单位秒，默认120秒，如果出现空补全可以尝试改为更大值 (Streaming timeout in seconds, default 120s)
+      # - RELAY_IDLE_CONN_TIMEOUT=90  # Relay HTTP client idle connection timeout in seconds, defaults to Go standard library; set 0 to disable
+      # - SESSION_SECRET=random_string  # 多机部署时设置，必须修改这个随机字符串！！ (For multi-node deployments, set this to a random string)
+      # - SESSION_COOKIE_SECURE=true  # true：启用 Secure Refresh Cookie 和严格 refresh/logout OriginGuard；false/未配置：关闭 OriginGuard，仅用于本地 HTTP (true: Secure cookie + strict refresh/logout OriginGuard; false/unset: disabled for local HTTP)
+      # - SESSION_COOKIE_TRUSTED_URL=https://example.com,https://admin.example.com  # Secure=true 时必填的精确 HTTPS Origin (Required exact HTTPS origins when SESSION_COOKIE_SECURE=true)
+      # - TRUSTED_PROXIES=172.20.0.0/16  # 未配置时信任回环/RFC1918/fc00::/7 并告警，none 为严格模式 (Explicit proxy ranges; unset trusts private ranges)
+      # - USER_SESSION_ACTIVE_LIMIT=50
+      # - USER_SESSION_ISSUANCE_LIMIT=100
+      # - USER_SESSION_ISSUANCE_WINDOW_SECONDS=86400  # 不得大于 revoked 保留期 (Must not exceed revoked retention)
+      # - USER_SESSION_REVOKED_RETENTION_DAYS=7
+      # - USER_SESSION_HOURLY_ALERT_THRESHOLD=5000  # 仅告警，不做全局拒绝 (Alert only; never globally rejects login)
+      # - SYNC_FREQUENCY=60  # Uncomment if regular database syncing is needed
+      # - GOOGLE_ANALYTICS_ID=G-XXXXXXXXXX  # Google Analytics measurement ID
+      # - UMAMI_WEBSITE_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  # Umami website ID
+      # - UMAMI_SCRIPT_URL=https://analytics.umami.is/script.js  # Umami script URL
+    depends_on:
+      new-api-database-init: { condition: service_completed_successfully }
+      redis: { condition: service_started }
+    networks:
+      - moss-db
+      - moss-server
+    healthcheck:
+      test: [CMD-SHELL, 'wget -q -O - http://localhost:3000/api/status | grep -o ''"success":\\s*true'' || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  new-api-database-init:
+    image: ${MYSQL_IMAGE}
+    restart: "no"
+    depends_on:
+      mysql: { condition: service_healthy }
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MOSS_DB_ROOT_PASSWORD}
+    command:
+      - sh
+      - -c
+      - >-
+        mysql --protocol=TCP --host=mysql --user=root --password="$${MYSQL_ROOT_PASSWORD}"
+        --execute="CREATE DATABASE IF NOT EXISTS \`new-api\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    networks: [moss-db]
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    restart: always
+    command: ["redis-server", "--requirepass", "${NEW_API_REDIS_PASSWORD:-123456}"]
+    networks: [moss-server]
+
+  # The upstream compose keeps PostgreSQL as an alternative. Moss uses the
+  # shared MySQL service above, so PostgreSQL remains intentionally disabled.
+  # postgres:
+  #   image: postgres:15
+  #   container_name: postgres
+  #   restart: always
+  #   environment:
+  #     POSTGRES_USER: root
+  #     POSTGRES_PASSWORD: 123456  # ⚠️ IMPORTANT: Change this password in production!
+  #     POSTGRES_DB: new-api
+  #   volumes:
+  #     - pg_data:/var/lib/postgresql/data
+  #   networks:
+  #     - moss-server
+  #   # ports:
+  #   #   - "5432:5432"  # Uncomment if you need to access PostgreSQL from outside Docker
+
+  # The upstream compose also supports ClickHouse for log storage. It stays
+  # disabled unless LOG_SQL_DSN and the service are explicitly enabled.
+  # clickhouse:
+  #   image: clickhouse/clickhouse-server:24.8
+  #   container_name: clickhouse
+  #   restart: always
+  #   environment:
+  #     CLICKHOUSE_DB: new_api_logs
+  #     CLICKHOUSE_USER: default
+  #     CLICKHOUSE_PASSWORD: 123456  # ⚠️ IMPORTANT: Change this password in production!
+  #     CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+  #   volumes:
+  #     - clickhouse_data:/var/lib/clickhouse
+  #   networks:
+  #     - moss-server
+  #   # ports:
+  #   #   - "8123:8123"  # HTTP interface, uncomment if you need external access
+  #   #   - "9000:9000"  # Native interface used by the LOG_SQL_DSN example above
+
   silo:
     image: ${MINIO_IMAGE}
     profiles: [cloud]
@@ -95,11 +218,13 @@ services:
       MOSS_SERVER_CONFIG: ${MOSS_SERVER_HOME}/server.json
       MOSS_NODE_PATH: /opt/moss/node/bin/node
       MOSS_HIDE_BOOTSTRAP_SECRETS: "1"
-      MOSS_LITELLM_ENABLED: ${MOSS_LITELLM_ENABLED:-0}
-      MOSS_LITELLM_BASE_URL: ${MOSS_LITELLM_BASE_URL:-}
-      MOSS_LITELLM_PUBLIC_BASE_URL: ${MOSS_LITELLM_PUBLIC_BASE_URL:-}
-      MOSS_LITELLM_MASTER_KEY: ${MOSS_LITELLM_MASTER_KEY:-}
-      MOSS_LITELLM_KEY_TTL_SEC: ${MOSS_LITELLM_KEY_TTL_SEC:-3600}
+      MOSS_NEW_API_ENABLED: ${MOSS_NEW_API_ENABLED:-0}
+      MOSS_NEW_API_BASE_URL: ${MOSS_NEW_API_BASE_URL:-}
+      MOSS_NEW_API_PUBLIC_BASE_URL: ${MOSS_NEW_API_PUBLIC_BASE_URL:-}
+      MOSS_NEW_API_API_KEY: ${MOSS_NEW_API_API_KEY:-}
+      MOSS_NEW_API_INITIAL_QUOTA: ${MOSS_NEW_API_INITIAL_QUOTA:-5000000}
+      MOSS_NEW_API_DEFAULT_MODEL: ${MOSS_NEW_API_DEFAULT_MODEL:-gpt-4o}
+      MOSS_NEW_API_FAST_MODEL: ${MOSS_NEW_API_FAST_MODEL:-gpt-4o-mini}
       MOSS_OAUTH_WEB_CALLBACKS: ${MOSS_WEB_ORIGIN}/api/oauth/callback
       NODE_ENV: production
       TZ: ${TZ}
@@ -126,6 +251,7 @@ services:
     depends_on:
       server: { condition: service_healthy }
       web-gateway: { condition: service_healthy }
+      new-api: { condition: service_healthy }
     ports:
       - ${MOSS_HTTPS_PORT}:443
       - "${MOSS_WEB_HTTPS_PORT:-8444}:8444"
@@ -138,3 +264,6 @@ services:
 volumes:
   moss-cloud-snapshots:
   moss-cloud-state:
+  # pg_data:
+  # mysql_data:
+  # clickhouse_data:

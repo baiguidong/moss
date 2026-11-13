@@ -593,21 +593,29 @@ http://127.0.0.1:54321/callback?code=<one-time-code>&state=<client-state>
 
 ### GET `/api/v1/model-access`
 
-当服务端启用 LiteLLM 网关时，向当前用户签发受限的 LiteLLM virtual key。客户端使用返回的 `url`、`apiKey` 和逻辑模型名直接调用 LiteLLM；上游模型地址、上游 API Key 和真实模型名不会下发。
+当服务端启用 New API 网关时，Moss Server 为当前 Moss 用户创建并缓存对应的 New API 用户和 Token。客户端使用返回的 `url`、`apiKey` 和模型名直接调用 New API；上游渠道配置不会下发。
 
 ```json
 {
-  "url": "https://models.example.com:4000",
-  "apiKey": "sk-user-scoped-key",
-  "model": "moss-default",
-  "fastModel": "moss-fast",
-  "expiresAt": 1790208000000
+  "url": "https://moss.example.com/router",
+  "apiKey": "sk-new-api-token",
+  "model": "gpt-4o",
+  "fastModel": "gpt-4o-mini",
+  "expiresAt": 0
 }
 ```
 
 ### GET `/api/v1/model-usage`
 
-读取当前用户在 LiteLLM 中的统计和预算信息。数据源为 LiteLLM `/user/info`，Moss 不重复计算 token 或费用。
+读取当前用户在 New API 中的统计和预算信息。数据源为 New API `/api/usage/token/`，Moss 不重复计算 token 或费用。
+
+### POST `/api/v1/users/:userId/recharge`
+
+需要 scope：`admin:users`。将指定 Moss 用户映射的 New API 用户增加额度，`quota` 使用 New API 原生 quota 单位（默认 `500000` quota = 1 美元）。
+
+```json
+{ "quota": 5000000 }
+```
 
 ### GET `/api/v1/users/:userId/sessions`
 

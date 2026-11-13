@@ -69,11 +69,14 @@ apply_setting MINIO_IMAGE docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z
 apply_setting SILO_ROOT_USER moss-admin
 apply_setting SILO_ROOT_PASSWORD "$(openssl rand -hex 32)"
 apply_setting MOSS_INTEGRATION_NETWORK moss-integrations
-apply_setting MOSS_LITELLM_ENABLED 0
-apply_setting MOSS_LITELLM_BASE_URL http://litellm:4000
-apply_setting MOSS_LITELLM_PUBLIC_BASE_URL http://127.0.0.1:4000
-apply_setting MOSS_LITELLM_MASTER_KEY ''
-apply_setting MOSS_LITELLM_KEY_TTL_SEC 3600
+apply_setting MOSS_NEW_API_ENABLED 0
+apply_setting MOSS_NEW_API_BASE_URL http://new-api:3000
+apply_setting MOSS_NEW_API_PUBLIC_BASE_URL https://127.0.0.1/router
+apply_setting MOSS_NEW_API_API_KEY ''
+apply_setting MOSS_NEW_API_INITIAL_QUOTA 5000000
+apply_setting MOSS_NEW_API_DEFAULT_MODEL gpt-4o
+apply_setting MOSS_NEW_API_FAST_MODEL gpt-4o-mini
+apply_setting NEW_API_REDIS_PASSWORD "$(openssl rand -hex 32)"
 apply_setting MOSS_SERVER_HOME /data/moss-server
 apply_setting MOSS_HTTPS_PORT 443
 apply_setting MOSS_ADMIN_USERNAME admin

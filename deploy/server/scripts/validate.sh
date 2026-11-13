@@ -30,7 +30,7 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
     and (.services.mysql.volumes | any(.target == "/var/lib/mysql"))
     and .networks["moss-storage"].internal == true
     and (.services.silo.ports // [] | length) == 0
-    and (.services | keys | sort) == ["mysql", "nginx", "server", "silo", "web-gateway"]
+    and (.services | keys | sort) == ["mysql", "new-api", "new-api-database-init", "nginx", "redis", "server", "silo", "web-gateway"]
     and .services.silo.image == "docker.1ms.run/pgsty/silo:RELEASE.2026-08-06T00-00-00Z"
     and (.services.server.networks["moss-integration"].aliases | index("moss-server")) != null
     and (.services["web-gateway"].volumes | any(.target == "/state"))
@@ -39,6 +39,12 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
     and (.services["web-gateway"].volumes | any(.target == "/var/run/docker.sock"))
     and .services["web-gateway"].environment.MOSS_WEB_AUTH_SERVER == "http://server:43127"
     and .services.nginx.depends_on["web-gateway"].condition == "service_healthy"
+    and .services.nginx.depends_on["new-api"].condition == "service_healthy"
+    and .services["new-api"].depends_on["new-api-database-init"].condition == "service_completed_successfully"
+    and .services["new-api"].environment.SQL_DSN == "root:moss_root_internal_password@tcp(mysql:3306)/new-api"
+    and .services["new-api"].environment.REDIS_CONN_STRING == "redis://:change-this-redis-password@redis:6379"
+    and .services.redis.command[0] == "redis-server"
+    and .services.redis.command[1] == "--requirepass"
     and (.services.nginx.ports | map(.published) | sort) == ["443", "8444"]
   ' <<<"$rendered_config" >/dev/null
 fi
@@ -46,6 +52,8 @@ fi
 grep -Fq 'proxy_set_header Upgrade $http_upgrade;' "$ROOT/nginx.conf"
 grep -Fq 'ssl_certificate /etc/nginx/tls/server.crt;' "$ROOT/nginx.conf"
 grep -Fq 'proxy_pass http://web-gateway:43128;' "$ROOT/nginx.conf"
+grep -Fq 'proxy_pass http://new-api:3000/;' "$ROOT/nginx.conf"
+grep -Fq 'location ^~ /router/' "$ROOT/nginx.conf"
 grep -Fq 'MOSS_SERVER_HOME=/data/moss-server' "$ROOT/.env.example"
 grep -Fq 'MOSS_INTEGRATION_NETWORK=moss-integrations' "$ROOT/.env.example"
 grep -Fq 'apply_setting MOSS_SERVER_HOME /data/moss-server' "$ROOT/configure.sh"

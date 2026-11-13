@@ -35,7 +35,7 @@ import { HostRepository } from './model/repositories/hosts.js'
 import { authenticateHostReport, handleControlPlaneRoute } from './controlPlane.js'
 import { listSessionTasks } from './sessionTasks.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
-import { LiteLLMService } from './litellm/service.js'
+import { NewAPIService } from './newApi/service.js'
 
 import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
 import { fetchModelCatalog } from '../../shared/model-list.mjs'
@@ -508,7 +508,7 @@ export function startServer(
   ragflowIntegration?: RagflowIntegrationService,
   openIMIntegration?: OpenIMIntegrationService,
   cloudObjectStore?: ObjectStore,
-  litellmService?: LiteLLMService,
+  newApiService?: NewAPIService,
 ): {
   port: number | null
   ready: Promise<number | null>
@@ -770,19 +770,19 @@ export function startServer(
         throw new HttpError(401, 'Unauthorized')
       }
 
-      if (await handleControlPlaneRoute({ req, res, url, auth, authService, models, readJsonBody, writeJson, litellmService })) return
+      if (await handleControlPlaneRoute({ req, res, url, auth, authService, models, readJsonBody, writeJson, newApiService })) return
 
       if (req.method === 'GET' && pathname === '/api/v1/model-access') {
-        if (!litellmService?.enabled()) throw new HttpError(503, 'LiteLLM gateway is unavailable')
+        if (!newApiService?.enabled()) throw new HttpError(503, 'New API gateway is unavailable')
         authService.requireAnyCurrentScope(auth, ['sessions:create', 'sessions:list', 'sessions:list:any'])
-        writeNoStoreJson(res, 200, await litellmService.ensureUserKey(auth))
+        writeNoStoreJson(res, 200, await newApiService.ensureUserKey(auth))
         return
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/model-usage') {
-        if (!litellmService?.enabled()) throw new HttpError(503, 'LiteLLM gateway is unavailable')
+        if (!newApiService?.enabled()) throw new HttpError(503, 'New API gateway is unavailable')
         authService.requireAnyCurrentScope(auth, ['sessions:list', 'sessions:list:any', 'admin:users'])
-        writeNoStoreJson(res, 200, await litellmService.userInfo(auth))
+        writeNoStoreJson(res, 200, await newApiService.userInfo(auth))
         return
       }
 
@@ -1203,8 +1203,8 @@ export function startServer(
           ? (await new HostRepository(models.db).list(auth.orgId, userId)).filter(host => host.kind === 'cloud').map(host => host.hostId)
           : undefined
         const usage = await models.usage.getOverview({ orgId: auth.orgId, userId }, Date.now(), hostIds)
-        const gateway = litellmService?.enabled()
-          ? await litellmService.userInfoById(userId, auth.orgId).catch(() => null)
+        const gateway = newApiService?.enabled()
+          ? await newApiService.userInfoById(userId, auth.orgId).catch(() => null)
           : null
         writeNoStoreJson(res, 200, { user, ...usage, ...(gateway ? { gateway } : {}) })
         return
@@ -1369,6 +1369,21 @@ export function startServer(
             auth,
           ),
         )
+        return
+      }
+
+      const userRechargeMatch = pathname.match(
+        /^\/api\/v1\/users\/([^/]+)\/recharge$/,
+      )
+      if (req.method === 'POST' && userRechargeMatch) {
+        authService.requireScope(auth, 'admin:users')
+        if (!newApiService?.enabled()) throw new HttpError(503, 'New API gateway is unavailable')
+        const userId = userRechargeMatch[1] || ''
+        const target = await authService.getUserOrNull(userId, auth.orgId, auth)
+        if (!target) throw new HttpError(404, 'Unknown user_id')
+        const body = await readJsonBody(req)
+        const quota = Number(body.quota)
+        writeJson(res, 200, await newApiService.recharge(auth, userId, auth.orgId, quota))
         return
       }
 

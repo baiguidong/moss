@@ -18,7 +18,18 @@ const principal = (await auth.verifyAccessToken(admin.access_token))!
 const created = await auth.createUser({ orgId: principal.orgId, name: 'Alice', email: 'alice@example.test', role: 'user', password: 'alice-password' }, principal)
 const alice = await auth.issueTokenFromPassword({ email: 'alice@example.test', password: 'alice-password' })
 const { config } = await readServerConfig(join(root, 'server.json'))
-const app = startServer({ ...config, port: 0, host: '127.0.0.1' }, models, auth)
+const newApiService = {
+  enabled: () => true,
+  ensureUserKey: async () => ({
+    url: 'https://models.example.test/router',
+    apiKey: 'fixture-secret',
+    model: 'enterprise-test',
+    fastModel: 'enterprise-fast',
+    expiresAt: 0,
+  }),
+  userInfoById: async () => null,
+}
+const app = startServer({ ...config, port: 0, host: '127.0.0.1' }, models, auth, undefined, undefined, undefined, undefined, newApiService as any)
 try {
   const base = `http://127.0.0.1:${await app.ready}`
   const call = async (route: string, token = admin.access_token, body?: unknown, method = body ? 'POST' : 'GET') => {
@@ -69,7 +80,8 @@ try {
   await call('/api/v1/host-policy', admin.access_token, { settings: { useEnterpriseModel: true } }, 'PUT')
   report = await call('/api/v1/hosts/heartbeat', deviceToken, heartbeat)
   assert.equal(report.body.modelConfig.apiKey, 'fixture-secret')
-  assert.deepEqual(report.body.modelConfig.declaredContextByModel, { 'enterprise-test': 800_000, 'enterprise-fast': 500_000 })
+  assert.equal(report.body.modelConfig.url, 'https://models.example.test/router')
+  assert.equal(report.body.modelConfig.model, 'enterprise-test')
   assert.equal(JSON.stringify((await call('/api/v1/hosts', alice.access_token)).body).includes('fixture-secret'), false)
   assert.equal(JSON.stringify((await call('/api/v1/host-policy', alice.access_token)).body).includes('fixture-secret'), false)
   await call('/api/v1/host-policy', admin.access_token, { settings: {} }, 'PUT')

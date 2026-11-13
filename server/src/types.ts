@@ -146,20 +146,16 @@ export const serverFileConfigSchema = lazySchema(() =>
         passwordLength: 6,
         requestTimeoutMs: 15_000,
       }),
-    litellm: z.object({
+    newApi: z.object({
       enabled: z.boolean().default(false),
       baseUrl: z.string().url().optional(),
       publicBaseUrl: z.string().url().optional(),
-      masterKey: z.string().min(1).optional(),
-      keyTtlSec: z.number().int().min(300).default(3600),
-      maxBudget: z.number().nonnegative().default(10),
-      budgetDuration: z.string().min(1).default('30d'),
-      rpmLimit: z.number().int().positive().default(60),
-      tpmLimit: z.number().int().positive().default(100000),
+      apiKey: z.string().min(1).optional(),
+      initialQuota: z.number().int().nonnegative().default(5000000),
       defaultModel: z.string().min(1).default('moss-default'),
       fastModel: z.string().min(1).default('moss-fast'),
       requestTimeoutMs: z.number().int().min(1000).default(15000),
-    }).default({ enabled: false, keyTtlSec: 3600, maxBudget: 10, budgetDuration: '30d', rpmLimit: 60, tpmLimit: 100000, defaultModel: 'moss-default', fastModel: 'moss-fast', requestTimeoutMs: 15000 }),
+    }).default({ enabled: false, initialQuota: 5000000, defaultModel: 'moss-default', fastModel: 'moss-fast', requestTimeoutMs: 15000 }),
   }),
 )
 
@@ -209,16 +205,12 @@ export type ServerConfig = {
     passwordLength?: number
     requestTimeoutMs: number
   }
-  litellm: {
+  newApi: {
     enabled: boolean
     baseUrl?: string
     publicBaseUrl?: string
-    masterKey?: string
-    keyTtlSec: number
-    maxBudget: number
-    budgetDuration: string
-    rpmLimit: number
-    tpmLimit: number
+    apiKey?: string
+    initialQuota: number
     defaultModel: string
     fastModel: string
     requestTimeoutMs: number

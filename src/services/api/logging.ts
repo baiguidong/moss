@@ -63,7 +63,7 @@ type KnownGateway =
 const GATEWAY_FINGERPRINTS: Partial<
   Record<KnownGateway, { prefixes: string[] }>
 > = {
-  // https://docs.litellm.ai/docs/proxy/response_headers
+  // Keep this fingerprint for existing installations that still expose it.
   litellm: {
     prefixes: ['x-litellm-'],
   },
