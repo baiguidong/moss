@@ -83,6 +83,15 @@ export class NewAPIService {
     return { models }
   }
 
+  async adminModelCatalog(auth: AuthContext): Promise<{ models: string[] }> {
+    if (!this.config.catalogApiKey) return this.modelCatalog(auth)
+    const catalog = await this.request('/v1/models', this.config.catalogApiKey)
+    const models = Array.from(new Set<string>((Array.isArray(catalog?.data) ? catalog.data : [])
+      .map((item: any) => String(item?.id || '').trim()).filter(Boolean) as string[]))
+    if (!models.length) throw Object.assign(new Error('New API 没有返回可用模型，请先配置渠道'), { statusCode: 503 })
+    return { models }
+  }
+
   private async syncTokenModelPolicy(account: NewAPIAccount, allowed: string[]): Promise<void> {
     const settings = getSystemSettings()
     const enabled = settings.availableModels.length > 0
@@ -196,7 +205,9 @@ export class NewAPIService {
 
   async ensureUserKey(auth: AuthContext): Promise<{ url: string; apiKey: string; model: string; availableModels: string[]; fastModel: string; expiresAt: number }> {
     const account = await this.ensureAccount(auth)
-    const catalog = await this.modelCatalog(auth)
+    const catalog = this.config.catalogApiKey
+      ? await this.adminModelCatalog(auth)
+      : await this.modelCatalog(auth)
     const policy = this.modelPolicy(catalog.models)
     await this.syncTokenModelPolicy(account, policy.allowed)
     return { url: this.config.publicBaseUrl || this.config.baseUrl!, apiKey: account.apiKey, model: policy.model, availableModels: policy.allowed, fastModel: policy.fastModel, expiresAt: 0 }

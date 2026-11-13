@@ -71,6 +71,15 @@ test('reads New API token usage with the user token', async () => {
   assert.equal(requests.at(-1)?.authorization, 'Bearer sk-user-key')
 })
 
+test('reads the unrestricted catalog with the dedicated catalog key', async () => {
+  const requests = mockNewApi()
+  const service = new NewAPIService({ ...config, catalogApiKey: 'sk-catalog-key' }, root)
+  const catalog = await service.adminModelCatalog(auth)
+  assert.deepEqual(catalog, { models: ['gpt-4o', 'gpt-4o-mini'] })
+  assert.equal(requests.at(-1)?.path, '/v1/models')
+  assert.equal(requests.at(-1)?.authorization, 'Bearer sk-catalog-key')
+})
+
 test('converts dollar recharge amounts to New API quota units', async () => {
   const requests = mockNewApi()
   await new NewAPIService(config, root).recharge(auth, 'other-user', 'org', 2.5)

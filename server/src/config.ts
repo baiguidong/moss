@@ -176,6 +176,7 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
       baseUrl: process.env.MOSS_NEW_API_BASE_URL || raw.newApi.baseUrl?.replace(/\/+$/, ''),
       publicBaseUrl: process.env.MOSS_NEW_API_PUBLIC_BASE_URL || raw.newApi.publicBaseUrl?.replace(/\/+$/, ''),
       apiKey: process.env.MOSS_NEW_API_API_KEY || raw.newApi.apiKey,
+      catalogApiKey: process.env.MOSS_NEW_API_CATALOG_API_KEY || raw.newApi.catalogApiKey,
       initialQuota: process.env.MOSS_NEW_API_INITIAL_QUOTA === undefined
         ? raw.newApi.initialQuota
         : Number(process.env.MOSS_NEW_API_INITIAL_QUOTA),

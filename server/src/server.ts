@@ -1524,7 +1524,7 @@ export function startServer(
         const body = await readJsonBody(req)
         try {
           const catalog = newApiService?.enabled()
-            ? await newApiService.modelCatalog(auth)
+            ? await newApiService.adminModelCatalog(auth)
             : await fetchModelCatalog({
               url: typeof body.url === 'string' ? body.url : '',
               apiKey: typeof body.apiKey === 'string' ? body.apiKey : '',

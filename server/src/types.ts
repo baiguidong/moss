@@ -151,6 +151,7 @@ export const serverFileConfigSchema = lazySchema(() =>
       baseUrl: z.string().url().optional(),
       publicBaseUrl: z.string().url().optional(),
       apiKey: z.string().min(1).optional(),
+      catalogApiKey: z.string().min(1).optional(),
       initialQuota: z.number().int().nonnegative().default(0),
       defaultModel: z.string().min(1).optional(),
       availableModels: z.array(z.string().min(1)).default([]),
@@ -221,6 +222,7 @@ export type ServerConfig = {
     baseUrl?: string
     publicBaseUrl?: string
     apiKey?: string
+    catalogApiKey?: string
     initialQuota: number
     defaultModel?: string
     availableModels: string[]

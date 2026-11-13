@@ -22,6 +22,8 @@ New API 仍使用开源镜像，Moss 不修改其源码。`QuotaForNewUser`、�
 `sub` 写为同一个 `org_id:user_id`；没有对应 Moss 身份的 `oidc_*` 账号会被禁用并清零，
 避免 OIDC 重复注册或赠送额度。模型目录和默认模型由 New API 的渠道配置决定，Moss
 通过每个用户 Key 的 `/v1/models` 动态读取，不再在 Moss 环境文件中维护模型名单。
+如需在管理页读取 New API 中未受用户 Key 模型限制的完整目录，可配置一个 New API
+模型 Key 到 `MOSS_NEW_API_CATALOG_API_KEY`；该 Key 只用于读取 `/v1/models`，用户请求仍使用各自的 Key。
 
 ## Requirements
 
