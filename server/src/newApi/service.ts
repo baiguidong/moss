@@ -94,7 +94,7 @@ export class NewAPIService {
         unlimited_quota: true,
         allow_user_quota_query: true,
         expired_time: -1,
-        group: 'auto',
+        group: 'default',
         model_limits_enabled: true,
         model_limits: this.config.defaultModel,
       }),
