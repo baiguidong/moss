@@ -42,6 +42,31 @@ type Props = {
   disabled?: boolean;
 };
 
+export function ModelSelector({
+  currentModel,
+  onModelChange,
+  modelSettings,
+  disabled = false,
+}: Pick<Props, 'currentModel' | 'onModelChange' | 'modelSettings' | 'disabled'>) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        disabled={disabled || !onModelChange}
+        onClick={() => setOpen(true)}
+        title="选择模型"
+        aria-label="选择模型"
+        className="composer-control inline-flex h-8 max-w-48 shrink-0 items-center gap-1.5 rounded-full border border-border/70 bg-muted/35 px-3 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
+      >
+        <Cpu className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
+        <span className="max-w-32 truncate">{currentModel || '默认模型'}</span>
+      </button>
+      <ModelPickerDialog open={open} currentModel={currentModel} settings={modelSettings} onSelect={onModelChange} onClose={() => setOpen(false)} />
+    </>
+  );
+}
+
 /**
  * Small command launcher that sits beside the file picker in the session
  * composer. Frequent session commands open their desktop-native card or panel.
@@ -66,7 +91,6 @@ export function SessionCommandLauncher({
 }: Props) {
   const [open, setOpen] = React.useState(false);
   const [contextOpen, setContextOpen] = React.useState(false);
-  const [modelOpen, setModelOpen] = React.useState(false);
   const [outlineOpen, setOutlineOpen] = React.useState(false);
   const close = () => setOpen(false);
 
@@ -142,17 +166,6 @@ export function SessionCommandLauncher({
           <button
             type="button"
             role="menuitem"
-            disabled={!onModelChange || disabled}
-            onClick={() => { close(); setModelOpen(true); }}
-            className="flex min-h-16 items-start gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-2 text-left transition-colors hover:bg-muted/60 disabled:opacity-45"
-          >
-            <Cpu className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-            <span><span className="block text-xs font-medium">模型</span><span className="mt-1 block max-w-32 truncate text-[11px] text-muted-foreground">{currentModel || '选择当前模型'}</span></span>
-          </button>
-
-          <button
-            type="button"
-            role="menuitem"
             disabled={!contextUsage}
             onClick={() => { close(); setContextOpen(true); }}
             className="flex min-h-16 items-start gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-2 text-left transition-colors hover:bg-muted/60 disabled:opacity-45"
@@ -206,7 +219,6 @@ export function SessionCommandLauncher({
     </Popover>
 
     <ContextUsageDialog open={contextOpen} usage={contextUsage} sessionUsage={sessionUsage} onClose={() => setContextOpen(false)} />
-    <ModelPickerDialog open={modelOpen} currentModel={currentModel} settings={modelSettings} onSelect={onModelChange} onClose={() => setModelOpen(false)} />
     <OutlineDialog open={outlineOpen} outline={outline} onJump={onJumpToOutlineItem} onClose={() => setOutlineOpen(false)} />
     </>
   );
@@ -327,14 +339,11 @@ function ModelPickerDialog({ open, currentModel, settings, onSelect, onClose }: 
     if (!open) return;
     setValue(currentModel || '');
     setError('');
-    if (!settings?.url) {
-      setModels(settings?.availableModels || []);
-      return;
-    }
     let cancelled = false;
+    setModels(settings?.availableModels || []);
     setLoading(true);
-    void window.agentDesktop.listModels({ url: settings.url, apiKey: settings.apiKey || '' }).then(catalog => {
-      if (!cancelled) setModels([...(settings.availableModels || []), ...(catalog.models || [])].filter((model, index, values) => values.indexOf(model) === index));
+    void window.agentDesktop.listModels({ url: settings?.url || '', apiKey: settings?.apiKey || '' }).then(catalog => {
+      if (!cancelled) setModels([...(settings?.availableModels || []), ...(catalog.models || [])].filter((model, index, values) => values.indexOf(model) === index));
     }).catch(cause => {
       if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
     }).finally(() => { if (!cancelled) setLoading(false); });

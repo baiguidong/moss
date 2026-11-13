@@ -77,7 +77,7 @@ import {
 import { FilePreview } from "@/components/file-preview";
 import { PermissionModeSelector } from "@/components/permission-mode-selector";
 import { SessionEffortSelector } from "@/components/session-effort-selector";
-import { SessionCommandLauncher, type SessionOutlineEntry, type SessionUsageSummary } from "@/components/session-command-launcher";
+import { ModelSelector, SessionCommandLauncher, type SessionOutlineEntry, type SessionUsageSummary } from "@/components/session-command-launcher";
 import { collectFileAttachments, mergeFileAttachments } from "@/lib/file-attachments";
 import type { ComposerChoices, QueuedMessage } from '@/lib/composer-queue';
 import { QueuedMessages } from '@/components/chat/queued-messages';
@@ -1574,6 +1574,13 @@ export function ComposerPanel({
                 </Button>
               )}
 
+              <ModelSelector
+                currentModel={currentModel}
+                onModelChange={onModelChange}
+                modelSettings={modelSettings}
+                disabled={Boolean(readOnlyReason) || loading || !hasActiveSession}
+              />
+
               <Button
                 className="composer-control composer-send h-9 rounded-full px-3.5 sm:px-4"
                 disabled={submitDisabled}
@@ -1638,6 +1645,13 @@ export function ComposerPanel({
             </div>
 
             <div className="flex shrink-0 flex-nowrap items-center justify-end gap-2">
+
+              <ModelSelector
+                currentModel={currentModel}
+                onModelChange={onModelChange}
+                modelSettings={modelSettings}
+                disabled={loading || Boolean(readOnlyReason)}
+              />
 
               <Button
                 className="h-9 rounded-full px-3.5 sm:px-4"

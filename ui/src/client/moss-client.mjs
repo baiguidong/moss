@@ -178,6 +178,7 @@ export function createMossClient(transport, platform = {}) {
   getModelContext: (payload) => transport.invoke('agent:get-model-context', payload),
   getSessionEffort: (payload) => transport.invoke('agent:get-session-effort', payload),
   setSessionEffort: (payload) => transport.invoke('agent:set-session-effort', payload),
+  setSessionModel: (payload) => transport.invoke('agent:set-session-model', payload),
   listSessionTasks: (payload) => transport.invoke('agent:list-session-tasks', payload),
   getTurnChanges: (payload) => transport.invoke('agent:get-turn-changes', payload),
   getObservationDiff: (payload) => transport.invoke('agent:get-observation-diff', payload),

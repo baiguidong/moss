@@ -961,33 +961,30 @@ export function SettingsView({
   const modelOptions = React.useMemo(() => {
     const values = [
       ...availableModels,
+      ...(settingsDraft?.availableModels || []),
       settingsDraft?.model || '',
       settingsDraft?.fastModel || '',
       imageDraft.model || '',
     ];
     return [...new Set(values.map(value => value.trim()).filter(Boolean))];
-  }, [availableModels, imageDraft.model, settingsDraft?.fastModel, settingsDraft?.model]);
+  }, [availableModels, imageDraft.model, settingsDraft?.availableModels, settingsDraft?.fastModel, settingsDraft?.model]);
 
   const fetchModels = React.useCallback(async () => {
-    if (!settingsDraft?.url?.trim()) {
-      setModelListState('error');
-      setModelListError('请先填写 API URL。');
-      return;
-    }
+    if (!settingsDraft) return;
     setModelListState('loading');
     setModelListError('');
     try {
       const catalog = await window.agentDesktop.listModels({
-        url: settingsDraft.url,
+        url: settingsDraft?.url || '',
         apiKey: settingsDraft.apiKey || '',
       });
-      setAvailableModels(catalog.models);
-      setAvailableModelContextWindows(catalog.contextWindows);
+      setAvailableModels([...new Set([...(settingsDraft.availableModels || []), ...(catalog.models || [])])]);
+      setAvailableModelContextWindows(catalog.contextWindows || {});
       const declarations = { ...settingsDraft.declaredContextByModel };
       let changed = false;
       for (const model of new Set([settingsDraft.model, settingsDraft.fastModel].filter(Boolean))) {
         if (Object.hasOwn(declarations, model)) continue;
-        const limit = contextWindowFromCatalog(catalog.contextWindows[model]);
+        const limit = contextWindowFromCatalog(catalog.contextWindows?.[model]);
         declarations[model] = limit;
         changed = true;
       }
@@ -1137,6 +1134,14 @@ export function SettingsView({
   const updateSetting = <K extends keyof DesktopSettings>(key: K, value: DesktopSettings[K]) => {
     setSettingsDraft((current) => (current ? { ...current, [key]: value } : current));
     void autoSaveSettings(key, value);
+  };
+
+  const toggleConfiguredModel = (model: string) => {
+    const current = new Set(settingsDraft?.availableModels || []);
+    if (model === settingsDraft?.model) current.add(model);
+    else if (current.has(model)) current.delete(model);
+    else current.add(model);
+    updateSetting('availableModels', [...current]);
   };
 
   const updateDeclaredContextWindow = (model: string, limit: number) => {
@@ -2285,7 +2290,7 @@ export function SettingsView({
                           <Button
                             variant="outline"
                             size="sm"
-                            disabled={modelListState === 'loading' || !settingsDraft.url.trim()}
+                            disabled={modelListState === 'loading'}
                             onClick={() => void fetchModels()}
                           >
                             <RefreshCw className={cn('mr-2 size-4', modelListState === 'loading' && 'animate-spin')} />
@@ -2297,6 +2302,38 @@ export function SettingsView({
                           {modelListState === 'error' ? (
                             <span role="alert" className="text-xs text-destructive">{modelListError}</span>
                           ) : null}
+                        </div>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="允许切换的模型"
+                        description="从上面获取到的模型列表中勾选允许在会话里切换的模型。默认模型会始终保留。"
+                        stacked
+                      >
+                        <div className="w-full rounded-xl border border-border/60 bg-muted/15 p-3">
+                          {modelOptions.length ? (
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              {modelOptions.map(model => {
+                                const checked = (settingsDraft.availableModels || []).includes(model);
+                                const isDefault = model === settingsDraft.model;
+                                return (
+                                  <label key={model} className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-muted/50">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      disabled={isDefault}
+                                      onChange={() => toggleConfiguredModel(model)}
+                                      className="size-4 accent-primary"
+                                    />
+                                    <span className="min-w-0 flex-1 truncate font-mono text-xs" title={model}>{model}</span>
+                                    {isDefault ? <span className="shrink-0 text-[10px] text-muted-foreground">默认</span> : null}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">请先点击上面的“获取模型列表”。</p>
+                          )}
                         </div>
                       </SettingsRow>
 
