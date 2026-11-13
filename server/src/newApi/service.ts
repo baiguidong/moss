@@ -49,7 +49,7 @@ export class NewAPIService {
     try {
       const response = await fetch(`${baseUrl}${path}`, {
         ...init,
-        headers: { Authorization: `Bearer ${key}`, ...(init.body ? { 'content-type': 'application/json' } : {}), ...(init.headers || {}) },
+        headers: { ...(key ? { Authorization: `Bearer ${key}` } : {}), ...(init.body ? { 'content-type': 'application/json' } : {}), ...(init.headers || {}) },
         signal: controller.signal,
       })
       const raw = await response.text()
