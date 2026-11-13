@@ -81,6 +81,7 @@ export function getDefaultServerConfig(): ServerFileConfig {
       enabled: false,
       initialQuota: 5_000_000,
       defaultModel: 'gpt-6.1-sol',
+      availableModels: [],
       fastModel: 'gpt-6.1-sol',
       requestTimeoutMs: 15_000,
     },
@@ -170,6 +171,9 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
       apiKey: process.env.MOSS_NEW_API_API_KEY || raw.newApi.apiKey,
       initialQuota: Number(process.env.MOSS_NEW_API_INITIAL_QUOTA) || raw.newApi.initialQuota,
       defaultModel: process.env.MOSS_NEW_API_DEFAULT_MODEL || raw.newApi.defaultModel,
+      availableModels: (process.env.MOSS_NEW_API_MODELS
+        ? process.env.MOSS_NEW_API_MODELS.split(',')
+        : raw.newApi.availableModels).map(model => model.trim()).filter(Boolean),
       fastModel: process.env.MOSS_NEW_API_FAST_MODEL || raw.newApi.fastModel,
       requestTimeoutMs: raw.newApi.requestTimeoutMs,
     },

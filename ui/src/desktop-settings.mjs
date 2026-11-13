@@ -37,6 +37,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   permissionMode: DEFAULT_PERMISSION_MODE,
   bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
   model: '',
+  availableModels: [],
   fastModel: '',
   declaredContextByModel: {},
   maxTurns: 100,
@@ -186,6 +187,14 @@ function normalizeDeclaredContextByModel(value) {
     name.trim() && name.length <= 200 &&
     (limit === null || (Number.isSafeInteger(limit) && limit >= 1024 && limit <= 10_000_000))
   ).map(([name, limit]) => [name.trim(), normalizeDeclaredContextWindow(limit)]));
+}
+
+function normalizeModelList(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value
+    .filter(model => typeof model === 'string')
+    .map(model => model.trim())
+    .filter(Boolean))];
 }
 
 export function getDeclaredModelContextWindows(settings) {
@@ -338,6 +347,14 @@ export function normalizeDesktopSettings(input, existing = {}) {
     stringField(result, 'model') ??
     stringField(existingText, 'model') ??
     DEFAULT_DESKTOP_SETTINGS.model;
+
+  result.availableModels = normalizeModelList(
+    source.availableModels ?? sourceText.availableModels ??
+    result.availableModels ?? existingText.availableModels,
+  );
+  if (result.model && !result.availableModels.includes(result.model)) {
+    result.availableModels.unshift(result.model);
+  }
 
   result.fastModel =
     ownStringField(source, 'fastModel') ??
@@ -804,7 +821,7 @@ export function normalizeDesktopSettings(input, existing = {}) {
 }
 
 const MODEL_RUNTIME_FIELDS = [
-  'model', 'fastModel', 'declaredContextByModel', 'url', 'apiKey', 'maxTurns',
+  'model', 'availableModels', 'fastModel', 'declaredContextByModel', 'url', 'apiKey', 'maxTurns',
   'thinkingMode', 'thinkingBudgetTokens', 'image',
 ];
 
@@ -817,6 +834,7 @@ function normalizePersistedDesktopSettings(parsed) {
   // Flat fields remain supported for incremental updates from the settings UI.
   for (const [field, value] of Object.entries({
     model: text.model,
+    availableModels: text.availableModels,
     fastModel: text.fastModel,
     declaredContextByModel: text.declaredContextByModel,
     url: text.baseUrl,
@@ -969,6 +987,13 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
       baseUrl: normalizeMossBaseUrl(normalizedSettings.url),
       apiKey: normalizedSettings.apiKey || '',
       model: normalizedSettings.model,
+      // The default model is always available at runtime, so avoid adding a
+      // new field to older settings files that never configured a model list.
+      availableModels: normalizedSettings.availableModels.length
+        && !(normalizedSettings.availableModels.length === 1
+          && normalizedSettings.availableModels[0] === normalizedSettings.model)
+        ? normalizedSettings.availableModels
+        : undefined,
       fastModel: normalizedSettings.fastModel || '',
       declaredContextByModel: Object.keys(normalizedSettings.declaredContextByModel).length
         ? normalizedSettings.declaredContextByModel : undefined,

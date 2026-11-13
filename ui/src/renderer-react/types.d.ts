@@ -140,6 +140,8 @@ export type SessionSummary = {
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
   workerName?: string | null;
   projectCreationMode?: boolean;
+  modelOverride?: string | null;
+  model?: string;
 };
 
 export type ProjectCreationDraft = {
@@ -793,6 +795,7 @@ export type DesktopSettings = {
   permissionMode: PermissionMode;
   bypassPermissions: boolean;
   model: string;
+  availableModels?: string[];
   fastModel: string;
   declaredContextByModel?: Record<string, number | null>;
   maxTurns: number;
@@ -1513,7 +1516,7 @@ declare global {
       listSessions: () => Promise<SessionSummary[]>;
       searchSessions: (payload: { query: string; limit?: number }) => Promise<SessionSearchResult[]>;
       syncRemoteSessions: () => Promise<{ ok: boolean }>;
-      createSession: (payload?: { projectId?: string; mode?: 'chat' | 'boss'; skillIds?: string[]; agentTeamsEnabled?: boolean; projectCreationMode?: boolean; workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[]; appIds?: string[]; appServiceIds?: string[]; permissionMode?: PermissionMode; agentMode?: 'local' | 'remote-direct' }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
+      createSession: (payload?: { projectId?: string; mode?: 'chat' | 'boss'; skillIds?: string[]; agentTeamsEnabled?: boolean; projectCreationMode?: boolean; workspace?: string; title?: string; assistant_name?: string; connectorIds?: string[]; appIds?: string[]; appServiceIds?: string[]; permissionMode?: PermissionMode; agentMode?: 'local' | 'remote-direct'; model?: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       forkSession: (payload: { sessionId: string }) => Promise<{ summary: SessionSummary; detail: SessionDetail }>;
       openTerminal: (payload: { sessionId: string; action: 'terminal' | 'new' | 'resume' }) => Promise<{ ok: boolean }>;
       getSession: (payload: { sessionId: string }) => Promise<SessionDetail>;
@@ -1524,6 +1527,7 @@ declare global {
       getModelContext: (payload: { sessionId: string }) => Promise<ModelContextInfo | null>;
       getSessionEffort: (payload: { sessionId: string }) => Promise<SessionEffortConfiguration>;
       setSessionEffort: (payload: { sessionId: string; effort: EffortLevel | null }) => Promise<SessionEffortConfiguration>;
+      setSessionModel: (payload: { sessionId: string; model: string | null }) => Promise<SessionDetail>;
       listSessionTasks: (payload: { sessionId: string }) => Promise<{ tasks: SessionTask[] }>;
       getTurnChanges: (payload: { sessionId: string }) => Promise<TurnChangesPayload>;
       getObservationDiff: (payload: { sessionId: string; observationId: string; filePath: string }) => Promise<TurnFileChange>;

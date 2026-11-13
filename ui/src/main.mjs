@@ -1103,7 +1103,61 @@ function getRuntimeModelSettings() {
   // A complete local model connection remains the user's explicit choice.
   // The control plane only fills the connection when the desktop has none.
   const hasLocalModel = Boolean(desktopSettings.model?.trim() && desktopSettings.url?.trim());
-  return hostManagedModel && !hasLocalModel ? { ...desktopSettings, ...hostManagedModel } : desktopSettings;
+  if (hostManagedModel && !hasLocalModel) {
+    return {
+      ...desktopSettings,
+      ...hostManagedModel,
+      availableModels: Array.isArray(hostManagedModel.availableModels)
+        ? hostManagedModel.availableModels
+        : desktopSettings.availableModels,
+    };
+  }
+  return desktopSettings;
+}
+
+function getRuntimeAvailableModels(settings = getRuntimeModelSettings()) {
+  const values = Array.isArray(settings.availableModels) ? settings.availableModels : [];
+  return [...new Set([
+    ...(typeof settings.model === 'string' ? [settings.model] : []),
+    ...values,
+  ].map(value => String(value).trim()).filter(Boolean))];
+}
+
+function resolveSessionModel(sessionRecord, settings = getRuntimeModelSettings()) {
+  const override = typeof sessionRecord?.modelOverride === 'string'
+    ? sessionRecord.modelOverride.trim()
+    : '';
+  return override || String(settings.model || '').trim();
+}
+
+function assertSessionModelAllowed(model, settings = getRuntimeModelSettings()) {
+  const value = String(model || '').trim();
+  if (!value) throw new Error('未配置文本模型，请先在设置中填写默认模型。');
+  const available = getRuntimeAvailableModels(settings);
+  if (available.length && !available.includes(value)) {
+    throw new Error(`模型“${value}”不可用，请从当前模型列表中选择。`);
+  }
+  return value;
+}
+
+async function applySessionModelOverride(sessionRecord, model) {
+  if (sessionRecord.isSubAgent || sessionRecord.resumeReadOnlyReason) {
+    throw new Error('只读会话不能修改模型。');
+  }
+  if (sessionRecord.busy || sessionRecord.preparingPrompt || hasActiveAgentTeam(sessionRecord)) {
+    throw new Error('会话正在执行任务，请等待完成后再切换模型。');
+  }
+  const requested = typeof model === 'string' ? model.trim() : '';
+  const nextOverride = !requested || requested.toLowerCase() === 'default'
+    ? null
+    : assertSessionModelAllowed(requested, getRuntimeModelSettings());
+  if (sessionRecord.modelOverride === nextOverride) return getSessionDetailPayload(sessionRecord);
+  sessionRecord.modelOverride = nextOverride;
+  await disposeRuntime(sessionRecord);
+  sessionRecord.updatedAt = Date.now();
+  schedulePersistSession(sessionRecord, true);
+  emitSessionMeta(sessionRecord);
+  return getSessionDetailPayload(sessionRecord);
 }
 
 function getHostPermissionMode(value, fallback = desktopSettings.permissionMode) {
@@ -2815,6 +2869,8 @@ function getRuntimeSessionAppSelection(sessionRecord) {
 async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt = '') {
   restoreTestController(sessionRecord);
   applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
+  const modelSettings = getRuntimeModelSettings();
+  const effectiveModel = assertSessionModelAllowed(resolveSessionModel(sessionRecord, modelSettings), modelSettings);
   const appScoped = isAppScopedSession(sessionRecord);
   if (appScoped) {
     if (isolateAppSession(sessionRecord)) schedulePersistSession(sessionRecord, true);
@@ -2881,10 +2937,10 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     cwd,
     executionEnvironment: 'desktop',
     desktopCronHostId,
-    image: getRuntimeModelSettings().image ? { ...getRuntimeModelSettings().image } : undefined,
-    model: getRuntimeModelSettings().model,
-    fastModel: getRuntimeModelSettings().fastModel || undefined,
-    declaredContextWindows: getDeclaredModelContextWindows(getRuntimeModelSettings()),
+    image: modelSettings.image ? { ...modelSettings.image } : undefined,
+    model: effectiveModel,
+    fastModel: modelSettings.fastModel || undefined,
+    declaredContextWindows: getDeclaredModelContextWindows(modelSettings),
     customSystemPrompt: sessionRecord?.appTestRunId
       ? (sessionRecord.appTestEvidenceReview ? TEST_REVIEW_SYSTEM_PROMPT : TEST_SYSTEM_PROMPT)
       : [customSystemPrompt, projectCreationPrompt].filter(Boolean).join('\n\n') || undefined,
@@ -2898,8 +2954,8 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
       sessionRecord?.permissionMode,
       desktopSettings.permissionMode,
     ),
-    url: getRuntimeModelSettings().url || undefined,
-    apiKey: getRuntimeModelSettings().apiKey || undefined,
+    url: modelSettings.url || undefined,
+    apiKey: modelSettings.apiKey || undefined,
     webSearch: getRuntimeWebSearchSettings(),
     mcpServers,
     appTools,
@@ -3417,6 +3473,8 @@ function getSessionSummary(sessionRecord) {
     subagentStatus: sessionRecord.subagentStatus || null,
     workerName: sessionRecord.workerName || null,
     projectCreationMode: Boolean(sessionRecord.projectCreationMode),
+    modelOverride: sessionRecord.modelOverride || null,
+    model: resolveSessionModel(sessionRecord),
   };
 }
 
@@ -5201,6 +5259,7 @@ function createSessionRecord({
   projectDefaults = null,
   mode = 'chat',
   projectCreationMode = false,
+  model,
 } = {}) {
   if (requestedAgentMode === 'remote-direct') throw new Error('服务端会话已退役，请从左上角连接我的云电脑。');
   const now = Date.now();
@@ -5219,6 +5278,7 @@ function createSessionRecord({
     }
   }
   const agentMode = 'local';
+  const modelOverride = typeof model === 'string' && model.trim() ? model.trim() : null;
 
   const sessionRecord = {
     id,
@@ -5227,6 +5287,7 @@ function createSessionRecord({
     remoteWorkspace: null,
     agentMode,
     permissionMode: normalizePermissionMode(permissionMode, desktopSettings.permissionMode),
+    modelOverride,
     sessionDir,
     storageRootSessionId,
     isCoordinatorMode: mode === 'boss',
@@ -9388,6 +9449,9 @@ async function createDesktopSession(payload = {}, internal = {}) {
   const requestedAssistantName = typeof payload.assistant_name === 'string'
     ? payload.assistant_name.trim()
     : '';
+  if (payload.model !== undefined && payload.model !== null && String(payload.model).trim()) {
+    assertSessionModelAllowed(String(payload.model), getRuntimeModelSettings());
+  }
   const connectorIds = await validateAuthorizedConnectorIds(payload.connectorIds);
   const sessionRecord = createSessionRecord({
     workspace: payload.workspace,
@@ -9401,6 +9465,7 @@ async function createDesktopSession(payload = {}, internal = {}) {
     appIds,
     appServiceIds,
     permissionMode: payload.permissionMode,
+    model: payload.model,
     agentMode: payload.agentMode,
     projectCreationMode: payload.projectCreationMode === true,
     sourceSessionId: internal.sourceSessionId,
@@ -9506,6 +9571,7 @@ ipcMain.handle('agent:fork-session', async (_event, { sessionId } = {}) => {
         agentMode: 'remote-direct',
         sourceSessionId: sourceSession.id,
         permissionMode: sourceSession.permissionMode,
+        model: sourceSession.modelOverride,
       });
       closeWorkspaceWatcher(forked);
       forked.underlyingSessionId = remoteSession.sessionId;
@@ -9543,6 +9609,7 @@ ipcMain.handle('agent:fork-session', async (_event, { sessionId } = {}) => {
       agentMode: 'local',
       sourceSessionId: sourceSession.id,
       permissionMode: sourceSession.permissionMode,
+      model: sourceSession.modelOverride,
     });
 
     try {
@@ -9597,7 +9664,7 @@ ipcMain.handle('agent:get-model-context', async (_event, { sessionId }) => {
   const mod = await getClaudeRuntimeModule();
   const modelSettings = getRuntimeModelSettings();
   return mod.resolveDesktopModelContext({
-    model: modelSettings.model,
+    model: resolveSessionModel(sessionRecord, modelSettings),
     url: modelSettings.url,
     apiKey: modelSettings.apiKey,
     declaredContextWindows: getDeclaredModelContextWindows(modelSettings),
@@ -9924,6 +9991,11 @@ ipcMain.handle('agent:set-session-tool-display-mode', (_event, { sessionId, mode
   schedulePersistSession(sessionRecord, true);
   emitSessionMeta(sessionRecord);
   return getSessionSummary(sessionRecord);
+});
+
+ipcMain.handle('agent:set-session-model', async (_event, { sessionId, model } = {}) => {
+  const sessionRecord = getSessionRecord(sessionId);
+  return applySessionModelOverride(sessionRecord, model);
 });
 
 ipcMain.handle('app:import-legacy-buddy', async (_event, payload) => {
@@ -10717,6 +10789,32 @@ async function sendAgentPromptNow(event, {
   const sessionRecord = getSessionRecord(sessionId);
   if (sessionRecord.projectCreationMode) { mode = 'chat'; coordinatorMode = false; agentType = undefined; skills = []; }
   if (sessionRecord.agentMode === 'remote-direct') throw new Error('旧服务端会话已归档，请连接我的云电脑。');
+  const modelCommand = sourceChannel === 'desktop' && typeof prompt === 'string'
+    ? /^\/model(?:\s+(.+))?$/i.exec(prompt.trim())
+    : null;
+  if (modelCommand) {
+    const argument = modelCommand[1]?.trim() || '';
+    if (!argument) {
+      const settings = getRuntimeModelSettings();
+      const available = getRuntimeAvailableModels(settings);
+      const current = resolveSessionModel(sessionRecord, settings);
+      const list = available.length ? available.join('、') : '暂无可用模型';
+      pushSessionHistoryEvent(sessionRecord, {
+        type: 'system', subtype: 'informational', uuid: randomUUID(), timestamp: Date.now(),
+        content: `当前模型：${current || '未配置'}\n默认模型：${settings.model || '未配置'}\n可用模型：${list}`,
+      });
+      emitSessionMeta(sessionRecord);
+      emitSessionHistory(sessionRecord);
+      return { ok: true, sessionId };
+    }
+    const detail = await applySessionModelOverride(sessionRecord, argument);
+    pushSessionHistoryEvent(sessionRecord, {
+      type: 'system', subtype: 'informational', uuid: randomUUID(), timestamp: Date.now(),
+      content: `已切换模型：${detail.model || resolveSessionModel(sessionRecord)}`,
+    });
+    emitSessionHistory(sessionRecord);
+    return { ok: true, sessionId, model: detail.model };
+  }
   const permissionMode = getHostPermissionMode(sessionRecord.permissionMode);
   if (permissionMode !== sessionRecord.permissionMode) { await sessionRecord.runtime?.setPermissionMode?.(permissionMode); sessionRecord.permissionMode = permissionMode; schedulePersistSession(sessionRecord, true); }
   const preparedAnnotation = visualizationAnnotation ? await prepareVisualizationAnnotation(visualizationAnnotation, {

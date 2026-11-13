@@ -456,6 +456,9 @@ export default function App() {
   const [composerIntent, setComposerIntent] = React.useState<ComposerIntent>('chat');
   const composerIntentStatesRef = React.useRef(new Map<string, ComposerIntentState>());
   const [newSessionAgentMode, setNewSessionAgentMode] = React.useState<'local' | 'remote-direct'>('local');
+  // Model selected on the home composer is a draft for the next session.
+  // It is sent with createSession and never changes the desktop-wide default.
+  const [newSessionModel, setNewSessionModel] = React.useState<string | null>(null);
   const [installedAssistants, setInstalledAssistants] = React.useState<InstalledAssistant[]>([]);
   const [selectedAssistant, setSelectedAssistant] = React.useState<InstalledAssistant | null>(null);
   const assistantRefreshRequestIdRef = React.useRef(0);
@@ -847,6 +850,7 @@ export default function App() {
     activeDetailRef.current = null;
     setActiveSessionId(null);
     setActiveDetail(null);
+    setNewSessionModel(null);
     if (!options?.preserveAgentMode) { setNewSessionAgentMode('local'); void refreshAssistants('local'); }
     clearSessionWorkspaceState();
     if (!options?.preserveIntent) {
@@ -923,13 +927,15 @@ export default function App() {
     appServiceIds: string[] = [],
     onCreated?: (sessionId: string) => void,
     projectOptions?: { projectId?: string; mode?: 'chat' | 'boss'; skillIds?: string[]; projectCreationMode?: boolean },
+    model?: string | null,
   ) => {
-    const payload: { title?: string; workspace?: string; assistant_name?: string; appIds?: string[]; appServiceIds?: string[]; permissionMode?: PermissionMode; agentMode: 'local' | 'remote-direct' } = { agentMode };
+    const payload: { title?: string; workspace?: string; assistant_name?: string; appIds?: string[]; appServiceIds?: string[]; permissionMode?: PermissionMode; agentMode: 'local' | 'remote-direct'; model?: string } = { agentMode };
     if (workspace) payload.workspace = workspace;
     if (title) payload.title = title;
     if (assistantName || projectOptions) payload.assistant_name = assistantName || '';
     payload.appIds = agentMode === 'local' ? appIds : appIds.filter(id => connectorIdFromApp(apps.find(app => (app.id || app.name) === id))); if (agentMode === 'local') payload.appServiceIds = appServiceIds;
     if (permissionMode) payload.permissionMode = permissionMode;
+    if (model?.trim()) payload.model = model.trim();
     const created = await window.agentDesktop.createSession({ ...payload, ...projectOptions });
     setSummaries((prev) => upsertSummary(prev, created.summary));
     activeSessionIdRef.current = created.summary.id;
@@ -2093,13 +2099,21 @@ export default function App() {
   }, [activeSessionId, dispatchToSession, getErrorMessage, pushAppNotification, showPermissionNotice]);
 
   const handleSessionModelChange = React.useCallback(async (model: string) => {
-    if (activeDetail?.busy) throw new Error('当前会话正在运行，请等待本轮完成后再切换模型。');
     const nextModel = model.trim();
-    if (!nextModel) throw new Error('请输入模型名称。');
-    const saved = await window.agentDesktop.updateSettings({ model: nextModel });
-    applyDesktopSettings(saved);
-    showPermissionNotice(`已切换模型：${nextModel}`, 'info', 3500);
-  }, [activeDetail?.busy, applyDesktopSettings, showPermissionNotice]);
+    if (!activeSessionId) {
+      setNewSessionModel(nextModel && nextModel !== 'default' ? nextModel : null);
+      showPermissionNotice(nextModel && nextModel !== 'default' ? `新会话将使用模型：${nextModel}` : '新会话将使用默认模型', 'info', 3500);
+      return;
+    }
+    const override = nextModel && nextModel !== 'default' ? nextModel : null;
+    const detail = await window.agentDesktop.setSessionModel({ sessionId: activeSessionId, model: override });
+    activeDetailRef.current = detail;
+    setActiveDetail(detail);
+    setSummaries(previous => previous.map(summary => summary.id === detail.id
+      ? { ...summary, model: detail.model, modelOverride: detail.modelOverride, updatedAt: detail.updatedAt }
+      : summary));
+    showPermissionNotice(override ? `已切换模型：${override}` : '已恢复默认模型', 'info', 3500);
+  }, [activeSessionId, showPermissionNotice]);
 
   const handleCreateProjectConversation = React.useCallback(async (prompt: string) => {
     if (!prompt.trim() || projectCreationEntryLock.current) return;
@@ -2278,6 +2292,7 @@ export default function App() {
               : homeComposerMode === 'project-create'
                 ? { projectCreationMode: true, mode: 'chat', skillIds: [] }
                 : undefined,
+            newSessionModel,
           ).finally(() => {
             creatingSessionRef.current = null;
             setPreparingNewSession(false);
@@ -2338,7 +2353,7 @@ export default function App() {
         setPendingFirstMessage(current => current?.id === pendingFirstMessageId ? null : current);
       }
     }
-  }, [draftProject, homeComposerMode, appSelection, appDraftWorkspace, activeDetail?.busy, activeDetail?.workspace, activeDetail?.agentMode, activeSessionId, createAndOpenSession, dispatchToSession, draftAppIds, draftAppServiceIds, input, newSessionAgentMode, newSessionPermissionMode, pendingSendRequests, planDecisionBusy, selectedAssistant, updateQueue, handleComposerIntentChange]);
+  }, [draftProject, homeComposerMode, appSelection, appDraftWorkspace, activeDetail?.busy, activeDetail?.workspace, activeDetail?.agentMode, activeSessionId, createAndOpenSession, dispatchToSession, draftAppIds, draftAppServiceIds, input, newSessionAgentMode, newSessionModel, newSessionPermissionMode, pendingSendRequests, planDecisionBusy, selectedAssistant, updateQueue, handleComposerIntentChange]);
 
   const handleSend = React.useCallback(async (
     files?: ComposerAttachment[],
@@ -3214,9 +3229,9 @@ export default function App() {
                 permissionMode={activeDetail?.permissionMode ?? desktopSettings?.permissionMode ?? 'default'}
                 onPermissionModeChange={handleSessionPermissionModeChange}
                 permissionModeChanging={permissionModeSettingSessionId === activeSessionId}
-                currentModel={desktopSettings?.model}
+                currentModel={activeDetail?.model || desktopSettings?.model}
                 onModelChange={activeDetail?.agentMode !== 'remote-direct' && !activeDetail?.isSubAgent ? handleSessionModelChange : undefined}
-                modelSettings={desktopSettings ? { url: desktopSettings.url, apiKey: desktopSettings.apiKey } : undefined}
+                modelSettings={desktopSettings ? { url: desktopSettings.url, apiKey: desktopSettings.apiKey, availableModels: desktopSettings.availableModels } : undefined}
                 sessionUsage={sessionUsage}
                 value={input}
                 loading={Boolean(activeDetail?.busy || pendingSendRequests.has(activeSessionId) || pendingFirstMessage?.sessionId === activeSessionId)}
@@ -3318,6 +3333,9 @@ export default function App() {
                   onOpenProject: handleNewProjectSession,
                 } : undefined}
                 sessionTitle=""
+                currentModel={newSessionModel || desktopSettings?.model}
+                onModelChange={draftProject ? undefined : handleSessionModelChange}
+                modelSettings={desktopSettings ? { url: desktopSettings.url, apiKey: desktopSettings.apiKey, availableModels: desktopSettings.availableModels } : undefined}
                 sessionWorkspace={undefined}
                 homeWorkspace={appDraftWorkspace}
                 workspaceOptions={draftProject?.workspaces}

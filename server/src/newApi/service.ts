@@ -96,7 +96,9 @@ export class NewAPIService {
         expired_time: -1,
         group: 'default',
         model_limits_enabled: true,
-        model_limits: this.config.defaultModel,
+        model_limits: this.config.availableModels.length
+          ? this.config.availableModels.join(',')
+          : this.config.defaultModel,
       }),
     })
     const tokens = await this.request('/api/token/?p=1&size=100', userKey)
@@ -130,9 +132,14 @@ export class NewAPIService {
     return creating
   }
 
-  async ensureUserKey(auth: AuthContext): Promise<{ url: string; apiKey: string; model: string; fastModel: string; expiresAt: number }> {
+  async ensureUserKey(auth: AuthContext): Promise<{ url: string; apiKey: string; model: string; availableModels: string[]; fastModel: string; expiresAt: number }> {
     const account = await this.ensureAccount(auth)
-    return { url: this.config.publicBaseUrl || this.config.baseUrl!, apiKey: account.apiKey, model: this.config.defaultModel, fastModel: this.config.fastModel, expiresAt: 0 }
+    const availableModels = [...new Set([
+      ...(this.config.availableModels || []),
+      this.config.defaultModel,
+      this.config.fastModel,
+    ].map(model => model.trim()).filter(Boolean))]
+    return { url: this.config.publicBaseUrl || this.config.baseUrl!, apiKey: account.apiKey, model: this.config.defaultModel, availableModels, fastModel: this.config.fastModel, expiresAt: 0 }
   }
 
   async userInfo(auth: AuthContext): Promise<NewAPIUsage> {

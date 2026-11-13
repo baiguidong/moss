@@ -544,7 +544,7 @@ export function ComposerPanel({
   onJumpToOutlineItem?: (messageId: string) => void;
   currentModel?: string;
   onModelChange?: (model: string) => Promise<void>;
-  modelSettings?: Pick<DesktopSettings, 'url' | 'apiKey'>;
+  modelSettings?: Pick<DesktopSettings, 'url' | 'apiKey' | 'availableModels'>;
   sessionUsage?: SessionUsageSummary | null;
   sessionInfo?: React.ReactNode;
   className?: string;
@@ -2509,7 +2509,7 @@ export function ChatArea({
   onExport?: () => Promise<void>;
   currentModel?: string;
   onModelChange?: (model: string) => Promise<void>;
-  modelSettings?: Pick<DesktopSettings, 'url' | 'apiKey'>;
+  modelSettings?: Pick<DesktopSettings, 'url' | 'apiKey' | 'availableModels'>;
   sessionUsage?: SessionUsageSummary | null;
   onRestoreInteraction?: (item: SessionInteraction) => void;
   interactions?: SessionInteraction[];

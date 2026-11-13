@@ -16,6 +16,7 @@ const config = {
   apiKey: 'sk-admin-key',
   initialQuota: 5000000,
   defaultModel: 'gpt-4o',
+  availableModels: [],
   fastModel: 'gpt-4o-mini',
   requestTimeoutMs: 1000,
 }
@@ -46,7 +47,7 @@ function mockNewApi() {
 test('creates a New API user and returns its direct gateway token', async () => {
   const requests = mockNewApi()
   const access = await new NewAPIService(config, root).ensureUserKey(auth)
-  assert.deepEqual(access, { url: 'https://models.test/router', apiKey: 'sk-user-key', model: 'gpt-4o', fastModel: 'gpt-4o-mini', expiresAt: 0 })
+  assert.deepEqual(access, { url: 'https://models.test/router', apiKey: 'sk-user-key', model: 'gpt-4o', availableModels: ['gpt-4o', 'gpt-4o-mini'], fastModel: 'gpt-4o-mini', expiresAt: 0 })
   assert.deepEqual(requests.map(request => request.path), ['/api/user/', '/api/user/login', '/api/user/manage', '/api/token/', '/api/token/', '/api/token/7/key'])
   assert.deepEqual(requests.find(request => request.path === '/api/token/' && request.method === 'POST')?.body, {
     name: 'moss-org-user',

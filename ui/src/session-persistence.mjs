@@ -116,6 +116,7 @@ export function createSessionPersistence({
       JSON.stringify(normalizeStringList(sessionRecord.appServiceIds)),
       sessionRecord.projectDefaults ? JSON.stringify(sessionRecord.projectDefaults) : null,
       sessionRecord.projectCreationMode ? 1 : 0,
+      sessionRecord.modelOverride || null,
       sessionRecord.historyLoaded === false ? 0 : 1,
     ];
   }
@@ -187,6 +188,7 @@ export function createSessionPersistence({
       channelInstanceId: sessionRecord.channelInstanceId || null,
       channelRuntimePolicy: sessionRecord.channelRuntimePolicy || null,
       effort: normalizeSessionEffort(sessionRecord.effort),
+      modelOverride: sessionRecord.modelOverride || null,
       sourceSessionId: sessionRecord.sourceSessionId || null,
       sourceSessionTitle: sessionRecord.sourceSessionId
         ? sessions.get(sessionRecord.sourceSessionId)?.title || null
@@ -392,6 +394,9 @@ export function createSessionPersistence({
           row.tool_display_mode,
           row.auto_collapse_tool_calls == null ? null : Boolean(row.auto_collapse_tool_calls),
         ),
+      modelOverride: typeof row.model_override === 'string' && row.model_override.trim()
+        ? row.model_override.trim()
+        : null,
         rewindMessageId: row.rewind_message_id || null,
         rewindCreatedAt: Number.isFinite(row.rewind_created_at) ? row.rewind_created_at : null,
         channelAppId: row.channel_app_id || null,
@@ -471,6 +476,9 @@ export function createSessionPersistence({
           row.tool_display_mode,
           row.auto_collapse_tool_calls == null ? null : Boolean(row.auto_collapse_tool_calls),
         ),
+      modelOverride: typeof row.model_override === 'string' && row.model_override.trim()
+        ? row.model_override.trim()
+        : null,
         rewindMessageId: null,
         rewindCreatedAt: null,
         channelAppId: row.channel_app_id || null,

@@ -24,6 +24,7 @@ const newApiService = {
     url: 'https://models.example.test/router',
     apiKey: 'fixture-secret',
     model: 'enterprise-test',
+    availableModels: ['enterprise-test', 'enterprise-fast'],
     fastModel: 'enterprise-fast',
     expiresAt: 0,
   }),

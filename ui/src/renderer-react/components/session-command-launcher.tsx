@@ -35,7 +35,7 @@ type Props = {
   contextUsage?: ContextUsageInfo | null;
   currentModel?: string;
   onModelChange?: (model: string) => Promise<void>;
-  modelSettings?: Pick<DesktopSettings, 'url' | 'apiKey'>;
+  modelSettings?: Pick<DesktopSettings, 'url' | 'apiKey' | 'availableModels'>;
   sessionUsage?: SessionUsageSummary | null;
   outline?: SessionOutlineEntry[];
   onJumpToOutlineItem?: (messageId: string) => void;
@@ -317,7 +317,7 @@ function OutlineDialog({ open, outline, onJump, onClose }: { open: boolean; outl
   </DraggableDialogShell>;
 }
 
-function ModelPickerDialog({ open, currentModel, settings, onSelect, onClose }: { open: boolean; currentModel?: string; settings?: Pick<DesktopSettings, 'url' | 'apiKey'>; onSelect?: (model: string) => Promise<void>; onClose: () => void }) {
+function ModelPickerDialog({ open, currentModel, settings, onSelect, onClose }: { open: boolean; currentModel?: string; settings?: Pick<DesktopSettings, 'url' | 'apiKey' | 'availableModels'>; onSelect?: (model: string) => Promise<void>; onClose: () => void }) {
   const [models, setModels] = React.useState<string[]>([]);
   const [value, setValue] = React.useState(currentModel || '');
   const [loading, setLoading] = React.useState(false);
@@ -327,16 +327,19 @@ function ModelPickerDialog({ open, currentModel, settings, onSelect, onClose }: 
     if (!open) return;
     setValue(currentModel || '');
     setError('');
-    if (!settings?.url) return;
+    if (!settings?.url) {
+      setModels(settings?.availableModels || []);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     void window.agentDesktop.listModels({ url: settings.url, apiKey: settings.apiKey || '' }).then(catalog => {
-      if (!cancelled) setModels(catalog.models || []);
+      if (!cancelled) setModels([...(settings.availableModels || []), ...(catalog.models || [])].filter((model, index, values) => values.indexOf(model) === index));
     }).catch(cause => {
       if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [currentModel, open, settings?.apiKey, settings?.url]);
+  }, [currentModel, open, settings?.apiKey, settings?.availableModels, settings?.url]);
   if (!open) return null;
   const save = async () => {
     const next = value.trim();
@@ -348,9 +351,10 @@ function ModelPickerDialog({ open, currentModel, settings, onSelect, onClose }: 
   };
   return <DraggableDialogShell title="选择模型" onClose={onClose}>
     <div className="space-y-3 p-5">
-      <p className="text-xs leading-5 text-muted-foreground">模型设置会影响当前会话后续请求和新会话。运行中的请求完成后再应用。</p>
+      <p className="text-xs leading-5 text-muted-foreground">选择只作用于当前会话；新会话可单独选择，运行中的请求完成后再应用。</p>
       <input value={value} onChange={event => setValue(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void save(); }} placeholder="输入模型名称" className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
       <div className="max-h-44 overflow-y-auto rounded-lg border border-border/60">
+        <button type="button" onClick={() => setValue('default')} className={`flex w-full items-center px-3 py-2 text-left text-xs hover:bg-muted ${value === 'default' ? 'bg-primary/10 text-primary' : ''}`}>使用默认模型{settings?.availableModels?.[0] ? `（${settings.availableModels[0]}）` : ''}</button>
         {loading ? <p className="p-3 text-xs text-muted-foreground">正在读取可用模型…</p> : models.length ? models.map(model => <button type="button" key={model} onClick={() => setValue(model)} className={`flex w-full items-center px-3 py-2 text-left text-xs hover:bg-muted ${value === model ? 'bg-primary/10 text-primary' : ''}`}>{model}</button>) : <p className="p-3 text-xs text-muted-foreground">暂无模型列表，可直接输入模型名称。</p>}
       </div>
       {error && <p className="text-xs text-destructive" role="alert">{error}</p>}
