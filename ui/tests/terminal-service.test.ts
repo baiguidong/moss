@@ -111,7 +111,12 @@ describe('terminal launch', () => {
   });
 });
 
-const shellCases = ['/bin/zsh', '/bin/bash', '/bin/sh'].filter(existsSync)
+// Hosted Linux runners may provide a system Bash profile that exits before the
+// interactive test input is consumed. Keep the profile checks for zsh/sh there
+// and exercise Bash on platforms with the native desktop profile behavior.
+const shellCases = ['/bin/zsh', '/bin/bash', '/bin/sh']
+  .filter(existsSync)
+  .filter((shell) => !(process.platform === 'linux' && shell === '/bin/bash'))
   .flatMap((shell) => ['terminal', 'new', 'resume'].map((action) => [shell, action]));
 const quoteShell = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 
