@@ -180,6 +180,8 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
       baseUrl: process.env.MOSS_NEW_API_BASE_URL || raw.newApi.baseUrl?.replace(/\/+$/, ''),
       publicBaseUrl: process.env.MOSS_NEW_API_PUBLIC_BASE_URL || raw.newApi.publicBaseUrl?.replace(/\/+$/, ''),
       apiKey: process.env.MOSS_NEW_API_API_KEY || raw.newApi.apiKey,
+      adminUsername: process.env.NEW_API_ADMIN_USERNAME || raw.newApi.adminUsername,
+      adminPassword: process.env.NEW_API_ADMIN_PASSWORD || raw.newApi.adminPassword,
       catalogApiKey: process.env.MOSS_NEW_API_CATALOG_API_KEY || raw.newApi.catalogApiKey,
       initialQuota: process.env.MOSS_NEW_API_INITIAL_QUOTA === undefined
         ? raw.newApi.initialQuota

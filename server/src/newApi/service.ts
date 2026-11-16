@@ -32,6 +32,8 @@ function accountKey(auth: Pick<AuthContext, 'orgId' | 'userId'>): string { retur
 export class NewAPIService {
   private readonly credentials: ServerCredentialStore
   private readonly accountLocks = new Map<string, Promise<NewAPIAccount>>()
+  private adminSession: { token: string; expiresAt: number } | null = null
+  private adminSessionPromise: Promise<string> | null = null
 
   constructor(private readonly config: ServerConfig['newApi'], rootDir: string, private readonly users: MossUsers) {
     this.credentials = new ServerCredentialStore(rootDir)
@@ -64,7 +66,27 @@ export class NewAPIService {
     } finally { clearTimeout(timer) }
   }
 
-  private adminKey(): string { return this.requireConfig().apiKey }
+  private async adminKey(): Promise<string> {
+    const { apiKey } = this.requireConfig()
+    const username = this.config.adminUsername
+    const password = this.config.adminPassword
+    if (!username || !password) return apiKey
+    const now = Date.now()
+    if (this.adminSession && this.adminSession.expiresAt > now + 30_000) return this.adminSession.token
+    if (this.adminSessionPromise) return this.adminSessionPromise
+    this.adminSessionPromise = (async () => {
+      const login = await this.request('/api/user/login', '', {
+        method: 'POST',
+        body: JSON.stringify({ username, password }),
+      })
+      const token = String(login?.data?.access_token || login?.access_token || '').trim()
+      if (!token) throw Object.assign(new Error('New API administrator login did not return an access token'), { statusCode: 502 })
+      const expiresIn = Number(login?.data?.expires_in || login?.expires_in || 3600)
+      this.adminSession = { token, expiresAt: now + Math.max(60, expiresIn) * 1000 }
+      return token
+    })().finally(() => { this.adminSessionPromise = null })
+    return this.adminSessionPromise
+  }
 
   private modelPolicy(catalog: string[]): { model: string; fastModel: string; allowed: string[] } {
     const settings = getSystemSettings()
@@ -149,7 +171,7 @@ export class NewAPIService {
     if (!name.length || name.length > 15) return fallback
     const username = `moss_${name.join('')}`
     for (let page = 1; ; page++) {
-      const response = await this.request(`/api/user/search?keyword=${encodeURIComponent(username)}&p=${page}&page_size=100`, this.adminKey())
+      const response = await this.request(`/api/user/search?keyword=${encodeURIComponent(username)}&p=${page}&page_size=100`, await this.adminKey())
       const items = Array.isArray(response?.data?.items) ? response.data.items : []
       if (items.some((item: any) => String(item.username).toLowerCase() === username.toLowerCase())) return fallback
       if (!items.length || page * Number(response?.data?.page_size || items.length) >= Number(response?.data?.total || 0)) return username
@@ -159,7 +181,7 @@ export class NewAPIService {
   private async createAccount(auth: AuthContext, key: string): Promise<NewAPIAccount> {
     const username = await this.usernameFor(auth, key)
     const password = randomBytes(32).toString('base64url')
-    const adminKey = this.adminKey()
+    const adminKey = await this.adminKey()
     const created = await this.request('/api/user/', adminKey, {
       method: 'POST',
       body: JSON.stringify({ username, password, display_name: username, role: 1 }),
@@ -209,7 +231,7 @@ export class NewAPIService {
   }
 
   private async changeQuota(userId: number, quota: number): Promise<void> {
-    await this.request('/api/user/manage', this.adminKey(), {
+    await this.request('/api/user/manage', await this.adminKey(), {
       method: 'POST',
       body: JSON.stringify({ id: userId, action: 'add_quota', mode: 'add', value: quota }),
     })
@@ -257,7 +279,7 @@ export class NewAPIService {
     const cached = await this.credentials.get('new-api-user', `${orgId}:${userId}`)
     const newApiUserId = Number(cached.userId)
     if (!Number.isSafeInteger(newApiUserId) || newApiUserId <= 0) return
-    await this.request('/api/user/manage', this.adminKey(), {
+    await this.request('/api/user/manage', await this.adminKey(), {
       method: 'POST',
       body: JSON.stringify({
         id: newApiUserId,
