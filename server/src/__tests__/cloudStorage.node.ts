@@ -872,7 +872,7 @@ try {
   settings = {
     ...settings,
     enterpriseEnabled: true,
-    enterpriseAccount: { ...settings.enterpriseAccount, apiKey: 'different' },
+    enterpriseAccount: { ...settings.enterpriseAccount, accessToken: 'different' },
   }
   host.invalidate()
   await assert.rejects(() =>
