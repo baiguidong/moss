@@ -36,8 +36,14 @@ token="$(jq -r '.data.access_token // empty' <<<"$login")"
 
 set_option() {
   local key="$1" value="$2"
+  local payload
+  if [[ "$value" == true || "$value" == false ]]; then
+    payload="$(jq -nc --arg k "$key" --argjson v "$value" '{key:$k,value:$v}')"
+  else
+    payload="$(jq -nc --arg k "$key" --arg v "$value" '{key:$k,value:$v}')"
+  fi
   curl -fsS -X PUT "$base/api/option/" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
-    --data "$(jq -nc --arg k "$key" --arg v "$value" '{key:$k,value:$v}')" >/dev/null
+    --data "$payload" >/dev/null
 }
 
 set_option ServerAddress "$new_api_public"

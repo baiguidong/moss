@@ -45,8 +45,17 @@ if [[ "${PULL_IMAGES:-1}" == 1 ]]; then
 fi
 
 "$SCRIPT_DIR/scripts/cleanup-legacy.sh"
+log 'Starting New API'
+if ! compose up -d mysql new-api; then
+  show_failure_logs
+  die 'failed to start New API'
+fi
+if ! ensure_new_api_admin_key; then
+  show_failure_logs
+  die 'failed to configure New API gateway'
+fi
 log 'Starting Moss Server and cloud WebUI with HTTPS'
-if ! compose up -d mysql new-api server web-gateway new-api-oidc-init new-api-user-sync; then
+if ! compose up -d server web-gateway new-api-oidc-init new-api-user-sync; then
   show_failure_logs
   die 'failed to start Moss Server'
 fi
