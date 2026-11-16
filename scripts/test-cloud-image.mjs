@@ -45,6 +45,17 @@ async function apiLogin(user) {
 }
 const inspect = async id => JSON.parse(await docker('inspect', id))[0];
 async function pageReady(page) { await page.waitForFunction(() => window.agentDesktop && document.querySelector('[contenteditable=true], textarea'), null, { timeout: 120000 }); }
+async function browserLogin(page, user) {
+  await page.evaluate(async ({ username }) => {
+    const response = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password: 'ci-fixture-only' }),
+    });
+    if (!response.ok) throw new Error(`Browser login failed: ${response.status}`);
+  }, { username: user });
+  await page.reload();
+  await pageReady(page);
+}
 try {
   await docker('network', 'create', network);
   await docker('run', '-d', '--name', gateway, '--network', network, '--add-host', 'host.docker.internal:host-gateway',
@@ -60,14 +71,10 @@ try {
   const contextA = await browser.newContext(), contextB = await browser.newContext();
   const a = await contextA.newPage(), b = await contextB.newPage();
   await a.goto(origin);
-  const aliceCookie = await apiLogin('alice');
-  await contextA.addCookies([{ name: 'moss_web', value: aliceCookie.split('=').slice(1).join('='), url: origin }]);
-  await a.reload(); await pageReady(a);
+  await browserLogin(a, 'alice');
   let rows = await admin('list'); assert.equal(rows.length, 1); const alice = rows[0]; owned.push(alice.containerId);
   await b.goto(origin);
-  const bobCookie = await apiLogin('bob');
-  await contextB.addCookies([{ name: 'moss_web', value: bobCookie.split('=').slice(1).join('='), url: origin }]);
-  await b.reload(); await pageReady(b);
+  await browserLogin(b, 'bob');
   rows = await admin('list'); assert.equal(rows.length, 2); const bob = rows.find(r => r.userId === 'bob'); owned.push(bob.containerId);
   assert.notEqual(alice.containerId, bob.containerId); console.log('[cloud-ci] Concurrent login and two users ready');
   const ai = await inspect(alice.containerId), bi = await inspect(bob.containerId);
