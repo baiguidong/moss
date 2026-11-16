@@ -209,22 +209,26 @@ export default function SystemSettingsPage() {
     }
   }, [canManageSettings])
 
-  const fetchModelCatalog = useCallback(async () => {
+  const fetchModelCatalog = useCallback(async (notify = true) => {
     setModelCatalogState('loading')
     try {
       const response = await getSystemModelCatalog()
       setModelCatalog([...new Set(response.models)])
       setModelCatalogState('idle')
-      toast.success('模型列表已更新')
+      if (notify) toast.success('模型列表已更新')
     } catch (error) {
       setModelCatalogState('error')
-      toast.error(error instanceof Error ? error.message : '获取模型列表失败')
+      if (notify) toast.error(error instanceof Error ? error.message : '获取模型列表失败')
     }
   }, [])
 
   useEffect(() => {
     if (canManageSettings) void loadSettings()
   }, [loadSettings])
+
+  useEffect(() => {
+    if (canManageSettings) void fetchModelCatalog(false)
+  }, [canManageSettings, fetchModelCatalog])
 
   const serializedDraft = useMemo(
     () => (draft ? JSON.stringify(draft) : ''),
@@ -337,6 +341,22 @@ export default function SystemSettingsPage() {
     )
   }
 
+  const modelOptions = [...new Set([
+    ...modelCatalog,
+    ...draft.availableModels,
+    draft.model,
+    draft.fastModel,
+    draft.image.model,
+  ].map(model => model.trim()).filter(Boolean))]
+  const selectedModels = draft.availableModels.length === 0
+    ? new Set(modelOptions)
+    : new Set(draft.availableModels)
+  const updateAllowedModels = (models: string[]) => {
+    setDraft(current => current ? { ...current, availableModels: models } : current)
+  }
+  const selectAllModels = () => updateAllowedModels(modelOptions)
+  const invertModels = () => updateAllowedModels(modelOptions.filter(model => !selectedModels.has(model)))
+
   return (
     <DashboardLayout title="系统设置">
       <div className="space-y-6">
@@ -364,9 +384,16 @@ export default function SystemSettingsPage() {
           </SettingField>
 
           <SettingField label="允许切换的模型">
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {modelCatalog.map(model => {
-                const checked = draft.availableModels.length === 0 || draft.availableModels.includes(model)
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={selectAllModels} disabled={modelOptions.length === 0}>全选</Button>
+                <Button type="button" variant="outline" size="sm" onClick={invertModels} disabled={modelOptions.length === 0}>反选</Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => updateAllowedModels([])} disabled={modelOptions.length === 0}>全部允许</Button>
+                <span className="text-xs text-muted-foreground">留空表示不限制模型</span>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {modelOptions.map(model => {
+                const checked = selectedModels.has(model)
                 return (
                   <label key={model} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
                     <input
@@ -375,41 +402,49 @@ export default function SystemSettingsPage() {
                       onChange={event => setDraft(current => current ? {
                         ...current,
                         availableModels: event.target.checked
-                          ? [...new Set([...current.availableModels, model])]
-                          : current.availableModels.length === 0
-                            ? modelCatalog.filter(item => item !== model)
-                            : current.availableModels.filter(item => item !== model),
+                          ? [...new Set([...(current.availableModels.length === 0 ? modelOptions : current.availableModels), model])]
+                          : (current.availableModels.length === 0 ? modelOptions : current.availableModels).filter(item => item !== model),
                       } : current)}
                     />
                     <span className="truncate">{model}</span>
                   </label>
                 )
               })}
+              </div>
             </div>
           </SettingField>
 
           <SettingField label="默认模型">
-            <Input
+            <select
               value={draft.model}
               onChange={event => setDraft(current => current ? { ...current, model: event.target.value } : current)}
-              placeholder="从模型列表中选择或输入模型名称"
-            />
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              <option value="">请选择默认模型</option>
+              {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
+            </select>
           </SettingField>
 
           <SettingField label="快速模型">
-            <Input
+            <select
               value={draft.fastModel}
               onChange={event => setDraft(current => current ? { ...current, fastModel: event.target.value } : current)}
-              placeholder="留空时使用默认模型"
-            />
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              <option value="">留空时使用默认模型</option>
+              {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
+            </select>
           </SettingField>
 
           <SettingField label="图片模型">
-            <Input
+            <select
               value={draft.image.model}
               onChange={event => setDraft(current => current ? { ...current, image: { model: event.target.value } } : current)}
-              placeholder="gpt-image-2"
-            />
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              <option value="">请选择图片模型</option>
+              {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
+            </select>
           </SettingField>
         </SettingSection>
 
