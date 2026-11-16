@@ -81,11 +81,20 @@ ensure_new_api_admin_key() {
   [[ "$(env_value MOSS_NEW_API_ENABLED)" == 1 ]] || return 0
   [[ -n "$(env_value MOSS_NEW_API_API_KEY)" ]] && return 0
 
-  local username password login admin_token token_name token_id key_response api_key
+  local username password setup login admin_token token_name token_id key_response api_key
   username="$(env_value NEW_API_ADMIN_USERNAME)"
   password="$(env_value NEW_API_ADMIN_PASSWORD)"
   [[ -n "$username" && -n "$password" ]] || die 'New API is enabled but administrator credentials are missing'
   wait_for_new_api
+
+  setup="$(curl --fail --silent --max-time 10 http://127.0.0.1:3000/api/setup)" \
+    || die 'New API setup status could not be read while creating the Moss gateway key'
+  if [[ "$(jq -r '.data.status // false' <<<"$setup")" != true ]]; then
+    curl --fail --silent --max-time 10 -X POST http://127.0.0.1:3000/api/setup \
+      -H 'Content-Type: application/json' \
+      --data "$(jq -nc --arg u "$username" --arg p "$password" '{username:$u,password:$p,confirmPassword:$p,SelfUseModeEnabled:false,DemoSiteEnabled:false}')" >/dev/null \
+      || die 'New API administrator initialization failed while creating the Moss gateway key'
+  fi
 
   login="$(curl --fail --silent --max-time 10 -X POST http://127.0.0.1:3000/api/user/login \
     -H 'Content-Type: application/json' \
