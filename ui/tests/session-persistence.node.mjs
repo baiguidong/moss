@@ -89,7 +89,7 @@ test('reopens real SQLite records, manifests and read-only child sessions with m
   service.persistSessionRecord(record('child', { parentSessionId: 'parent', sessionRole: 'worker', isSubAgent: true }), true);
   const manifest = JSON.parse(readFileSync(path.join(f.sessionPaths.getLocalSessionDir('parent'), 'session.json'), 'utf8'));
   assert.equal(manifest.sourceSessionTitle, 'Source title');
-  assert.equal(manifest.layoutVersion, 2);
+  assert.equal(manifest.layoutVersion, 3);
   assert.equal(manifest.toolDisplayMode, 'merged');
   assert.equal(manifest.effort, 'xhigh');
   service = f.open();

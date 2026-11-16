@@ -36,7 +36,7 @@ for (const mode of ['desktop', 'web']) {
         },
         appExecutionHost: { recoverPending: () => step('recover') },
         appMcpHost: { refresh: () => step('mcp') },
-        connectorAppHost: { refresh: () => step('connector') },
+        connectorAppHost: { refresh: () => step('connector'), finishUpgrade: () => ({ retired: false }) },
         agentChannelController: { onReady: () => calls.push('channel') },
         MOSS_AGENT_PROTOCOL: 'agent', webAutomationsPaused: false,
         initializeAgentMail: () => calls.push('mail-start'), startMossCronScheduler: () => calls.push('cron-start'),

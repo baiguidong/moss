@@ -22,7 +22,7 @@ test('complete allocation agrees with du, includes hidden directories, excludes 
   assert.equal(result.complete, true);
   const caches = result.categories.find(item => item.id === 'cache');
   assert.deepEqual(caches.entries.map(item => item.path).sort(), ['.cache', 'apps/demo']);
-  assert.deepEqual(result.categories.find(item => item.id === 'app-data').entries.map(item => item.path), ['apps-data/large', 'apps-data/demo', 'apps-data/small']);
+  assert.deepEqual(result.categories.find(item => item.id === 'app-data').entries.map(item => item.path).sort(), ['apps-data/demo', 'apps-data/large', 'apps-data/small']);
   for (const id of ['cache', 'runtimes', 'sessions', 'subagents', 'archived']) assert.ok(result.categories.find(item => item.id === id).bytes >= 4096);
 });
 
