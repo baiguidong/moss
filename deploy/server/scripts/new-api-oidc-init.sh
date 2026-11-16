@@ -9,6 +9,7 @@ client_secret="${MOSS_OIDC_NEW_API_CLIENT_SECRET:-}"
 issuer="${MOSS_OIDC_ISSUER:-${MOSS_PUBLIC_URL:-}}"
 oidc_internal="${MOSS_OIDC_INTERNAL_URL:-http://server:43127}"
 new_api_public="${MOSS_NEW_API_PUBLIC_BASE_URL:-http://localhost:3000}"
+node_name="${MOSS_NEW_API_NODE_NAME:-moss-router}"
 
 if [[ -z "$admin_password" ]]; then
   # Existing installations may already be initialized and intentionally keep
