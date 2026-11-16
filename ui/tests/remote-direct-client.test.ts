@@ -117,6 +117,7 @@ describe('remote direct client settings', () => {
       userEmail: 'user@example.com',
       userPassword: '  password  ',
       accessToken: 'token',
+      refreshToken: '',
       workspace: '/workspace',
     });
   });

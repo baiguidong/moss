@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto'
+import { createHash, randomBytes, randomUUID } from 'crypto'
 import { flatMapAsync, mapAsync, someAsync } from '../model/async.js'
 import type { Database } from '../model/database.js'
 import {
@@ -36,6 +36,8 @@ export type AuthServiceOptions = {
   db: Database
   tokenTtlSec: number
   bootstrapAdmin: BootstrapAdminConfig
+  refreshTokenIdleTtlSec?: number
+  sessionMaxTtlSec?: number
 }
 
 export class AuthServiceError extends Error {
@@ -87,7 +89,7 @@ export async function createAuthService(options: AuthServiceOptions): Promise<{
   const db = new AuthRepository(options.db)
   const bootstrap = await initializeStore(db, options.bootstrapAdmin)
   return {
-    service: new AuthService(db, options.tokenTtlSec),
+    service: new AuthService(db, options.tokenTtlSec, options),
     bootstrap,
   }
 }
@@ -96,7 +98,86 @@ export class AuthService {
   constructor(
     private readonly db: AuthRepository,
     private readonly tokenTtlSec: number,
+    private readonly sessionOptions: Pick<AuthServiceOptions, 'refreshTokenIdleTtlSec' | 'sessionMaxTtlSec'> = {},
   ) {}
+
+  private get refreshIdleMs(): number {
+    return (this.sessionOptions.refreshTokenIdleTtlSec ?? 30 * 86400) * 1000
+  }
+
+  async createRefreshSession(accessToken: string, clientId: string): Promise<{
+    refresh_token: string
+    refresh_token_expires_in: number
+    session_expires_in: number
+  }> {
+    return await this.db.transaction(async () => {
+      const auth = await this.verifyAccessToken(accessToken)
+      if (!auth) throw new AuthServiceError(401, 'Invalid access token')
+      const user = await this.db.getUserByIdAndOrg(auth.userId, auth.orgId)
+      if (!user) throw new AuthServiceError(401, 'User is unavailable')
+      const currentTime = Date.now()
+      const absoluteExpiresAt = currentTime + (this.sessionOptions.sessionMaxTtlSec ?? 90 * 86400) * 1000
+      const idleExpiresAt = Math.min(currentTime + this.refreshIdleMs, absoluteExpiresAt)
+      const refreshToken = randomBytes(32).toString('base64url')
+      await this.db.pruneRefreshTokens(currentTime)
+      await this.db.createRefreshToken({
+        tokenHash: createHash('sha256').update(refreshToken).digest('hex'),
+        sessionId: randomUUID(), clientId, userId: user.id, orgId: user.orgId,
+        passwordUpdatedAt: user.passwordUpdatedAt, idleExpiresAt, absoluteExpiresAt,
+        consumedAt: null, revoked: false,
+      })
+      return {
+        refresh_token: refreshToken,
+        refresh_token_expires_in: Math.floor((idleExpiresAt - currentTime) / 1000),
+        session_expires_in: Math.floor((absoluteExpiresAt - currentTime) / 1000),
+      }
+    })
+  }
+
+  async revokeRefreshToken(refreshToken: string, clientId: string): Promise<void> {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(refreshToken)) return
+    await this.db.transaction(async () => {
+      const token = await this.db.getRefreshToken(createHash('sha256').update(refreshToken).digest('hex'))
+      if (token?.clientId === clientId) await this.db.revokeRefreshSession(token.sessionId)
+    })
+  }
+
+  async refreshAccessToken(refreshToken: string, clientId: string) {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(refreshToken)) return null
+    // Database write transactions serialize rotation across requests and processes.
+    // Return invalid grants instead of throwing inside the transaction, so a
+    // reuse-triggered revocation is committed even though the request fails.
+    return await this.db.transaction(async () => {
+      const currentTime = Date.now()
+      const token = await this.db.getRefreshToken(createHash('sha256').update(refreshToken).digest('hex'))
+      if (!token || token.clientId !== clientId) return null
+      if (token.revoked || token.consumedAt !== null || token.idleExpiresAt <= currentTime || token.absoluteExpiresAt <= currentTime) {
+        await this.db.revokeRefreshSession(token.sessionId)
+        return null
+      }
+      const user = await this.db.getUserByIdAndOrg(token.userId, token.orgId)
+      if (!user || user.status !== 'active' || user.passwordUpdatedAt !== token.passwordUpdatedAt || !(await this.db.getOrganization(token.orgId))) {
+        await this.db.revokeRefreshSession(token.sessionId)
+        return null
+      }
+      const result = await this.issueToken({
+        user, scopes: await this.getEffectiveScopes(user.id), keyId: 'password-login',
+        expiresAt: Math.floor(token.absoluteExpiresAt / 1000),
+      })
+      const nextRefreshToken = randomBytes(32).toString('base64url')
+      const idleExpiresAt = Math.min(currentTime + this.refreshIdleMs, token.absoluteExpiresAt)
+      await this.db.consumeRefreshToken(token.tokenHash, currentTime)
+      await this.db.createRefreshToken({
+        ...token, tokenHash: createHash('sha256').update(nextRefreshToken).digest('hex'),
+        idleExpiresAt, consumedAt: null,
+      })
+      return {
+        ...result, refresh_token: nextRefreshToken,
+        refresh_token_expires_in: Math.floor((idleExpiresAt - currentTime) / 1000),
+        session_expires_in: Math.floor((token.absoluteExpiresAt - currentTime) / 1000),
+      }
+    })
+  }
 
   async verifyAccessToken(token: string): Promise<AuthContext | null> {
     const auth = verifyAccessToken(
@@ -1128,6 +1209,7 @@ export class AuthService {
     user: AuthCenterUser
     scopes: string[]
     keyId: string
+    expiresAt?: number
   }): Promise<{
     access_token: string
     token_type: 'Bearer'
@@ -1137,6 +1219,11 @@ export class AuthService {
     scopes: string[]
   }> {
     const roles = await this.db.listRolesForUser(input.user.id)
+    const expiresInSec = Math.min(
+      this.tokenTtlSec,
+      this.sessionOptions.sessionMaxTtlSec ?? 90 * 86400,
+      input.expiresAt === undefined ? Infinity : input.expiresAt - Math.floor(Date.now() / 1000),
+    )
     const issued = issueAccessToken(
       {
         iss: await this.db.getIssuer(),
@@ -1151,7 +1238,7 @@ export class AuthService {
         key_id: input.keyId,
       },
       await this.db.getJwtSecret(),
-      this.tokenTtlSec,
+      expiresInSec,
     )
 
     return {

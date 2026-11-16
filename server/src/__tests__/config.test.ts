@@ -43,6 +43,7 @@ describe('server config defaults', () => {
     expect(config.storage.runDir).toBe(join(serverHome, 'var', 'run'))
     expect(config.storage.logDir).toBe(join(serverHome, 'var', 'log'))
     expect(config.auth).not.toHaveProperty('oauth')
+    expect(config.auth).toMatchObject({ tokenTtlSec: 3600, refreshTokenIdleTtlSec: 30 * 86400, sessionMaxTtlSec: 90 * 86400 })
   })
 
   test('accepts an HTTPS public URL', async () => {
@@ -54,10 +55,13 @@ describe('server config defaults', () => {
         configPath,
         JSON.stringify({
           server: { publicUrl: 'https://moss.internal' },
+          auth: { refreshTokenIdleTtlSec: 7 * 86400, sessionMaxTtlSec: 60 * 86400 },
         }),
       )
       const { config } = await readServerConfig(configPath)
       expect(config.publicUrl).toBe('https://moss.internal')
+      expect(config.refreshTokenIdleTtlSec).toBe(7 * 86400)
+      expect(config.sessionMaxTtlSec).toBe(60 * 86400)
       expect(config.database).toEqual({
         driver: 'sqlite',
         filename: join(serverHome, 'moss-server.db'),

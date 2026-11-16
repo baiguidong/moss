@@ -124,7 +124,15 @@ runner 固定在容器内运行 `moss-session-runner.mjs --stdio <manifest>`，
 
 Moss Server 自身提供浏览器登录授权，不连接外部 OAuth/OIDC 提供方，因此无需配置 authorization URL、client ID、client secret 或固定 Server callback。
 
-桌面客户端在“设置 → 远端”填写 Server 地址并点击“认证”后，会启动临时本地 callback listener，生成 `state` 和 PKCE verifier/challenge，再通过隔离的 Moss 认证窗口打开 Server 登录页。用户使用已有 Moss Server 账号登录，Server 将一次性 authorization code 重定向到客户端回环地址，客户端换取短期 access token 并加密保存。
+桌面客户端在“设置 → 远端”填写 Server 地址并点击“认证”后，会启动临时本地 callback listener，生成 `state` 和 PKCE verifier/challenge，再通过隔离的 Moss 认证窗口打开 Server 登录页。用户使用已有 Moss Server 账号登录，Server 将一次性 authorization code 重定向到客户端回环地址，客户端换取 access token 和 refresh token 并加密保存。
+
+Access token 默认有效 1 小时。Refresh token 每次使用后作废并轮换，闲置有效期默认 30 天，整个登录会话最长 90 天。桌面端在实际请求时续期，并合并并发刷新；后台电脑心跳不续期。刷新会话持久化在数据库中，Server 重启不会丢失，服务端仅保存 token 的 SHA-256 摘要。重复使用旧 refresh token 会撤销该会话的全部刷新凭据；密码变更或账号停用也会阻止刷新。
+
+桌面退出登录先清除本地凭据，再尝试撤销服务端刷新会话；断网不影响本地退出。单个请求取消不会中断共享刷新，已经轮换的凭据仍会保存。OIDC 提供 `POST /oidc/revoke`（表单字段 `client_id`、`token`，机密客户端需认证），可撤销 refresh token 所属会话；未知或已撤销的 token 同样返回 HTTP `200`。
+
+可在 `server.json` 的 `auth` 中设置 `tokenTtlSec`（默认 `3600`）、`refreshTokenIdleTtlSec`（默认 `2592000`）和 `sessionMaxTtlSec`（默认 `7776000`）。升级前已签发的 access token 没有刷新凭据，需要重新登录一次。
+
+OIDC 客户端通过 `POST /oidc/token`，以 `application/x-www-form-urlencoded` 提交 `grant_type=refresh_token`、`client_id` 和 `refresh_token`；机密客户端还需要原有的客户端认证。成功响应包含新的 `access_token`、`refresh_token`、`expires_in`、`refresh_token_expires_in`（剩余闲置期限，秒）及 `session_expires_in`（剩余会话期限，秒）。无效、过期或重复使用的刷新凭据返回 HTTP `400`、`{"error":"invalid_grant"}`，响应均为 `Cache-Control: no-store`。
 
 授权请求和一次性 authorization code 保存在 AuthCenter SQLite 中，分别有效 10 分钟和 2 分钟，可跨 Server 进程重启和多实例请求切换。桌面客户端认证期间，原“认证”按钮会变为“取消”，点击后立即关闭本地 callback 并解除认证状态。
 
@@ -405,6 +413,9 @@ http://127.0.0.1:54321/callback?code=<one-time-code>&state=<client-state>
   "access_token": "jwt",
   "token_type": "Bearer",
   "expires_in": 3600,
+  "refresh_token": "one-time-refresh-token",
+  "refresh_token_expires_in": 2592000,
+  "session_expires_in": 7776000,
   "user": {
     "id": "user-id",
     "email": "user@example.com",
@@ -417,6 +428,14 @@ http://127.0.0.1:54321/callback?code=<one-time-code>&state=<client-state>
   "scopes": ["sessions:create", "sessions:attach", "sessions:list"]
 }
 ```
+
+### POST `/api/v1/auth/oauth/refresh`
+
+旧版桌面浏览器登录的续期入口，在 OIDC 关闭时仍然可用。提交 JSON `{"refresh_token":"..."}`，返回轮换后的 token 对和剩余有效期；该入口仅接受绑定到桌面公开客户端的凭据。
+
+### POST `/api/v1/auth/oauth/revoke`
+
+桌面退出登录的撤销入口。提交 JSON `{"refresh_token":"..."}`，撤销该刷新凭据所属会话（包括轮换后签发的刷新凭据），返回 HTTP `200`。仅接受绑定到桌面公开客户端的凭据，响应为 `Cache-Control: no-store`。
 
 ### GET `/api/v1/auth/me`
 

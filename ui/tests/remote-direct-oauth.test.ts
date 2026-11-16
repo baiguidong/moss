@@ -5,6 +5,40 @@ import { performRemoteDirectOAuth } from '../src/remote-direct-oauth.mjs';
 const AUTHORIZATION_CODE = 'a'.repeat(43);
 
 describe('remote direct OAuth', () => {
+  it('preserves the OIDC refresh token and custom desktop client ID', async () => {
+    const result = await performRemoteDirectOAuth({
+      serverUrl: 'https://moss.example.com',
+      callbackListener: async () => ({ redirectUri: 'http://127.0.0.1:54321/callback', callback: Promise.resolve(AUTHORIZATION_CODE), close: async () => {} }),
+      openAuthorization: async (url: string) => { expect(new URL(url).searchParams.get('client_id')).toBe('custom-desktop'); },
+      fetchImpl: (async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).endsWith('openid-configuration')) return Response.json({
+          authorization_endpoint: 'https://moss.example.com/oidc/authorize', token_endpoint: 'https://moss.example.com/oidc/token', desktop_client_id: 'custom-desktop',
+        });
+        expect(String(input)).toBe('https://moss.example.com/oidc/token');
+        const form = new URLSearchParams(String(init?.body));
+        expect(form.get('grant_type')).toBe('authorization_code');
+        expect(form.get('code')).toBe(AUTHORIZATION_CODE);
+        expect(form.get('client_id')).toBe('custom-desktop');
+        return Response.json({ access_token: 'jwt', refresh_token: 'refresh-private' });
+      }) as typeof fetch,
+    });
+    expect(result).toMatchObject({ authToken: 'jwt', refreshToken: 'refresh-private' });
+  });
+
+  it('does not downgrade to legacy login after an OIDC exchange failure', async () => {
+    const calls: string[] = [];
+    await expect(performRemoteDirectOAuth({
+      serverUrl: 'https://moss.example.com',
+      callbackListener: async () => ({ redirectUri: 'http://127.0.0.1:54321/callback', callback: Promise.resolve(AUTHORIZATION_CODE), close: async () => {} }),
+      openAuthorization: async () => {},
+      fetchImpl: (async (input: string | URL | Request) => {
+        calls.push(String(input));
+        if (String(input).endsWith('openid-configuration')) return Response.json({ authorization_endpoint: 'https://moss.example.com/oidc/authorize', token_endpoint: 'https://moss.example.com/oidc/token' });
+        return Response.json({ error: 'OIDC exchange failed' }, { status: 400 });
+      }) as typeof fetch,
+    })).rejects.toThrow('OIDC exchange failed');
+    expect(calls.some(url => url.includes('/auth/oauth/'))).toBe(false);
+  });
   it('opens the server authorization page and exchanges the loopback callback with PKCE', async () => {
     let startBody: Record<string, string> | null = null;
     let openedUrl = '';

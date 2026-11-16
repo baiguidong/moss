@@ -33,6 +33,8 @@ export async function startStandaloneDirectConnectServer(
     const { service: authService, bootstrap } = await createAuthService({
       db: models.db,
       tokenTtlSec: config.tokenTtlSec,
+      refreshTokenIdleTtlSec: config.refreshTokenIdleTtlSec,
+      sessionMaxTtlSec: config.sessionMaxTtlSec,
       bootstrapAdmin: config.bootstrapAdmin,
     })
     const logger = createServerLogger()

@@ -928,22 +928,26 @@ try {
   if (credentialServerUrl) {
     const storedCredentials = getRemoteDirectCredentials(credentialServerUrl);
     const accessToken = desktopSettings.enterpriseAccountAccessToken || storedCredentials.accessToken;
+    const refreshToken = desktopSettings.enterpriseAccountRefreshToken || storedCredentials.refreshToken;
     const userPassword =
       desktopSettings.enterpriseAccountUserPassword || storedCredentials.userPassword;
-    if (accessToken || userPassword) {
-      const migrating = Boolean(desktopSettings.enterpriseAccountAccessToken || desktopSettings.enterpriseAccountUserPassword);
+    if (accessToken || refreshToken || userPassword) {
+      const migrating = Boolean(desktopSettings.enterpriseAccountAccessToken || desktopSettings.enterpriseAccountRefreshToken || desktopSettings.enterpriseAccountUserPassword);
       if (migrating) saveRemoteDirectCredentials({
         serverUrl: credentialServerUrl,
         accessToken,
+        refreshToken,
         userPassword,
       });
       const hydrated = normalizeDesktopSettings({
         ...desktopSettings,
         enterpriseAccountAccessToken: accessToken,
+        enterpriseAccountRefreshToken: refreshToken,
         enterpriseAccountUserPassword: userPassword,
         enterpriseAccount: {
           ...desktopSettings.enterpriseAccount,
           accessToken,
+          refreshToken,
           userPassword,
         },
       }, desktopSettings);
@@ -989,8 +993,26 @@ const {
   isRemoteDirectSessionNotFoundError,
   parseRemoteDirectError,
   resolveEnterpriseAccountConnection,
+  fetchWithEnterpriseAccount,
+  revokeEnterpriseAccountSession,
   resumeRemoteDirectSession,
-} = createEnterpriseAccountClient({ getSettings: () => desktopSettings });
+} = createEnterpriseAccountClient({
+  getSettings: () => desktopSettings,
+  onCredentials: ({ serverUrl, accessToken, refreshToken }) => {
+    // Persist both rotated tokens together before publishing the new in-memory
+    // state. Refreshing must not restart runtimes or close account windows.
+    saveRemoteDirectCredentials({ serverUrl, accessToken, refreshToken, userPassword: desktopSettings.enterpriseAccountUserPassword });
+    const snapshot = desktopSettingsStore.hydrate({
+      enterpriseAccountAccessToken: accessToken,
+      enterpriseAccountRefreshToken: refreshToken,
+    });
+    desktopSettingsState = snapshot.state;
+    desktopSettings = snapshot.value;
+    desktopSettingsRevision += 1;
+    invalidateEmbeddedSettingsCache();
+    void hostControl?.refresh();
+  },
+});
 
 const syncRemoteSessionTasks = createRemoteSessionTaskSync({
   resolveConnection: () => resolveEnterpriseAccountConnection(),
@@ -2357,11 +2379,9 @@ function summarizeAgentChannelSession(session) {
 async function requestAppAccount(pathname) {
   const remote = getEnterpriseAccountSettings();
   if (!remote.serverUrl) return null;
-  const { serverUrl, authToken } = await resolveEnterpriseAccountConnection();
-  const response = await enterpriseAccountNetFetch(`${serverUrl}${pathname}`, {
+  const response = await fetchWithEnterpriseAccount(pathname, {
     method: 'GET',
     signal: AbortSignal.timeout(20_000),
-    headers: { authorization: `Bearer ${authToken}` },
   });
   if (!response.ok) throw new Error(await parseRemoteDirectError('Moss Account request failed', response));
   return response.json();
@@ -2370,12 +2390,10 @@ async function requestAppAccount(pathname) {
 async function requestAppOpenIM(pathname, { method = 'GET', body } = {}) {
   const remote = getEnterpriseAccountSettings();
   if (!remote.serverUrl) throw new Error('请先连接 Moss Server。');
-  const { serverUrl, authToken } = await resolveEnterpriseAccountConnection();
-  const response = await enterpriseAccountNetFetch(`${serverUrl}${pathname}`, {
+  const response = await fetchWithEnterpriseAccount(pathname, {
     method,
     signal: AbortSignal.timeout(35_000),
     headers: {
-      authorization: `Bearer ${authToken}`,
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -2730,8 +2748,7 @@ async function resolveCurrentMossServerAuthToken() {
   if (!enterpriseAccount.serverUrl) {
     throw new Error('该连接器需要 Moss Server 登录态，请先登录 Moss Server。');
   }
-  const authToken = enterpriseAccount.accessToken
-    || (await resolveEnterpriseAccountConnection()).authToken;
+  const authToken = (await resolveEnterpriseAccountConnection()).authToken;
   if (!authToken) {
     throw new Error('无法取得 Moss Server 登录凭据，请重新登录 Moss Server。');
   }
@@ -3117,33 +3134,44 @@ function refreshDesktopSettings(payload = {}, { policyUpdate = false } = {}) {
     : {};
   const hasAccessTokenUpdate = Object.prototype.hasOwnProperty.call(payload, 'enterpriseAccountAccessToken')
     || Object.prototype.hasOwnProperty.call(nestedRemotePayload, 'accessToken');
+  const hasRefreshTokenUpdate = Object.prototype.hasOwnProperty.call(payload, 'enterpriseAccountRefreshToken')
+    || Object.prototype.hasOwnProperty.call(nestedRemotePayload, 'refreshToken');
   const hasPasswordUpdate = Object.prototype.hasOwnProperty.call(payload, 'enterpriseAccountUserPassword')
     || Object.prototype.hasOwnProperty.call(nestedRemotePayload, 'userPassword');
   if (previousServerUrl !== nextServerUrl) {
     const storedCredentials = nextServerUrl
       ? getRemoteDirectCredentials(nextServerUrl)
-      : { accessToken: '', userPassword: '' };
+      : { accessToken: '', refreshToken: '', userPassword: '' };
     const accessToken = hasAccessTokenUpdate
       ? nextSettings.enterpriseAccountAccessToken
       : storedCredentials.accessToken;
+    const refreshToken = hasRefreshTokenUpdate
+      ? nextSettings.enterpriseAccountRefreshToken
+      : storedCredentials.refreshToken;
     const userPassword = hasPasswordUpdate
       ? nextSettings.enterpriseAccountUserPassword
       : storedCredentials.userPassword;
     nextSettings = normalizeDesktopSettings({
       ...nextSettings,
       enterpriseAccountAccessToken: accessToken,
+      enterpriseAccountRefreshToken: refreshToken,
       enterpriseAccountUserPassword: userPassword,
       enterpriseAccount: {
         ...nextSettings.enterpriseAccount,
         accessToken,
+        refreshToken,
         userPassword,
       },
     }, desktopSettings);
   }
-  if (nextServerUrl && (hasAccessTokenUpdate || hasPasswordUpdate)) {
+  if (hasAccessTokenUpdate && !nextSettings.enterpriseAccountAccessToken) {
+    nextSettings = normalizeDesktopSettings({ enterpriseAccountRefreshToken: '' }, nextSettings);
+  }
+  if (nextServerUrl && (hasAccessTokenUpdate || hasRefreshTokenUpdate || hasPasswordUpdate)) {
     saveRemoteDirectCredentials({
       serverUrl: nextServerUrl,
       accessToken: nextSettings.enterpriseAccountAccessToken,
+      refreshToken: nextSettings.enterpriseAccountRefreshToken,
       userPassword: nextSettings.enterpriseAccountUserPassword,
     });
   }
@@ -7021,7 +7049,7 @@ hostControl = createHostControlClient({ home: MOSS_HOME, db: sessionDb, kind: is
       headers: { 'X-Moss-Environment': process.env.MOSS_ENVIRONMENT_ID, 'X-Moss-Host-Token': process.env.MOSS_WEB_CONTROL_TOKEN },
     } : null;
     if (!desktopSettings.enterpriseEnabled || !getEnterpriseAccountSettings().serverUrl) return null;
-    const connection = await resolveEnterpriseAccountConnection();
+    const connection = await resolveEnterpriseAccountConnection(undefined, { allowRefresh: false });
     const identity = JSON.parse(Buffer.from(connection.authToken.split('.')[1], 'base64url').toString('utf8'));
     return { ...connection, accountId: `${identity.org_id}:${identity.sub}` };
   },
@@ -8625,9 +8653,19 @@ ipcMain.handle('agent:list-models', async (_event, payload = {}) => {
   return fetchModelCatalog({ url: runtimeSettings.url, apiKey: runtimeSettings.apiKey });
 });
 ipcMain.handle('agent:get-runtime-stats', () => sessionRuntimePool.stats());
-ipcMain.handle('agent:update-settings', (_event, payload = {}) => {
+ipcMain.handle('agent:update-settings', async (_event, payload = {}) => {
   if (Object.prototype.hasOwnProperty.call(payload, 'computerUse') || Object.prototype.hasOwnProperty.call(payload, 'desktopControl')) throw new Error('请通过电脑操控设置调整授权。');
-  return refreshDesktopSettings(payload);
+  const previous = desktopSettings;
+  const settings = refreshDesktopSettings(payload);
+  const clearingAccessToken = payload.enterpriseAccountAccessToken === '' || payload.enterpriseAccount?.accessToken === '';
+  if (clearingAccessToken && !desktopSettings.enterpriseAccountAccessToken) {
+    // Clear local credentials first so a concurrent rotation cannot sign the
+    // user back in. Revoking even a consumed token revokes its whole family.
+    await revokeEnterpriseAccountSession(previous).catch(() => {
+      mossLog('warn', 'remote-auth', 'Unable to revoke the remote login session; local credentials were cleared');
+    });
+  }
+  return settings;
 });
 ipcMain.handle('agent:agents-list', (_event, payload = {}) => getDesktopAgentCatalog(payload));
 ipcMain.handle('agent:agents-read', (_event, payload = {}) => desktopAgentStore.read({
@@ -8798,6 +8836,8 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
       enterpriseAccountUserName: typeof authenticated.user?.name === 'string' ? authenticated.user.name.trim() : '',
       enterpriseAccountUserEmail: typeof authenticated.user?.email === 'string' ? authenticated.user.email.trim() : '',
       enterpriseAccountAccessToken: authenticated.authToken,
+      enterpriseAccountRefreshToken: authenticated.refreshToken || '',
+      enterpriseAccountUserPassword: '',
     });
     mossLog('info', 'remote-auth', 'Moss Server authentication completed');
     return settings;

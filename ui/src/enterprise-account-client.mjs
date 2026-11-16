@@ -64,6 +64,10 @@ export function getEnterpriseAccountSettings(settings) {
       nestedAccessToken ??
       stringField(settings, 'enterpriseAccountAccessToken') ??
       '',
+    refreshToken:
+      ownStringField(enterpriseAccount, 'refreshToken') ??
+      stringField(settings, 'enterpriseAccountRefreshToken') ??
+      '',
     workspace:
       nestedWorkspace ??
       stringField(settings, 'enterpriseAccountWorkspace') ??
@@ -127,11 +131,82 @@ function decodeAccessTokenIdentity(authToken) {
   }
 }
 
+export function isEnterpriseAccessTokenExpired(authToken, now = Date.now()) {
+  try {
+    const claims = JSON.parse(Buffer.from(String(authToken).split('.')[1], 'base64url').toString('utf8'));
+    return typeof claims.exp === 'number' && claims.exp * 1000 <= now + 30_000;
+  } catch { return false; }
+}
+
+function loginRequired() {
+  return Object.assign(new Error('Moss 登录已过期，请重新登录。'), { code: 'MOSS_LOGIN_REQUIRED', status: 401 });
+}
+
+function waitForRefresh(pending, signal) {
+  if (!signal) return pending;
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    if (signal.aborted) abort();
+    else signal.addEventListener('abort', abort, { once: true });
+    pending.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
+}
+
+export async function revokeEnterpriseAccountSession(settings, { fetchImpl = enterpriseAccountFetch, signal = AbortSignal.timeout(5_000) } = {}) {
+  const remote = getEnterpriseAccountSettings(settings);
+  if (!remote.serverUrl || !remote.refreshToken) return;
+  const { serverUrl } = parseRemoteDirectServerInput(remote.serverUrl);
+  const response = await fetchImpl(`${serverUrl}/api/v1/auth/oauth/revoke`, {
+    method: 'POST', redirect: 'error', signal,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ refresh_token: remote.refreshToken }),
+  });
+  if (!response.ok) throw new Error(`Moss 登录会话撤销失败（${response.status}）。`);
+}
+
+async function refreshEnterpriseAuthentication({ authCenterUrl, refreshToken, signal, fetchImpl }) {
+  const discoveryResponse = await fetchImpl(`${authCenterUrl}/.well-known/openid-configuration`, {
+    headers: { accept: 'application/json' }, redirect: 'error', signal,
+  });
+  let response;
+  if (discoveryResponse.status === 404) {
+    response = await fetchImpl(`${authCenterUrl}/api/v1/auth/oauth/refresh`, {
+      method: 'POST', redirect: 'error', signal,
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+  } else {
+    if (!discoveryResponse.ok) throw new Error('无法获取 Moss Server 登录配置，请稍后重试。');
+    const discovery = await discoveryResponse.json();
+    const endpoint = new URL(discovery.token_endpoint);
+    if (endpoint.origin !== new URL(authCenterUrl).origin || endpoint.username || endpoint.password) {
+      throw new Error('Moss Server 返回了无效的 token 地址。');
+    }
+    response = await fetchImpl(endpoint.toString(), {
+      method: 'POST', redirect: 'error', signal,
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', client_id: discovery.desktop_client_id || 'moss-desktop', refresh_token: refreshToken }).toString(),
+    });
+  }
+  const data = await response.json();
+  if (!response.ok) {
+    if (data?.error === 'invalid_grant' || response.status === 401) throw loginRequired();
+    throw new Error(`Moss 登录续期失败（${response.status}），请稍后重试。`);
+  }
+  if (typeof data.access_token !== 'string' || !data.access_token || typeof data.refresh_token !== 'string' || !data.refresh_token) {
+    throw new Error('Moss Server 续期响应缺少登录凭据。');
+  }
+  const identity = decodeAccessTokenIdentity(data.access_token);
+  return { authToken: data.access_token, refreshToken: data.refresh_token, ...identity, userName: '', userEmail: '' };
+}
+
 export async function requestEnterpriseAuthentication({
   authCenterUrl,
   loginIdentifier,
   password,
   accessToken,
+  refreshToken,
+  forceRefresh = false,
+  allowRefresh = true,
   signal,
   fetchImpl = enterpriseAccountFetch,
   redirect,
@@ -144,7 +219,7 @@ export async function requestEnterpriseAuthentication({
   }
 
   const normalizedAccessToken = typeof accessToken === 'string' ? accessToken.trim() : '';
-  if (normalizedAccessToken) {
+  if (normalizedAccessToken && (!allowRefresh || (!forceRefresh && !isEnterpriseAccessTokenExpired(normalizedAccessToken)))) {
     const identity = decodeAccessTokenIdentity(normalizedAccessToken);
     return {
       authToken: normalizedAccessToken,
@@ -154,6 +229,14 @@ export async function requestEnterpriseAuthentication({
       userEmail: '',
     };
   }
+
+  if (allowRefresh && refreshToken) {
+    return refreshEnterpriseAuthentication({
+      authCenterUrl: normalizedAuthCenterUrl, refreshToken,
+      signal: signal || AbortSignal.timeout(20_000), fetchImpl,
+    });
+  }
+  if (normalizedAccessToken || forceRefresh) throw loginRequired();
 
   const normalizedLoginIdentifier = typeof loginIdentifier === 'string'
     ? loginIdentifier.trim()
@@ -238,6 +321,9 @@ export async function resolveEnterpriseAccountConnection(settings, options = {})
     loginIdentifier: enterpriseAccount.userEmail,
     password: enterpriseAccount.userPassword,
     accessToken: enterpriseAccount.accessToken,
+    refreshToken: enterpriseAccount.refreshToken,
+    forceRefresh: options.forceRefresh,
+    allowRefresh: options.allowRefresh,
   });
 
   return {
@@ -316,9 +402,63 @@ export const fetchRemoteSessionMemory = retired;
 export const downloadRemoteDirectWorkspaceFile = retired;
 export const resumeRemoteDirectSession = retired;
 export const forkRemoteDirectSession = retired;
-export function createEnterpriseAccountClient({ getSettings }) {
+export function createEnterpriseAccountClient({ getSettings, onCredentials }) {
   const currentSettings = (settings) => settings ?? getSettings();
+  const refreshes = new Map();
+  const resolveConnection = async (settings, options = {}) => {
+    options.signal?.throwIfAborted();
+    const resolvedSettings = currentSettings(settings);
+    const remote = getEnterpriseAccountSettings(resolvedSettings);
+    const needsRefresh = options.allowRefresh !== false && (options.forceRefresh || !remote.accessToken || isEnterpriseAccessTokenExpired(remote.accessToken));
+    if (!needsRefresh || !remote.refreshToken) return resolveEnterpriseAccountConnection(resolvedSettings, options);
+    const serverUrl = parseRemoteDirectServerInput(remote.serverUrl).serverUrl;
+    const key = `${serverUrl}\0${remote.refreshToken}`;
+    if (refreshes.has(key)) return waitForRefresh(refreshes.get(key), options.signal);
+    const pending = (async () => {
+      // A canceled caller must not discard a rotated token or cancel other
+      // callers. Finish and persist the rotation under its own bounded timeout.
+      const { refreshToken, ...connection } = await resolveEnterpriseAccountConnection(resolvedSettings, {
+        ...options, signal: AbortSignal.timeout(20_000),
+      });
+      const current = getEnterpriseAccountSettings(getSettings());
+      if (!current.serverUrl || parseRemoteDirectServerInput(current.serverUrl).serverUrl !== serverUrl || current.refreshToken !== remote.refreshToken) throw loginRequired();
+      const previousIdentity = decodeAccessTokenIdentity(remote.accessToken);
+      const currentIdentity = decodeAccessTokenIdentity(current.accessToken);
+      if (currentIdentity.userId !== previousIdentity.userId || currentIdentity.orgId !== previousIdentity.orgId) throw loginRequired();
+      await onCredentials?.({
+        serverUrl, accessToken: connection.authToken, refreshToken,
+        previousAccessToken: remote.accessToken, previousRefreshToken: remote.refreshToken,
+      });
+      return connection;
+    })().finally(() => { if (refreshes.get(key) === pending) refreshes.delete(key); });
+    refreshes.set(key, pending);
+    return waitForRefresh(pending, options.signal);
+  };
+  const fetchWithAccount = async (pathname, init = {}) => {
+    if (!pathname.startsWith('/') || pathname.startsWith('//')) throw new Error('Invalid Moss Account path.');
+    const connection = await resolveConnection(undefined, { signal: init.signal });
+    const requestRefreshToken = getEnterpriseAccountSettings(getSettings()).refreshToken;
+    const send = (current) => {
+      const headers = new Headers(init.headers);
+      headers.set('authorization', `Bearer ${current.authToken}`);
+      return enterpriseAccountFetch(`${current.serverUrl}${pathname}`, { ...init, headers });
+    };
+    const response = await send(connection);
+    if (response.status !== 401) return response;
+    const remote = getEnterpriseAccountSettings(getSettings());
+    if (!remote.refreshToken || parseRemoteDirectServerInput(remote.serverUrl).serverUrl !== connection.serverUrl) return response;
+    const identity = decodeAccessTokenIdentity(remote.accessToken);
+    if (identity.userId !== connection.userId || identity.orgId !== connection.orgId) throw loginRequired();
+    await response.body?.cancel();
+    const refreshed = await resolveConnection(undefined, {
+      signal: init.signal,
+      forceRefresh: remote.accessToken === connection.authToken && remote.refreshToken === requestRefreshToken,
+    });
+    return send(refreshed);
+  };
   return {
+    fetchWithEnterpriseAccount: fetchWithAccount,
+    revokeEnterpriseAccountSession: (settings, options) => revokeEnterpriseAccountSession(currentSettings(settings), options),
     getDesktopAgentMode: (settings) => getDesktopAgentMode(currentSettings(settings)),
     isRemoteDirectModeEnabled: (settings) => isRemoteDirectModeEnabled(currentSettings(settings)),
     getEnterpriseAccountSettings: (settings) => getEnterpriseAccountSettings(currentSettings(settings)),
@@ -327,15 +467,15 @@ export function createEnterpriseAccountClient({ getSettings }) {
     parseRemoteDirectServerInput,
     requestEnterpriseAuthentication,
     requestEnterpriseAccessToken,
-    resolveEnterpriseAccountConnection: (settings, options) => resolveEnterpriseAccountConnection(currentSettings(settings), options),
+    resolveEnterpriseAccountConnection: resolveConnection,
     parseRemoteDirectError,
     getCloudUsageOverview: async (settings) => {
       const resolvedSettings = currentSettings(settings);
       const remote = getEnterpriseAccountSettings(resolvedSettings);
-      const hasCredentials = Boolean(remote.accessToken || (remote.userEmail && remote.userPassword));
+      const hasCredentials = Boolean(remote.accessToken || remote.refreshToken || (remote.userEmail && remote.userPassword));
       if (!resolvedSettings?.enterpriseEnabled || !remote.serverUrl || !hasCredentials) return null;
       const signal = AbortSignal.timeout(20_000);
-      const connection = await resolveEnterpriseAccountConnection(resolvedSettings, { signal });
+      const connection = await resolveConnection(resolvedSettings, { signal });
       return fetchRemoteUsageOverview({ ...connection, signal });
     },
     fetchRemoteDirectSessions,

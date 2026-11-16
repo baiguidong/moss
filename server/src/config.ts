@@ -41,6 +41,8 @@ export function getDefaultServerConfig(): ServerFileConfig {
     auth: {
       mode: 'local',
       tokenTtlSec: 60 * 60,
+      refreshTokenIdleTtlSec: 30 * 86400,
+      sessionMaxTtlSec: 90 * 86400,
     },
     bootstrapAdmin: {
       username: 'admin',
@@ -109,6 +111,8 @@ function resolveServerConfig(raw: ServerFileConfig): ServerConfig {
     publicUrl: raw.server.publicUrl?.replace(/\/+$/, ''),
     authMode: 'local',
     tokenTtlSec: raw.auth.tokenTtlSec,
+    refreshTokenIdleTtlSec: raw.auth.refreshTokenIdleTtlSec,
+    sessionMaxTtlSec: raw.auth.sessionMaxTtlSec,
     bootstrapAdmin: {
       username: raw.bootstrapAdmin.username,
       password: raw.bootstrapAdmin.password,

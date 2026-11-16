@@ -151,6 +151,7 @@ try {
       assert.equal(exchangeResponse.headers.get('cache-control'), 'no-store')
       return (await exchangeResponse.json()) as {
         access_token: string
+        refresh_token: string
         token_type: string
         user: { id: string }
       }
@@ -160,6 +161,16 @@ try {
     assert.ok(first.access_token)
     assert.equal(first.token_type, 'Bearer')
     assert.equal((await service.verifyAccessToken(first.access_token))?.userId, first.user.id)
+    assert.ok(first.refresh_token)
+    const refreshedResponse = await fetch(`${baseUrl}/api/v1/auth/oauth/refresh`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ refresh_token: first.refresh_token }),
+    })
+    assert.equal(refreshedResponse.status, 200)
+    assert.equal(refreshedResponse.headers.get('cache-control'), 'no-store')
+    const refreshed = await refreshedResponse.json() as { access_token: string; refresh_token: string }
+    assert.notEqual(refreshed.refresh_token, first.refresh_token)
+    assert.equal((await service.verifyAccessToken(refreshed.access_token))?.userId, first.user.id)
 
     const second = await login()
     assert.ok(second.access_token)

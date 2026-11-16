@@ -125,6 +125,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   enterpriseAccountUserEmail: '',
   enterpriseAccountUserPassword: '',
   enterpriseAccountAccessToken: '',
+  enterpriseAccountRefreshToken: '',
   enterpriseAccountWorkspace: '',
   coordinatorMode: false,
   logRotationMaxSize: 10 * 1024 * 1024, // 10MB
@@ -514,6 +515,13 @@ export function normalizeDesktopSettings(input, existing = {}) {
     stringField(existingRemoteDirect, 'accessToken') ??
     DEFAULT_DESKTOP_SETTINGS.enterpriseAccountAccessToken;
 
+  result.enterpriseAccountRefreshToken =
+    ownStringField(source, 'enterpriseAccountRefreshToken') ??
+    ownStringField(sourceRemoteDirect, 'refreshToken') ??
+    stringField(result, 'enterpriseAccountRefreshToken') ??
+    stringField(existingRemoteDirect, 'refreshToken') ??
+    DEFAULT_DESKTOP_SETTINGS.enterpriseAccountRefreshToken;
+
   result.enterpriseAccountWorkspace =
     ownStringField(source, 'enterpriseAccountWorkspace') ??
     ownStringField(sourceRemoteDirect, 'workspace') ??
@@ -528,6 +536,7 @@ export function normalizeDesktopSettings(input, existing = {}) {
     userEmail: result.enterpriseAccountUserEmail,
     userPassword: result.enterpriseAccountUserPassword,
     accessToken: result.enterpriseAccountAccessToken,
+    refreshToken: result.enterpriseAccountRefreshToken,
     workspace: result.enterpriseAccountWorkspace,
   };
   delete result.enterpriseAccountProfileMode;
@@ -978,6 +987,7 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
   delete enterpriseAccount.userPassword;
   delete enterpriseAccount.apiKey;
   delete enterpriseAccount.accessToken;
+  delete enterpriseAccount.refreshToken;
   delete enterpriseAccount.profileMode;
 
   const models = {
@@ -1026,6 +1036,7 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
   delete toSave.enterpriseAccountUserEmail;
   delete toSave.enterpriseAccountUserPassword;
   delete toSave.enterpriseAccountAccessToken;
+  delete toSave.enterpriseAccountRefreshToken;
   delete toSave.enterpriseAccountApiKey;
   delete toSave.enterpriseAccountWorkspace;
   delete toSave.enterpriseAccountProfileMode;
@@ -1075,8 +1086,11 @@ export function createDesktopSettingsStore({ settingsPath, log = () => {} }) {
       return value;
     },
     getPayload(extra = {}) {
+      const { enterpriseAccountRefreshToken, ...publicValue } = value;
+      const { refreshToken, ...publicAccount } = value.enterpriseAccount || {};
       return {
-        ...value,
+        ...publicValue,
+        enterpriseAccount: publicAccount,
         webSearch: {
           mode: value.webSearch?.mode || DEFAULT_DESKTOP_SETTINGS.webSearch.mode,
           tavilyApiKey: '',
@@ -1115,8 +1129,8 @@ export function createDesktopSettingsStore({ settingsPath, log = () => {} }) {
       // Credentials hydrated from the secure store are intentionally absent on disk.
       value.webSearch = { ...previous.webSearch, mode: value.webSearch.mode };
       if (value.enterpriseAccountServerUrl === previous.enterpriseAccountServerUrl) {
-        for (const key of ['enterpriseAccountAccessToken','enterpriseAccountUserPassword']) value[key] = previous[key];
-        value.enterpriseAccount = { ...value.enterpriseAccount, accessToken:previous.enterpriseAccountAccessToken, userPassword:previous.enterpriseAccountUserPassword };
+        for (const key of ['enterpriseAccountAccessToken','enterpriseAccountRefreshToken','enterpriseAccountUserPassword']) value[key] = previous[key];
+        value.enterpriseAccount = { ...value.enterpriseAccount, accessToken:previous.enterpriseAccountAccessToken, refreshToken:previous.enterpriseAccountRefreshToken, userPassword:previous.enterpriseAccountUserPassword };
       }
       syncDesktopThinkingEnv(value);
       syncDesktopModelEnv(value);

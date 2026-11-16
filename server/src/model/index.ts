@@ -14,6 +14,7 @@ import { installUserDeletionSchema } from './schema/userDeletion.js'
 import { installCloudSharesSchema } from './schema/cloudShares.js'
 import { installUsageSchema } from './schema/usage.js'
 import { installControlPlaneSchema } from './schema/controlPlane.js'
+import { installRefreshTokenSchema } from './schema/refreshTokens.js'
 import { UsageRepository } from './repositories/usage.js'
 
 export type { DatabaseConfig } from './config.js'
@@ -76,14 +77,20 @@ export async function initializeDatabase(db: Database): Promise<void> {
     const version = await db
       .prepare('SELECT version FROM model_schema WHERE id=1')
       .get()
-    if (version && Number(version.version) === 8) return
+    if (version && Number(version.version) === 9) return
+    if (version && Number(version.version) === 8) {
+      await installRefreshTokenSchema(db)
+      await db.prepare('UPDATE model_schema SET version=9 WHERE id=1').run()
+      return
+    }
     if (version && [1, 2, 3, 4, 5, 6, 7].includes(Number(version.version))) {
       if (Number(version.version) === 1) await installCronSchema(db)
       await installUserDeletionSchema(db)
       await installUsageSchema(db)
       await installCloudSharesSchema(db)
       await installControlPlaneSchema(db)
-      await db.prepare('UPDATE model_schema SET version=8 WHERE id=1').run()
+      await installRefreshTokenSchema(db)
+      await db.prepare('UPDATE model_schema SET version=9 WHERE id=1').run()
       return
     }
     if (version && Number(version.version) !== 0)
@@ -117,7 +124,8 @@ export async function initializeDatabase(db: Database): Promise<void> {
     await installUsageSchema(db)
     await installCloudSharesSchema(db)
     await installControlPlaneSchema(db)
-    await db.prepare('UPDATE model_schema SET version=8 WHERE id=1').run()
+    await installRefreshTokenSchema(db)
+    await db.prepare('UPDATE model_schema SET version=9 WHERE id=1').run()
   })
 }
 
@@ -125,6 +133,6 @@ export async function requireSchema(db: Database): Promise<void> {
   const row = await db
     .prepare('SELECT version FROM model_schema WHERE id=1')
     .get()
-  if (Number(row?.version) !== 8)
+  if (Number(row?.version) !== 9)
     throw new Error('Database is not initialized by Moss Server')
 }

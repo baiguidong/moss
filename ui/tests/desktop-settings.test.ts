@@ -523,6 +523,7 @@ describe('desktop settings', () => {
       enterpriseAccountCredentialMode: 'password',
       enterpriseAccountUserName: 'Moss User',
       enterpriseAccountAccessToken: 'jwt.remote.token',
+      enterpriseAccountRefreshToken: 'refresh.private.token',
       enterpriseAccountUserPassword: 'remote-password',
       enterpriseAccountProfileMode: 'session',
       enterpriseAccount: {
@@ -533,6 +534,9 @@ describe('desktop settings', () => {
 
     const serialized = fs.readFileSync(settingsPath, 'utf8');
     expect(serialized).not.toContain('jwt.remote.token');
+    expect(serialized).not.toContain('refresh.private.token');
+    expect(store.getPayload()).not.toHaveProperty('enterpriseAccountRefreshToken');
+    expect(store.getPayload().enterpriseAccount).not.toHaveProperty('refreshToken');
     expect(serialized).not.toContain('remote-password');
     const persisted = JSON.parse(serialized);
     expect(persisted.enterpriseAccount).not.toHaveProperty('apiKey');
@@ -697,6 +701,18 @@ describe('desktop settings', () => {
     });
     expect(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).webSearch)
       .toEqual({ mode: 'auto' });
+  });
+
+  it('keeps rotated server credentials through public settings saves and reloads', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-account-settings-'));
+    temporaryRoots.push(root);
+    const store = createDesktopSettingsStore({ settingsPath: path.join(root, 'settings.json') });
+    store.save({ enterpriseAccountServerUrl: 'https://moss.example' });
+    store.hydrate({ enterpriseAccountAccessToken: 'new-access', enterpriseAccountRefreshToken: 'new-refresh' });
+    store.save({ language: 'english' });
+    expect(store.reload().value).toMatchObject({ enterpriseAccountAccessToken: 'new-access', enterpriseAccountRefreshToken: 'new-refresh' });
+    expect(store.value.enterpriseAccount).toMatchObject({ accessToken: 'new-access', refreshToken: 'new-refresh' });
+    expect(fs.readFileSync(path.join(root, 'settings.json'), 'utf8')).not.toContain('new-refresh');
   });
 });
 

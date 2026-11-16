@@ -263,6 +263,7 @@ async function performLegacyRemoteDirectOAuth({
     return {
       serverUrl: normalizedServerUrl,
       authToken: exchanged.access_token,
+      ...(exchanged.refresh_token ? { refreshToken: exchanged.refresh_token } : {}),
       user: exchanged.user ?? null,
     };
   } finally {
@@ -326,7 +327,7 @@ async function performOidcRemoteOAuth({
     if (discovery.userinfo_endpoint) {
       try { user = await request(discovery.userinfo_endpoint, { headers: { authorization: `Bearer ${exchanged.access_token}` } }); } catch {}
     }
-    return { serverUrl, authToken: exchanged.access_token, user };
+    return { serverUrl, authToken: exchanged.access_token, refreshToken: exchanged.refresh_token || '', user };
   } finally {
     clearTimeout(timeout); signal?.removeEventListener('abort', handleExternalAbort); closeAuthorization();
     await listener.close();
@@ -335,6 +336,7 @@ async function performOidcRemoteOAuth({
 
 export async function performRemoteDirectOAuth(options) {
   const normalizedServerUrl = normalizeServerUrl(options.serverUrl);
+  let oidcDiscovery;
   try {
     const fetchDiscovery = options.fetchImpl || fetch;
     const discoveryTimeout = Math.min(options.requestTimeoutMs || 20_000, options.timeoutMs || LOGIN_TIMEOUT_MS);
@@ -356,9 +358,10 @@ export async function performRemoteDirectOAuth(options) {
     if (response.ok) {
       const discovery = await response.json();
       if (typeof discovery.authorization_endpoint === 'string' && typeof discovery.token_endpoint === 'string') {
-        return await performOidcRemoteOAuth({ ...options, serverUrl: normalizedServerUrl, discovery });
+        oidcDiscovery = discovery;
       }
     }
   } catch {}
+  if (oidcDiscovery) return performOidcRemoteOAuth({ ...options, serverUrl: normalizedServerUrl, discovery: oidcDiscovery });
   return await performLegacyRemoteDirectOAuth({ ...options, serverUrl: normalizedServerUrl });
 }

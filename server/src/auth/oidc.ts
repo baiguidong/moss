@@ -66,9 +66,11 @@ export class OidcService {
       issuer: this.issuer,
       authorization_endpoint: `${this.issuer}/oidc/authorize`,
       token_endpoint: `${this.issuer}/oidc/token`,
+      revocation_endpoint: `${this.issuer}/oidc/revoke`,
       userinfo_endpoint: `${this.issuer}/oidc/userinfo`,
       jwks_uri: `${this.issuer}/oidc/jwks.json`,
       response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code', 'refresh_token'],
       subject_types_supported: ['public'],
       id_token_signing_alg_values_supported: ['RS256'],
       scopes_supported: ['openid', 'profile', 'email'],
@@ -102,11 +104,27 @@ export class OidcService {
     return { location: new URL(started.authorization_url, this.issuer).toString() }
   }
 
+  async revoke(params: URLSearchParams, authorization: string | undefined): Promise<void> {
+    const client = this.client(params.get('client_id') || this.basicClientId(authorization))
+    this.checkSecret(client, params.get('client_secret'), authorization)
+    await this.authService.revokeRefreshToken(params.get('token') || '', client.id)
+  }
+
   async token(params: URLSearchParams, authorization: string | undefined): Promise<Record<string, unknown>> {
     const clientId = params.get('client_id') || this.basicClientId(authorization)
     const client = this.client(clientId)
     this.checkSecret(client, params.get('client_secret'), authorization)
-    if (params.get('grant_type') !== 'authorization_code') throw new OAuthLoginError(400, 'grant_type must be authorization_code')
+    if (params.get('grant_type') === 'refresh_token') {
+      const result = await this.authService.refreshAccessToken(params.get('refresh_token') || '', client.id)
+      if (!result) throw new OAuthLoginError(400, 'invalid_grant')
+      return {
+        ...this.tokenResponse(result, client),
+        refresh_token: result.refresh_token,
+        refresh_token_expires_in: result.refresh_token_expires_in,
+        session_expires_in: result.session_expires_in,
+      }
+    }
+    if (params.get('grant_type') !== 'authorization_code') throw new OAuthLoginError(400, 'unsupported_grant_type')
     const code = params.get('code') || ''
     if (!OIDC_CODE_PATTERN.test(code)) throw new OAuthLoginError(400, 'Invalid code')
     const redirectUri = this.redirect(client, params.get('redirect_uri') || '')
@@ -116,6 +134,11 @@ export class OidcService {
       redirectUri,
       allowWithoutPkce: !client.pkce,
     })
+    const session = await this.authService.createRefreshSession(result.access_token, client.id)
+    return { ...this.tokenResponse(result, client), ...session }
+  }
+
+  private tokenResponse(result: Awaited<ReturnType<AuthService['issueTokenForOAuthUser']>>, client: OidcClient): Record<string, unknown> {
     const now = Math.floor(Date.now() / 1000)
     const user = result.user
     const subject = `${user.orgId}:${user.id}`

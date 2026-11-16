@@ -605,6 +605,12 @@ export function startServer(
         writeNoStoreJson(res, 200, await oidcService.token(form, typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined))
         return
       }
+      if (oidcConfig.enabled && req.method === 'POST' && pathname === '/oidc/revoke') {
+        const form = await readOAuthFormBody(req, 32 * 1024)
+        await oidcService.revoke(form, typeof req.headers.authorization === 'string' ? req.headers.authorization : undefined)
+        writeNoStoreJson(res, 200, {})
+        return
+      }
       if (oidcConfig.enabled && (req.method === 'GET' || req.method === 'POST') && pathname === '/oidc/userinfo') {
         const token = getBearerToken(req)
         if (!token) throw new OAuthLoginError(401, 'Missing bearer token')
@@ -744,17 +750,37 @@ export function startServer(
 
       if (req.method === 'POST' && pathname === '/api/v1/auth/oauth/exchange') {
         const body = await readOAuthJsonBody(req, 4 * 1024)
-        writeNoStoreJson(
-          res,
-          200,
-          await oauthLoginService.exchange({
-            code: typeof body.code === 'string' ? body.code : '',
-            codeVerifier:
-              typeof body.code_verifier === 'string' ? body.code_verifier : '',
-            redirectUri:
-              typeof body.redirect_uri === 'string' ? body.redirect_uri : '',
-          }),
+        const result = await oauthLoginService.exchange({
+          code: typeof body.code === 'string' ? body.code : '',
+          codeVerifier:
+            typeof body.code_verifier === 'string' ? body.code_verifier : '',
+          redirectUri:
+            typeof body.redirect_uri === 'string' ? body.redirect_uri : '',
+        })
+        const session = await authService.createRefreshSession(result.access_token, oidcConfig.desktopClientId)
+        writeNoStoreJson(res, 200, { ...result, ...session })
+        return
+      }
+
+      // The legacy browser flow remains usable when OIDC is disabled. This
+      // endpoint is exclusively the public Desktop client, never a way around
+      // confidential OIDC client authentication.
+      if (req.method === 'POST' && pathname === '/api/v1/auth/oauth/revoke') {
+        const body = await readOAuthJsonBody(req, 4 * 1024)
+        await authService.revokeRefreshToken(
+          typeof body.refresh_token === 'string' ? body.refresh_token : '', oidcConfig.desktopClientId,
         )
+        writeNoStoreJson(res, 200, {})
+        return
+      }
+
+      if (req.method === 'POST' && pathname === '/api/v1/auth/oauth/refresh') {
+        const body = await readOAuthJsonBody(req, 4 * 1024)
+        const result = await authService.refreshAccessToken(
+          typeof body.refresh_token === 'string' ? body.refresh_token : '', oidcConfig.desktopClientId,
+        )
+        if (!result) throw new OAuthLoginError(400, 'invalid_grant')
+        writeNoStoreJson(res, 200, result)
         return
       }
 

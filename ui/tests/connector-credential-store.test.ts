@@ -94,11 +94,14 @@ describe('connector credential store', () => {
     expect(() => store.read()).toThrow('authentication failed');
   });
 
-  it('encrypts remote server API keys and passwords by server identity', () => {
+  it('encrypts remote server tokens and passwords by server identity', () => {
     const { storagePath, store } = createStore();
     const data = {
       enterpriseAccountCredentials: {
         abc123: {
+          refreshToken: {
+            value: 'private-server-refresh-token', field: 'refreshToken', serverUrl: 'https://moss.example.com',
+          },
           apiKey: {
             value: 'connector-secret',
             field: 'apiKey',
@@ -117,6 +120,7 @@ describe('connector credential store', () => {
     const serialized = fs.readFileSync(storagePath, 'utf8');
     expect(serialized).not.toContain('connector-secret');
     expect(serialized).not.toContain('remote-password');
+    expect(serialized).not.toContain('private-server-refresh-token');
     expect(store.read()).toEqual({
       connectorFields: {},
       mcpAccessTokens: {},

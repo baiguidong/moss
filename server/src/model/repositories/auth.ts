@@ -80,6 +80,19 @@ export type AuthCenterOAuthAuthorizationCode = {
   expiresAt: number
 }
 
+export type AuthCenterRefreshToken = {
+  tokenHash: string
+  sessionId: string
+  clientId: string
+  userId: string
+  orgId: string
+  passwordUpdatedAt: number | null
+  idleExpiresAt: number
+  absoluteExpiresAt: number
+  consumedAt: number | null
+  revoked: boolean
+}
+
 export type SanitizedAuthCenterUser = Omit<
   AuthCenterUser,
   'passwordHash' | 'email'
@@ -209,6 +222,42 @@ function mapOAuthAuthorizationCode(
 
 export class AuthRepository {
   constructor(readonly db: Database) {}
+
+  async createRefreshToken(token: AuthCenterRefreshToken): Promise<void> {
+    await this.db.prepare(`INSERT INTO oauth_refresh_tokens (
+      token_hash, session_id, client_id, user_id, org_id, password_updated_at,
+      idle_expires_at, absolute_expires_at, consumed_at, revoked
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      token.tokenHash, token.sessionId, token.clientId, token.userId, token.orgId,
+      token.passwordUpdatedAt, token.idleExpiresAt, token.absoluteExpiresAt,
+      token.consumedAt, token.revoked ? 1 : 0,
+    )
+  }
+
+  async getRefreshToken(tokenHash: string): Promise<AuthCenterRefreshToken | null> {
+    const row = await this.db.prepare('SELECT * FROM oauth_refresh_tokens WHERE token_hash = ?').get(tokenHash)
+    return row ? {
+      tokenHash: String(row.token_hash), sessionId: String(row.session_id),
+      clientId: String(row.client_id), userId: String(row.user_id), orgId: String(row.org_id),
+      passwordUpdatedAt: row.password_updated_at == null ? null : Number(row.password_updated_at),
+      idleExpiresAt: Number(row.idle_expires_at), absoluteExpiresAt: Number(row.absolute_expires_at),
+      consumedAt: row.consumed_at == null ? null : Number(row.consumed_at),
+      revoked: Number(row.revoked) !== 0,
+    } : null
+  }
+
+  async consumeRefreshToken(tokenHash: string, currentTime: number): Promise<void> {
+    await this.db.prepare('UPDATE oauth_refresh_tokens SET consumed_at = ? WHERE token_hash = ?').run(currentTime, tokenHash)
+  }
+
+  async revokeRefreshSession(sessionId: string): Promise<void> {
+    await this.db.prepare('UPDATE oauth_refresh_tokens SET revoked = 1 WHERE session_id = ?').run(sessionId)
+  }
+
+  async pruneRefreshTokens(currentTime: number): Promise<void> {
+    // Keep consumed tokens until the session ends so reuse revokes the family.
+    await this.db.prepare('DELETE FROM oauth_refresh_tokens WHERE absolute_expires_at <= ?').run(currentTime)
+  }
 
   async transaction<T>(operation: () => Promise<T>): Promise<T> {
     return await this.db.transaction(operation)
@@ -707,6 +756,7 @@ export class AuthRepository {
       `).run(deletedAt, createSyntheticUserEmail(id), deletedAt, id, orgId)
       if (!result.changes) return
       await this.db.prepare('DELETE FROM oauth_authorization_codes WHERE user_id = ? AND org_id = ?').run(id, orgId)
+      await this.db.prepare('DELETE FROM oauth_refresh_tokens WHERE user_id = ? AND org_id = ?').run(id, orgId)
       await this.db.prepare('DELETE FROM oauth_identities WHERE user_id = ?').run(id)
       await this.db.prepare('DELETE FROM user_roles WHERE user_id = ?').run(id)
       await this.db.prepare('UPDATE cron_tasks SET enabled = 0 WHERE user_id = ? AND org_id = ?').run(id, orgId)

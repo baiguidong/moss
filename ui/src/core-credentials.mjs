@@ -14,21 +14,22 @@ function enterpriseAccountCredentialKey(serverUrl) {
 
 export function getRemoteDirectCredentials(serverUrl) {
   const normalizedServerUrl = normalizeString(serverUrl);
-  if (!normalizedServerUrl) return { accessToken: '', userPassword: '' };
+  if (!normalizedServerUrl) return { accessToken: '', refreshToken: '', userPassword: '' };
   const credentials = coreCredentialStore.read();
   const records = credentials.enterpriseAccountCredentials?.[
     enterpriseAccountCredentialKey(normalizedServerUrl)
   ];
-  if (!isPlainObject(records)) return { accessToken: '', userPassword: '' };
+  if (!isPlainObject(records)) return { accessToken: '', refreshToken: '', userPassword: '' };
   return {
     accessToken: normalizeString(records.accessToken?.value),
+    refreshToken: normalizeString(records.refreshToken?.value),
     userPassword: typeof records.userPassword?.value === 'string'
       ? records.userPassword.value
       : '',
   };
 }
 
-export function saveRemoteDirectCredentials({ serverUrl, accessToken, userPassword }) {
+export function saveRemoteDirectCredentials({ serverUrl, accessToken, refreshToken, userPassword }) {
   const normalizedServerUrl = normalizeString(serverUrl);
   if (!normalizedServerUrl) return;
   const serverKey = enterpriseAccountCredentialKey(normalizedServerUrl);
@@ -38,6 +39,11 @@ export function saveRemoteDirectCredentials({ serverUrl, accessToken, userPasswo
       ? { ...current.enterpriseAccountCredentials }
       : {};
     const records = {};
+    if (normalizeString(refreshToken)) {
+      records.refreshToken = {
+        value: normalizeString(refreshToken), field: 'refreshToken', serverUrl: normalizedServerUrl, updatedAt,
+      };
+    }
     if (normalizeString(accessToken)) {
       records.accessToken = {
         value: normalizeString(accessToken),

@@ -35,10 +35,14 @@ export const serverFileConfigSchema = lazySchema(() =>
           .min(60)
           .default(60 * 60),
         authCenterUrl: z.string().min(1).optional(),
+        refreshTokenIdleTtlSec: z.number().int().min(60).default(30 * 86400),
+        sessionMaxTtlSec: z.number().int().min(60).default(90 * 86400),
       })
       .default({
         mode: 'local',
         tokenTtlSec: 60 * 60,
+        refreshTokenIdleTtlSec: 30 * 86400,
+        sessionMaxTtlSec: 90 * 86400,
       }),
     bootstrapAdmin: z
       .object({
@@ -183,6 +187,8 @@ export type ServerConfig = {
   publicUrl?: string
   authMode: 'local'
   tokenTtlSec: number
+  refreshTokenIdleTtlSec?: number
+  sessionMaxTtlSec?: number
   bootstrapAdmin: {
     username: string
     password?: string
