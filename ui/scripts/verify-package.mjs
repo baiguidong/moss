@@ -136,10 +136,10 @@ async function extractAndVerifyRuntimes(resourcesDir, platform, arch) {
     const nodeDir = path.join(temporary, 'node');
     await fsp.mkdir(nodeDir);
     if (platform === 'win32') {
-      run('powershell.exe', [
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
-        `Expand-Archive -LiteralPath ${JSON.stringify(path.join(runtimesDir, artifacts.node.filename))} -DestinationPath ${JSON.stringify(nodeDir)} -Force`,
-      ]);
+      // `Expand-Archive` can silently omit large executable entries on the
+      // hosted Windows runner.  The runner's bsdtar handles the Node zip
+      // archive consistently with the Unix verification path.
+      run('tar', ['-xf', path.join(runtimesDir, artifacts.node.filename), '-C', nodeDir]);
     } else {
       run('tar', ['-xzf', path.join(runtimesDir, artifacts.node.filename), '-C', nodeDir]);
     }
