@@ -22,12 +22,15 @@ JOIN \`${new_api_database}\`.users AS canonical_user
  AND canonical_user.username LIKE 'moss_%'
 SET duplicate_user.oidc_id = '';
 
--- Moss owns identity. The deterministic New API username is the join key.
+-- Moss owns identity. New accounts carry org_id:user_id in an admin-only
+-- remark; existing hash usernames remain valid without renaming any accounts.
 UPDATE \`${new_api_database}\`.users AS new_api_user
 JOIN \`${moss_database}\`.users AS moss_user
-  ON new_api_user.username = CONCAT(
+  ON new_api_user.remark = CONCAT('moss:', moss_user.org_id, ':', moss_user.id)
+  OR ((new_api_user.remark IS NULL OR new_api_user.remark NOT LIKE 'moss:%')
+  AND new_api_user.username = CONCAT(
     'moss_', LEFT(SHA2(CONCAT(moss_user.org_id, ':', moss_user.id), 256), 14)
-  )
+  ))
 SET new_api_user.oidc_id = CONCAT(moss_user.org_id, ':', moss_user.id)
 WHERE new_api_user.oidc_id <> CONCAT(moss_user.org_id, ':', moss_user.id)
    OR new_api_user.oidc_id IS NULL;
@@ -36,9 +39,11 @@ WHERE new_api_user.oidc_id <> CONCAT(moss_user.org_id, ':', moss_user.id)
 -- accounts while leaving the New API root administrator untouched.
 UPDATE \`${new_api_database}\`.users AS new_api_user
 JOIN \`${moss_database}\`.users AS moss_user
-  ON new_api_user.username = CONCAT(
+  ON new_api_user.remark = CONCAT('moss:', moss_user.org_id, ':', moss_user.id)
+  OR ((new_api_user.remark IS NULL OR new_api_user.remark NOT LIKE 'moss:%')
+  AND new_api_user.username = CONCAT(
     'moss_', LEFT(SHA2(CONCAT(moss_user.org_id, ':', moss_user.id), 256), 14)
-  )
+  ))
 SET new_api_user.status = CASE WHEN moss_user.status = 'active' THEN 1 ELSE 2 END;
 
 -- An OIDC account without a Moss identity is an orphan from an interrupted

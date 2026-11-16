@@ -17,9 +17,11 @@ OIDC 配置；新安装时管理员账号密码来自 `NEW_API_ADMIN_USERNAME` �
 `NEW_API_ADMIN_PASSWORD`。已有安装如果没有设置 New API 管理员密码，会保留已有配置。
 
 New API 仍使用开源镜像，Moss 不修改其源码。`QuotaForNewUser`、邀请赠送和 Moss
-账号初始化额度默认均为 0，用户余额只能通过 Moss 管理页的充值操作增加。持续运行的
-`new-api-user-sync` 服务按 `moss_<sha256(org_id:user_id)>` 对齐两边账号，并将 OIDC
-`sub` 写为同一个 `org_id:user_id`；没有对应 Moss 身份的 `oidc_*` 账号会被禁用并清零，
+账号初始化额度默认均为 0，用户余额只能通过 Moss 管理页的充值操作增加。
+新建 New API 账号使用 `moss_<Moss用户名>`（如 `moss_admin`、`moss_bgd`），名称过长或重名时追加身份哈希短后缀。
+内部凭证索引和 OIDC `sub` 仍为 `org_id:user_id`。持续运行的 `new-api-user-sync` 服务通过管理员备注中的
+`moss:org_id:user_id` 对齐两边账号；已有哈希用户名继续有效，不自动改名或迁移。
+没有对应 Moss 身份的 `oidc_*` 账号会被禁用并清零，
 避免 OIDC 重复注册或赠送额度。模型目录和默认模型由 New API 的渠道配置决定，Moss
 通过每个用户 Key 的 `/v1/models` 动态读取，不再在 Moss 环境文件中维护模型名单。
 如需在管理页读取 New API 中未受用户 Key 模型限制的完整目录，可配置一个 New API

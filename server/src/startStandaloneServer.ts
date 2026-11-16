@@ -46,7 +46,7 @@ export async function startStandaloneDirectConnectServer(
       config: getSystemSettings().openIM,
       authService,
     })
-    const newApiService = new NewAPIService(config.newApi, config.rootDir)
+    const newApiService = new NewAPIService(config.newApi, config.rootDir, models.auth)
     const server = await startServer(
       config,
       models,

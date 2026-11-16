@@ -5,6 +5,9 @@ import type { ServerConfig } from '../types.js'
 import { getSystemSettings } from '../systemSettings.js'
 
 type NewAPIUsage = Record<string, unknown>
+type MossUsers = {
+  getUserByIdAndOrg(userId: string, orgId: string): Promise<{ name: string } | null>
+}
 type NewAPIAccount = {
   userId: number
   username: string
@@ -30,7 +33,7 @@ export class NewAPIService {
   private readonly credentials: ServerCredentialStore
   private readonly accountLocks = new Map<string, Promise<NewAPIAccount>>()
 
-  constructor(private readonly config: ServerConfig['newApi'], rootDir: string) {
+  constructor(private readonly config: ServerConfig['newApi'], rootDir: string, private readonly users: MossUsers) {
     this.credentials = new ServerCredentialStore(rootDir)
   }
 
@@ -134,13 +137,27 @@ export class NewAPIService {
     }
   }
 
-  private usernameFor(key: string): string {
+  private async usernameFor(auth: AuthContext, key: string): Promise<string> {
+    const user = await this.users.getUserByIdAndOrg(auth.userId, auth.orgId)
+    if (!user) throw Object.assign(new Error('Moss user is unavailable'), { statusCode: 404 })
     // New API limits usernames and display names to 20 characters.
-    return `moss_${createHash('sha256').update(key).digest('hex').slice(0, 14)}`
+    const name = Array.from(user.name.normalize('NFKC').replace(/[^\p{L}\p{N}_.-]+/gu, '_').replace(/^_+|_+$/g, ''))
+    const digest = createHash('sha256').update(key).digest('hex')
+    const fallback = name.length
+      ? `moss_${name.slice(0, 6).join('')}_${digest.slice(0, 8)}`
+      : `moss_${digest.slice(0, 14)}`
+    if (!name.length || name.length > 15) return fallback
+    const username = `moss_${name.join('')}`
+    for (let page = 1; ; page++) {
+      const response = await this.request(`/api/user/search?keyword=${encodeURIComponent(username)}&p=${page}&page_size=100`, this.adminKey())
+      const items = Array.isArray(response?.data?.items) ? response.data.items : []
+      if (items.some((item: any) => String(item.username).toLowerCase() === username.toLowerCase())) return fallback
+      if (!items.length || page * Number(response?.data?.page_size || items.length) >= Number(response?.data?.total || 0)) return username
+    }
   }
 
   private async createAccount(auth: AuthContext, key: string): Promise<NewAPIAccount> {
-    const username = this.usernameFor(key)
+    const username = await this.usernameFor(auth, key)
     const password = randomBytes(32).toString('base64url')
     const adminKey = this.adminKey()
     const created = await this.request('/api/user/', adminKey, {
@@ -157,6 +174,13 @@ export class NewAPIService {
     if (!userKey) throw Object.assign(new Error('New API user login did not return an access token'), { statusCode: 502 })
     const userId = Number(login?.data?.user?.id || created?.data?.id || created?.user?.id)
     if (!Number.isSafeInteger(userId) || userId <= 0) throw Object.assign(new Error('New API user response did not include a numeric user id'), { statusCode: 502 })
+    // The create endpoint drops identity fields. Keep the stable Moss identity
+    // in the admin-only remark so the DB synchronizer can bind OIDC independently
+    // of the readable username. The internal credential key remains orgId:userId.
+    await this.request('/api/user/', adminKey, {
+      method: 'PUT',
+      body: JSON.stringify({ id: userId, username, display_name: username, group: 'default', remark: `moss:${key}` }),
+    })
     if (this.config.initialQuota > 0) await this.changeQuota(userId, this.config.initialQuota)
 
     await this.request('/api/token/', userKey, {
