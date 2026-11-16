@@ -74,6 +74,7 @@ apply_setting MOSS_NEW_API_BASE_URL http://new-api:3000
 apply_setting MOSS_NEW_API_API_KEY ''
 apply_setting MOSS_NEW_API_CATALOG_API_KEY ''
 apply_setting MOSS_NEW_API_INITIAL_QUOTA 0
+apply_setting MOSS_NEW_API_NODE_NAME moss-router
 apply_setting NEW_API_REDIS_PASSWORD "$(openssl rand -hex 32)"
 apply_setting MOSS_OIDC_NEW_API_CLIENT_ID new-api
 apply_setting MOSS_OIDC_NEW_API_CLIENT_SECRET "$(openssl rand -hex 32)"
@@ -122,6 +123,9 @@ server_home="$(read_value MOSS_SERVER_HOME)"
 integration_network="$(read_value MOSS_INTEGRATION_NETWORK)"
 [[ "$integration_network" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] \
   || die 'MOSS_INTEGRATION_NETWORK contains invalid characters'
+new_api_node_name="$(read_value MOSS_NEW_API_NODE_NAME)"
+[[ "$new_api_node_name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] \
+  || die 'MOSS_NEW_API_NODE_NAME contains invalid characters'
 https_port="$(read_value MOSS_HTTPS_PORT)"
 [[ "$https_port" =~ ^[0-9]+$ ]] && ((https_port >= 1 && https_port <= 65535)) \
   || die 'MOSS_HTTPS_PORT must be between 1 and 65535'

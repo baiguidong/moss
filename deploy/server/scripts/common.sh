@@ -27,7 +27,7 @@ compose() {
 
 show_failure_logs() {
   compose ps || true
-  compose logs --tail=160 mysql new-api new-api-database-init redis server web-gateway nginx || true
+  compose logs --tail=160 mysql new-api new-api-database-init new-api-oidc-init redis server web-gateway nginx || true
 }
 
 wait_for_server() {
@@ -51,4 +51,28 @@ wait_for_server() {
   done
   show_failure_logs
   die 'Moss Server did not become healthy within 2 minutes'
+}
+
+wait_for_new_api_oidc_init() {
+  local container state exit_code
+  log 'Waiting for New API OIDC configuration'
+  for _ in $(seq 1 60); do
+    container="$(compose ps -a -q new-api-oidc-init)"
+    if [[ -n "$container" ]]; then
+      state="$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || true)"
+      case "$state" in
+        exited|dead)
+          exit_code="$(docker inspect -f '{{.State.ExitCode}}' "$container" 2>/dev/null || true)"
+          if [[ "$exit_code" == 0 ]]; then
+            return 0
+          fi
+          show_failure_logs
+          die "New API OIDC initialization failed (exit code ${exit_code:-unknown})"
+          ;;
+      esac
+    fi
+    sleep 2
+  done
+  show_failure_logs
+  die 'New API OIDC initialization did not finish within 2 minutes'
 }

@@ -44,6 +44,8 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
     and .services["new-api-user-sync"].depends_on["new-api"].condition == "service_healthy"
     and .services["new-api"].environment.SQL_DSN == "root:moss_root_internal_password@tcp(mysql:3306)/new-api"
     and .services["new-api"].environment.REDIS_CONN_STRING == "redis://:change-this-redis-password@redis:6379"
+    and .services["new-api"].environment.NODE_NAME == "moss-router"
+    and .services["new-api-oidc-init"].environment.MOSS_OIDC_INTERNAL_URL == "http://server:43127"
     and .services.redis.command[0] == "redis-server"
     and .services.redis.command[1] == "--requirepass"
     and (.services.nginx.ports | map(.published) | sort) == ["443", "8444"]
@@ -55,6 +57,7 @@ grep -Fq 'ssl_certificate /etc/nginx/tls/server.crt;' "$ROOT/nginx.conf"
 grep -Fq 'proxy_pass http://web-gateway:43128;' "$ROOT/nginx.conf"
 grep -Fq 'MOSS_SERVER_HOME=/data/moss-server' "$ROOT/.env.example"
 grep -Fq 'MOSS_INTEGRATION_NETWORK=moss-integrations' "$ROOT/.env.example"
+grep -Fq 'MOSS_NEW_API_NODE_NAME=moss-router' "$ROOT/.env.example"
 grep -Fq 'apply_setting MOSS_SERVER_HOME /data/moss-server' "$ROOT/configure.sh"
 grep -Fxq "apply_setting MOSS_SERVER_IMAGE ''" "$ROOT/configure.sh"
 grep -Fq 'INSTALL_DIR="${INSTALL_DIR:-/data/moss-server}"' "$ROOT/install.sh"
@@ -86,6 +89,8 @@ jq -e \
 openssl x509 -in "$test_root/deployment/tls/server.crt" -noout -text \
   | grep -Fq 'IP Address:10.0.1.181'
 grep -Fxq 'MOSS_WEB_ORIGIN=https://10.0.1.181' "$test_root/deployment/.env"
+grep -Fxq 'MOSS_NEW_API_PUBLIC_BASE_URL=http://10.0.1.181:3000' "$test_root/deployment/.env"
+grep -Fxq 'MOSS_NEW_API_NODE_NAME=moss-router' "$test_root/deployment/.env"
 grep -Fq 'return 308 https://10.0.1.181$request_uri;' "$test_root/deployment/nginx.conf"
 MOSS_HTTPS_PORT=9443 "$test_root/deployment/configure.sh" >/dev/null
 grep -Fq 'return 308 https://10.0.1.181:9443$request_uri;' "$test_root/deployment/nginx.conf"

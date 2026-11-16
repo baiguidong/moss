@@ -50,6 +50,7 @@ if ! compose up -d mysql new-api server web-gateway new-api-oidc-init new-api-us
   show_failure_logs
   die 'failed to start Moss Server'
 fi
+wait_for_new_api_oidc_init
 # Nginx resolves Docker service names when it starts. Recreate it after a
 # server replacement so it cannot retain the previous container IP address.
 if ! compose up -d --force-recreate nginx; then

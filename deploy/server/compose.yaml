@@ -100,7 +100,7 @@ services:
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
       - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch updates)
-      - NODE_NAME=new-api-node-1  # 节点名称，用于审计日志中标识节点身份；多节点/容器部署时建议设置 (Node name used to identify the node in audit logs; recommended for multi-node/container deployments)
+      - NODE_NAME=${MOSS_NEW_API_NODE_NAME:-moss-router}  # 节点名称，用于审计日志中标识节点身份 (Node name used to identify the node in audit logs)
       # - DEFAULT_LANGUAGE=zh-CN  # 默认语言：日志输出，以及对方没有指定语言时返回的提示、邮件和通知；可选 en、zh-CN、zh-TW，不设置为 en (Default language for logs and when no language is specified: en, zh-CN, zh-TW; en if unset)
       # - STREAMING_TIMEOUT=300  # 流模式无响应超时时间，单位秒，默认120秒，如果出现空补全可以尝试改为更大值 (Streaming timeout in seconds, default 120s)
       # - RELAY_IDLE_CONN_TIMEOUT=90  # Relay HTTP client idle connection timeout in seconds, defaults to Go standard library; set 0 to disable
@@ -138,6 +138,7 @@ services:
     entrypoint: [/bin/bash, /opt/moss/deploy/server/scripts/new-api-oidc-init.sh]
     environment:
       NEW_API_INTERNAL_URL: http://new-api:3000
+      MOSS_OIDC_INTERNAL_URL: http://server:43127
       NEW_API_ADMIN_USERNAME: ${NEW_API_ADMIN_USERNAME:-admin}
       NEW_API_ADMIN_PASSWORD: ${NEW_API_ADMIN_PASSWORD:-}
       MOSS_PUBLIC_URL: ${MOSS_WEB_ORIGIN:-}

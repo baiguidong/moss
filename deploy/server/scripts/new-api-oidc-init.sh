@@ -7,6 +7,7 @@ admin_password="${NEW_API_ADMIN_PASSWORD:-}"
 client_id="${MOSS_OIDC_NEW_API_CLIENT_ID:-new-api}"
 client_secret="${MOSS_OIDC_NEW_API_CLIENT_SECRET:-}"
 issuer="${MOSS_OIDC_ISSUER:-${MOSS_PUBLIC_URL:-}}"
+oidc_internal="${MOSS_OIDC_INTERNAL_URL:-http://server:43127}"
 new_api_public="${MOSS_NEW_API_PUBLIC_BASE_URL:-http://localhost:3000}"
 
 if [[ -z "$admin_password" ]]; then
@@ -46,8 +47,10 @@ set_option oidc.client_id "$client_id"
 set_option oidc.client_secret "$client_secret"
 set_option oidc.well_known "${issuer%/}/.well-known/openid-configuration"
 set_option oidc.authorization_endpoint "${issuer%/}/oidc/authorize"
-set_option oidc.token_endpoint "${base%/}/oidc/token"
-set_option oidc.user_info_endpoint "${base%/}/oidc/userinfo"
+# New API performs the code exchange server-side. Use the private Moss address
+# for back-channel calls so a self-signed public certificate is not required.
+set_option oidc.token_endpoint "${oidc_internal%/}/oidc/token"
+set_option oidc.user_info_endpoint "${oidc_internal%/}/oidc/userinfo"
 # Moss is the user/credit authority. New API must not grant a sign-up bonus.
 set_option QuotaForNewUser 0
 set_option QuotaForInvitee 0
