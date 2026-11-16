@@ -59,12 +59,15 @@ try {
   browser = await chromium.launch({ headless: true });
   const contextA = await browser.newContext(), contextB = await browser.newContext();
   const a = await contextA.newPage(), b = await contextB.newPage();
-  await a.goto(origin); await a.locator('[name=username]').fill('alice'); await a.locator('[name=password]').fill('ci-fixture-only');
-  const concurrent = apiLogin('alice'); concurrent.catch(() => {}); // Await below; keep early errors inside the test cleanup.
-  await a.getByRole('button', { name: '登录', exact: true }).click(); await pageReady(a); await concurrent;
+  await a.goto(origin);
+  const aliceCookie = await apiLogin('alice');
+  await contextA.addCookies([{ name: 'moss_web', value: aliceCookie.split('=').slice(1).join('='), url: origin }]);
+  await a.reload(); await pageReady(a);
   let rows = await admin('list'); assert.equal(rows.length, 1); const alice = rows[0]; owned.push(alice.containerId);
-  await b.goto(origin); await b.locator('[name=username]').fill('bob'); await b.locator('[name=password]').fill('ci-fixture-only');
-  await b.getByRole('button', { name: '登录', exact: true }).click(); await pageReady(b);
+  await b.goto(origin);
+  const bobCookie = await apiLogin('bob');
+  await contextB.addCookies([{ name: 'moss_web', value: bobCookie.split('=').slice(1).join('='), url: origin }]);
+  await b.reload(); await pageReady(b);
   rows = await admin('list'); assert.equal(rows.length, 2); const bob = rows.find(r => r.userId === 'bob'); owned.push(bob.containerId);
   assert.notEqual(alice.containerId, bob.containerId); console.log('[cloud-ci] Concurrent login and two users ready');
   const ai = await inspect(alice.containerId), bi = await inspect(bob.containerId);
