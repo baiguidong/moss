@@ -47,6 +47,11 @@ set_option() {
 }
 
 set_option ServerAddress "$new_api_public"
+# Keep the New API UI and passkey display name aligned with the configured
+# gateway node.  NODE_NAME is used by New API for audit records only, so the
+# public system name must be persisted through the options API as well.
+set_option SystemName "$node_name"
+set_option passkey.rp_display_name "$node_name"
 set_option oidc.enabled true
 set_option oidc.display_name Moss
 set_option oidc.client_id "$client_id"

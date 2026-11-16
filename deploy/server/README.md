@@ -15,7 +15,8 @@ Desktop 使用带 PKCE 的 `moss-desktop` 客户端，云电脑 WebUI 使用
 密钥，Compose 中的一次性 `new-api-oidc-init` 服务会初始化 New API 管理员并写入
 OIDC 配置；新安装时管理员账号密码来自 `NEW_API_ADMIN_USERNAME` 和
 `NEW_API_ADMIN_PASSWORD`。已有安装如果没有设置 New API 管理员密码，会保留已有配置。
-New API 的节点名默认是 `moss-router`，可通过 `MOSS_NEW_API_NODE_NAME` 修改；服务器地址、
+New API 的节点名默认是 `moss-router`，可通过 `MOSS_NEW_API_NODE_NAME` 修改；该值会同步到
+New API 的系统名称和 Passkey 显示名称；服务器地址、
 OIDC Discovery、授权地址以及内部 token/userinfo 回调地址会在部署完成时自动写入。
 
 New API 仍使用开源镜像，Moss 不修改其源码。`QuotaForNewUser`、邀请赠送和 Moss
