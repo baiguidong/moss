@@ -61,4 +61,19 @@ set_option oidc.user_info_endpoint "${oidc_internal%/}/oidc/userinfo"
 set_option QuotaForNewUser 0
 set_option QuotaForInvitee 0
 set_option QuotaForInviter 0
-echo 'New API OIDC configuration is ready.'
+
+# New API can finish its first-run option migration just after /api/status
+# becomes healthy. Re-assert the switch and verify the persisted value so a
+# fresh deployment cannot silently fall back to its native-only login page.
+for _ in $(seq 1 10); do
+  enabled="$(curl -fsS "$base/api/option/" -H "Authorization: Bearer $token" \
+    | jq -r '.data[]? | select(.key == "oidc.enabled") | .value' | head -n 1)"
+  if [[ "$enabled" == true ]]; then
+    echo 'New API OIDC configuration is ready.'
+    exit 0
+  fi
+  set_option oidc.enabled true
+  sleep 1
+done
+echo 'New API OIDC option did not persist as enabled.' >&2
+exit 1
