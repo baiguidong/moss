@@ -77,7 +77,7 @@ tar -tzf "$stage_dir/$archive" | awk '
   { print "ERROR: unexpected path in deployment archive: " $0 > "/dev/stderr"; exit 1 }
 '
 tar -xzf "$stage_dir/$archive" -C "$stage_dir"
-for name in server runtime webui; do
+for name in server webui; do
   case "$name" in
     webui) key=MOSS_WEB_IMAGE ;;
     *) key="MOSS_$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')_IMAGE" ;;
