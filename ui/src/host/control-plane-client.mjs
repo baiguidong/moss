@@ -6,8 +6,20 @@ import { randomUUID, createHash } from 'node:crypto';
 export function createHostControlClient({ home, db, kind, environmentId, version, getConnection, fetchImpl = fetch,
   getStatus, execute, applyPolicy, applyAccess = () => {}, applyAutomation = async () => [], onAccountChange = () => {}, onError = () => {} }) {
   const filename = path.join(home, 'control-plane.json');
-  let state;
-  try { state = JSON.parse(fs.readFileSync(filename, 'utf8')); } catch { state = {}; }
+  let state, stateError;
+  try {
+    state = JSON.parse(fs.readFileSync(filename, 'utf8'));
+    if (!state || typeof state !== 'object' || Array.isArray(state)
+      || typeof state.deviceId !== 'string' || !state.deviceId
+      || (state.accounts !== undefined && (!state.accounts || typeof state.accounts !== 'object' || Array.isArray(state.accounts)))) {
+      throw new Error('Invalid control-plane state');
+    }
+  }
+  catch (error) {
+    // Unreadable or corrupt state must not silently register a new computer.
+    if (error.code !== 'ENOENT') stateError = new Error('无法读取电脑登记信息，请检查 control-plane.json。', { cause: error });
+    state = {};
+  }
   state.deviceId ||= randomUUID();
   state.accounts ||= {};
   db.exec('CREATE TABLE IF NOT EXISTS control_usage_owners (event_id TEXT PRIMARY KEY, account_key TEXT NOT NULL)');
@@ -21,8 +33,9 @@ export function createHostControlClient({ home, db, kind, environmentId, version
     fs.writeFileSync(filename + '.tmp', JSON.stringify(state), { mode: 0o600 });
     fs.renameSync(filename + '.tmp', filename);
   };
-  save();
+  if (!stateError) save();
   async function tick() {
+    if (stateError) throw stateError;
     const current = generation;
     let connection;
     try { connection = await getConnection(); }

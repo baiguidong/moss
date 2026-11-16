@@ -962,10 +962,7 @@ export default function UsersPage() {
 
   if (!canManageUsers) {
     return (
-      <DashboardLayout
-        title="用户与组织管理"
-        description="当前账号缺少用户管理权限。"
-      >
+      <DashboardLayout title="用户与组织管理">
         <div className="rounded-xl border border-dashed px-6 py-16 text-center text-sm text-muted-foreground">
           当前账号没有“管理用户与部门”权限，无法访问此页面。
         </div>
@@ -975,10 +972,7 @@ export default function UsersPage() {
 
   if (isLoading) {
     return (
-      <DashboardLayout
-        title="用户与组织管理"
-        description="管理部门、用户、角色及知识库凭据。"
-      >
+      <DashboardLayout title="用户与组织管理">
         <div className="flex min-h-[320px] items-center justify-center">
           <Loader2 className="size-8 animate-spin text-muted-foreground" />
         </div>
@@ -987,10 +981,7 @@ export default function UsersPage() {
   }
 
   return (
-    <DashboardLayout
-      title="用户与组织管理"
-      description="统一维护部门树、用户账号、角色分配与知识库凭据。"
-    >
+    <DashboardLayout title="用户与组织管理">
       <div className="space-y-6">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <SummaryCard

@@ -33,4 +33,7 @@ export async function installControlPlaneSchema(db: Database) {
     revision BIGINT NOT NULL, config_json TEXT NOT NULL, deleted INTEGER NOT NULL,
     applied_revision BIGINT NOT NULL, error TEXT, updated_at BIGINT NOT NULL
   )`)
+  await db.exec(`CREATE TABLE IF NOT EXISTS host_archives (
+    host_id VARCHAR(128) PRIMARY KEY, actor_id VARCHAR(128) NOT NULL, archived_at BIGINT NOT NULL
+  )`)
 }

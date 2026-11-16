@@ -46,8 +46,17 @@ export default function ComputersPage() {
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
     finally { setPending(false) }
   }
+  const removeOfflineRecord = async (host: Host) => {
+    setPending(true)
+    try {
+      await dcClient.delete(`/api/v1/hosts/${host.id}`)
+      if (selected === host.id) { setSelected(null); setCommands([]) }
+      await refresh()
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+    finally { setPending(false) }
+  }
   const activeHost = hosts.find(host => host.id === selected)
-  return <DashboardLayout title="工作电脑" description="管理 Desktop 和个人云电脑。任务在对应电脑执行，关闭界面不会停止云端任务。">
+  return <DashboardLayout title="工作电脑">
     <div className="mb-5 flex items-center justify-between gap-3"><p className="text-sm text-muted-foreground">{hosts.length} 台电脑 · {hosts.filter(host => host.online).length} 台在线</p>
       <div className="flex gap-2"><Button variant="outline" asChild><a href="/">进入我的云电脑</a></Button><Button variant="outline" onClick={() => void refresh()}><RefreshCw className="mr-2 size-4" />刷新</Button></div></div>
     {error && <p role="alert" className="mb-4 text-sm text-destructive">{error}</p>}
@@ -58,6 +67,7 @@ export default function ComputersPage() {
       <div className="flex flex-wrap gap-2"><Button size="sm" disabled={pending || host.access?.allowed === false} onClick={() => void submit(host, host.status.paused ? 'resume' : 'pause')}>{host.status.paused ? '恢复接收任务' : '暂停接收任务'}</Button><Button size="sm" variant="outline" onClick={() => setSelected(host.id)}>任务与控制</Button>
         <Button size="sm" variant="outline" disabled={pending || host.access?.allowed === false} onClick={() => void configure(host, 'mailbox', { assigned: !host.mailbox })}>{host.mailbox ? '停止接收邮箱' : '指定为邮箱电脑'}</Button>
         {hasScope(scopes, 'admin:users') && <Button size="sm" variant="outline" disabled={pending} onClick={() => void configure(host, 'access', { revoked: host.access?.allowed !== false })}>{host.access?.allowed === false ? '恢复电脑授权' : '撤销电脑授权'}</Button>}
+        {!host.online && <Button size="sm" variant="outline" disabled={pending} onClick={() => void removeOfflineRecord(host)}>移除离线记录</Button>}
       </div>{host.mailbox && <p className="mt-3 text-xs text-muted-foreground">此用户的协作邮箱由这台电脑接收；请在电脑设置中启用协作邮箱。</p>}
     </article>)}</div>
     {!hosts.length && <p className="rounded-xl border p-8 text-sm text-muted-foreground">尚未登记工作电脑。用户登录云电脑，或在 Desktop 启用企业账号连接后，电脑会自动登记。</p>}

@@ -89,12 +89,19 @@ export async function handleControlPlaneRoute({ req, res, url, auth, authService
     writeJson(res, 200, { ...response, modelConfig, ...(enrolling ? { token: await hosts.enroll(id) } : {}) })
     return true
   }
-  const match = url.pathname.match(/^\/api\/v1\/hosts\/([^/]+)\/(commands|usage|access|mailbox|schedules)(?:\/([^/]+))?$/)
+  const match = url.pathname.match(/^\/api\/v1\/hosts\/([^/]+)(?:\/(commands|usage|access|mailbox|schedules)(?:\/([^/]+))?)?$/)
   if (!match) return fail(404, 'Not found')
   const hostId = identifier(decodeURIComponent(match[1]!))
   const host = await hosts.get(hostId, auth.orgId)
   if (!host || (host.user_id !== auth.userId && !hasScope(auth.scopes, 'admin:users'))) fail(404, 'Host not found')
   if (auth.role !== 'host' && host?.user_id !== auth.userId && !(await authService.getUserOrNull(String(host?.user_id), auth.orgId, auth))) fail(404, 'Host not found')
+  if (!match[2]) {
+    if (req.method !== 'DELETE') fail(405, 'Method not allowed')
+    await authService.requireCurrentScope(auth, host!.user_id === auth.userId ? 'sessions:create' : 'admin:users')
+    await hosts.archive(hostId, auth.orgId, auth.userId)
+    writeJson(res, 200, { ok: true })
+    return true
+  }
   if (match[2] === 'access' && !match[3]) {
     if (req.method === 'GET') writeJson(res, 200, await hosts.access(hostId, auth.orgId))
     else if (req.method === 'PUT') {

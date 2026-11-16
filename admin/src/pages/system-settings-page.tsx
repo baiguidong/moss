@@ -10,7 +10,6 @@ import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
@@ -42,13 +41,11 @@ type EditableSystemSettings = Pick<
 type SettingsSectionProps = {
   icon: ComponentType<{ className?: string }>
   title: string
-  description?: string
   children?: ReactNode
 }
 
 type SettingsFieldProps = {
   label: string
-  description?: string
   children: ReactNode
 }
 
@@ -117,7 +114,6 @@ function generateSecret(): string {
 function SettingSection({
   icon: Icon,
   title,
-  description,
   children,
 }: SettingsSectionProps) {
   return (
@@ -127,7 +123,6 @@ function SettingSection({
           <Icon className="size-4 text-muted-foreground" />
           <span>{title}</span>
         </CardTitle>
-        {description ? <CardDescription>{description}</CardDescription> : null}
       </CardHeader>
       {children ? <CardContent className="space-y-5 pt-6">{children}</CardContent> : null}
     </Card>
@@ -136,16 +131,12 @@ function SettingSection({
 
 function SettingField({
   label,
-  description,
   children,
 }: SettingsFieldProps) {
   return (
     <div className="grid gap-3 md:grid-cols-[minmax(0,240px)_minmax(0,1fr)] md:items-start md:gap-6">
       <div className="space-y-1">
         <Label className="text-sm font-medium">{label}</Label>
-        {description ? (
-          <p className="text-sm text-muted-foreground">{description}</p>
-        ) : null}
       </div>
       <div className="space-y-2">{children}</div>
     </div>
@@ -159,14 +150,12 @@ function SettingsSkeleton() {
         <Card key={index}>
           <CardHeader className="border-b">
             <Skeleton className="h-5 w-32" />
-            <Skeleton className="h-4 w-72" />
           </CardHeader>
           <CardContent className="space-y-4 pt-6">
             {[...Array(3)].map((__, fieldIndex) => (
               <div key={fieldIndex} className="grid gap-3 md:grid-cols-[240px_1fr] md:gap-6">
                 <div className="space-y-2">
                   <Skeleton className="h-4 w-24" />
-                  <Skeleton className="h-4 w-40" />
                 </div>
                 <Skeleton className="h-10 w-full" />
               </div>
@@ -318,7 +307,7 @@ export default function SystemSettingsPage() {
 
   if (!canManageSettings) {
     return (
-      <DashboardLayout title="系统设置" description="管理服务端集成和会话运行时。">
+      <DashboardLayout title="系统设置">
         <div className="rounded-xl border border-dashed px-6 py-16 text-center text-sm text-muted-foreground">
           当前账号没有“管理系统设置”权限，无法访问此页面。
         </div>
@@ -328,10 +317,7 @@ export default function SystemSettingsPage() {
 
   if (isLoading && !draft) {
     return (
-      <DashboardLayout
-        title="系统设置"
-        description="管理服务端集成和会话运行时。"
-      >
+      <DashboardLayout title="系统设置">
         <SettingsSkeleton />
       </DashboardLayout>
     )
@@ -339,10 +325,7 @@ export default function SystemSettingsPage() {
 
   if (!draft || !settings) {
     return (
-      <DashboardLayout
-        title="系统设置"
-        description="管理服务端集成和会话运行时。"
-      >
+      <DashboardLayout title="系统设置">
         <Alert variant="destructive" className="max-w-3xl">
           <TriangleAlert className="size-4" />
           <AlertTitle>读取系统设置失败</AlertTitle>
@@ -355,10 +338,7 @@ export default function SystemSettingsPage() {
   }
 
   return (
-    <DashboardLayout
-      title="系统设置"
-      description="管理服务端集成和会话运行时。"
-    >
+    <DashboardLayout title="系统设置">
       <div className="space-y-6">
         {saveError ? (
           <Alert variant="destructive">
@@ -373,9 +353,8 @@ export default function SystemSettingsPage() {
         <SettingSection
           icon={Server}
           title="模型"
-          description="模型目录来自当前 New API。URL 和 API Key 由服务端管理，客户端只接收可用模型配置。"
         >
-          <SettingField label="模型列表" description="从当前 API 获取可用模型，下面的模型选项会同步更新。">
+          <SettingField label="模型列表">
             <div className="flex flex-wrap items-center gap-3">
               <Button type="button" variant="outline" onClick={() => void fetchModelCatalog()} disabled={modelCatalogState === 'loading'}>
                 {modelCatalogState === 'loading' ? '获取中…' : '获取模型列表'}
@@ -384,7 +363,7 @@ export default function SystemSettingsPage() {
             </div>
           </SettingField>
 
-          <SettingField label="允许切换的模型" description="从上面获取到的模型列表中勾选允许在会话里切换的模型；不勾选时允许全部模型。">
+          <SettingField label="允许切换的模型">
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {modelCatalog.map(model => {
                 const checked = draft.availableModels.length === 0 || draft.availableModels.includes(model)
@@ -406,11 +385,10 @@ export default function SystemSettingsPage() {
                   </label>
                 )
               })}
-              {!modelCatalog.length ? <p className="text-sm text-muted-foreground">请先获取模型列表。</p> : null}
             </div>
           </SettingField>
 
-          <SettingField label="默认模型" description="当前默认模型：用于新会话和未指定模型的请求。">
+          <SettingField label="默认模型">
             <Input
               value={draft.model}
               onChange={event => setDraft(current => current ? { ...current, model: event.target.value } : current)}
@@ -418,7 +396,7 @@ export default function SystemSettingsPage() {
             />
           </SettingField>
 
-          <SettingField label="快速模型" description="用于检索、网页提取、摘要等轻量任务；留空时使用主模型。">
+          <SettingField label="快速模型">
             <Input
               value={draft.fastModel}
               onChange={event => setDraft(current => current ? { ...current, fastModel: event.target.value } : current)}
@@ -438,7 +416,6 @@ export default function SystemSettingsPage() {
         <SettingSection
           icon={MessageSquare}
           title="OpenIM"
-          description="配置即时消息服务连接和服务端权限管理。"
         >
           <SettingField label="启用 OpenIM">
             <div className="flex h-10 items-center">
@@ -455,7 +432,7 @@ export default function SystemSettingsPage() {
             </div>
           </SettingField>
 
-          <SettingField label="实例 ID" description="同一套 OpenIM 服务使用固定实例标识。">
+          <SettingField label="实例 ID">
             <Input
               value={draft.openIM.instanceId}
               onChange={(event) => setDraft(current => current ? {
@@ -529,7 +506,7 @@ export default function SystemSettingsPage() {
             </div>
           </SettingField>
 
-          <SettingField label="Webhook 密钥" description="必须与 OpenIM 回调 URL 中的密钥一致。">
+          <SettingField label="Webhook 密钥">
             <div className="flex flex-col gap-2 sm:flex-row">
               <Input
                 type="password"
@@ -559,7 +536,7 @@ export default function SystemSettingsPage() {
             </div>
           </SettingField>
 
-          <SettingField label="请求超时" description="单位：毫秒。">
+          <SettingField label="请求超时（毫秒）">
             <Input
               type="number"
               min={1000}
@@ -577,11 +554,11 @@ export default function SystemSettingsPage() {
           </SettingField>
         </SettingSection>
 
-        <SettingSection icon={Server} title="WebUI 环境快照" description="每台云电脑的总额度，包含手动和恢复前保护快照。配置不可用时使用内置默认额度；下调额度不会自动删除已有快照。">
+        <SettingSection icon={Server} title="WebUI 环境快照">
           <SettingField label="快照数量上限">
             <Input type="number" min={1} step={1} value={draft.webui.snapshots.maxSnapshotsPerEnvironment} onChange={event => setDraft(current => current ? { ...current, webui: { snapshots: { ...current.webui.snapshots, maxSnapshotsPerEnvironment: Number(event.target.value) } } } : current)} />
           </SettingField>
-          <SettingField label="空间上限（GiB）" description="默认 20 GiB。创建时是否包含数据卷由用户单独选择，默认不包含。">
+          <SettingField label="空间上限（GiB）">
             <Input type="number" min={1} step={1} value={draft.webui.snapshots.maxBytesPerEnvironment / 1024 ** 3} onChange={event => setDraft(current => current ? { ...current, webui: { snapshots: { ...current.webui.snapshots, maxBytesPerEnvironment: Number(event.target.value) * 1024 ** 3 } } } : current)} />
           </SettingField>
         </SettingSection>

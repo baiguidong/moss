@@ -31,10 +31,24 @@ export class HostRepository {
       .get(createHash('sha256').update(token).digest('hex'))
   }
   async list(orgId: string, userId?: string) {
-    const rows = await this.db.prepare(`SELECT * FROM hosts WHERE org_id=?${userId ? ' AND user_id=?' : ''} ORDER BY last_seen DESC`)
+    const rows = await this.db.prepare(`SELECT * FROM hosts WHERE org_id=?${userId ? ' AND user_id=?' : ''}
+      AND NOT EXISTS (SELECT 1 FROM host_archives a WHERE a.host_id=hosts.id) ORDER BY last_seen DESC`)
       .all(...(userId ? [orgId, userId] : [orgId]))
     return Promise.all(rows.map(async row => ({ ...decode(row), access: await this.access(String(row.id), orgId),
       mailbox: await this.mailbox(orgId, String(row.user_id)) === row.id })))
+  }
+  async archive(id: string, orgId: string, actorId: string) {
+    return this.db.transaction(async () => {
+      const host = await this.get(id, orgId)
+      if (!host) throw Object.assign(new Error('Host not found'), { statusCode: 404 })
+      if (Number(host.last_seen) > Date.now() - 90_000) {
+        throw Object.assign(new Error('电脑仍在线，请离线后再移除记录。'), { statusCode: 409 })
+      }
+      // Keep credentials, revocations, mailbox assignments and task history.
+      // A returning host restores its record through its next heartbeat.
+      await this.db.prepare('DELETE FROM host_archives WHERE host_id=?').run(id)
+      await this.db.prepare('INSERT INTO host_archives(host_id,actor_id,archived_at) VALUES(?,?,?)').run(id, actorId, Date.now())
+    })
   }
   async heartbeat(owner: { orgId: string; userId: string }, input: Record<string, any>) {
     return this.db.transaction(async () => {
@@ -42,6 +56,7 @@ export class HostRepository {
       if (current && (current.org_id !== owner.orgId || current.user_id !== owner.userId || current.kind !== input.kind)) {
         throw Object.assign(new Error('电脑归属不匹配'), { statusCode: 403 })
       }
+      await this.db.prepare('DELETE FROM host_archives WHERE host_id=?').run(input.id)
       const access = await this.access(input.id, owner.orgId)
       if (!access.allowed) {
         await this.db.prepare('UPDATE hosts SET last_seen=? WHERE id=?').run(Date.now(), input.id)

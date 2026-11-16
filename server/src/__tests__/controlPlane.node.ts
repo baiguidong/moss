@@ -52,6 +52,36 @@ try {
   assert.equal((await call('/api/v1/hosts/enroll', admin.access_token, heartbeat)).status, 403)
   assert.equal((await call('/api/v1/hosts', alice.access_token)).body.hosts.length, 1)
   assert.equal((await call('/api/v1/hosts?all=true', alice.access_token)).status, 403)
+  // Identical display names do not prove that two registrations are one device.
+  const historical = { ...heartbeat, id: 'desktop-alice-old' }
+  const oldEnrollment = await call('/api/v1/hosts/enroll', alice.access_token, historical)
+  await call('/api/v1/hosts/desktop-alice-old/schedules/old-daily', alice.access_token,
+    { config: { name: 'Daily', cron: '0 9 * * *', prompt: 'Summarize', enabled: false }, revision: 0 }, 'PUT')
+  await call('/api/v1/hosts/desktop-alice-old/mailbox', alice.access_token, { assigned: true }, 'PUT')
+  assert.equal((await call('/api/v1/hosts', alice.access_token)).body.hosts.length, 2)
+  assert.equal((await call('/api/v1/hosts/desktop-alice-old', alice.access_token, undefined, 'DELETE')).status, 409)
+  const makeOffline = async () => {
+    await models.db.prepare('UPDATE hosts SET last_seen=? WHERE id=?').run(Date.now() - 100_000, historical.id)
+  }
+  await makeOffline()
+  assert.equal((await call('/api/v1/hosts/desktop-alice-old', admin.access_token, undefined, 'DELETE')).status, 200)
+  assert.equal((await call('/api/v1/hosts', alice.access_token)).body.hosts.length, 1)
+  assert.equal((await call('/api/v1/hosts?all=true')).body.hosts.length, 1)
+  const restored = await call('/api/v1/hosts/heartbeat', oldEnrollment.body.token, historical)
+  assert.equal(restored.status, 200)
+  assert.equal(restored.body.mailbox, true)
+  assert.equal(restored.body.schedules[0].id, 'old-daily')
+  assert.equal((await call('/api/v1/hosts', alice.access_token)).body.hosts.length, 2)
+  await call('/api/v1/hosts/desktop-alice-old/access', admin.access_token, { revoked: true }, 'PUT')
+  await makeOffline()
+  assert.equal((await call('/api/v1/hosts/desktop-alice-old', alice.access_token, undefined, 'DELETE')).status, 200)
+  assert.equal((await call('/api/v1/hosts/enroll', alice.access_token, historical)).status, 403)
+  assert.equal((await call('/api/v1/hosts/heartbeat', oldEnrollment.body.token, historical)).body.access.allowed, false)
+  await makeOffline()
+  await call('/api/v1/hosts/desktop-alice-old', alice.access_token, undefined, 'DELETE')
+  const adminHost = { ...heartbeat, id: 'desktop-admin' }
+  await call('/api/v1/hosts/enroll', admin.access_token, adminHost)
+  assert.equal((await call('/api/v1/hosts/desktop-admin', alice.access_token, undefined, 'DELETE')).status, 404)
   const command = { id: 'command-one', action: 'pause' }
   assert.equal((await call('/api/v1/hosts/desktop-alice/commands', admin.access_token, command)).status, 202)
   assert.equal((await call('/api/v1/hosts/desktop-alice/commands', admin.access_token, command)).status, 202)

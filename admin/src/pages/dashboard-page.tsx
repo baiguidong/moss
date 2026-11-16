@@ -115,7 +115,7 @@ export default function DashboardPage() {
   ].filter(Boolean) as Array<{ to: string; label: string; description: string; icon: typeof Users }>
 
   return (
-    <DashboardLayout title="工作台" description="从这里快速了解组织运行状态，并进入常用管理功能。">
+    <DashboardLayout title="工作台">
       <div className="space-y-6">
         <section className="rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/10 via-card/90 to-card/90 p-6 shadow-sm md:p-7">
           <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
