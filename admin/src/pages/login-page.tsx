@@ -43,14 +43,14 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#f6f8f3] px-5 py-6 text-[#263c30] md:px-10">
-      <div className="flex min-h-[calc(100vh-48px)] w-full max-w-[1160px] flex-col">
+    <div className="flex h-svh items-center justify-center overflow-y-auto bg-[#f6f8f3] px-5 py-6 text-[#263c30] md:px-10">
+      <div className="flex h-full min-h-0 w-full max-w-[1160px] flex-col">
         <header className="flex items-center gap-2.5 py-2 text-[21px] font-semibold tracking-[0.12em]">
           <img src={`${import.meta.env.BASE_URL}moss-m-icon.png`} alt="Moss" className="size-[30px] rounded-lg" />
           <span>moss</span>
           <span className="ml-2 border-l border-[#dde5dc] pl-4 text-xs font-normal tracking-[0.08em] text-[#687b6d]">控制平面</span>
         </header>
-        <div className="grid flex-1 items-center gap-16 py-6 lg:grid-cols-[1fr_410px]">
+        <div className="grid min-h-0 flex-1 items-center gap-16 py-6 lg:grid-cols-[1fr_410px]">
           <div className="hidden pb-6 lg:block">
             <p className="flex items-center gap-2 text-xs font-medium tracking-[0.12em] text-[#347650]"><span className="size-1.5 rounded-full bg-[#347650]" />安全、清晰、可控</p>
             <h1 className="mt-6 text-5xl font-semibold leading-[1.35] tracking-[-0.04em]">管理你的<br /><span className="text-[#347650]">企业工作空间</span></h1>
