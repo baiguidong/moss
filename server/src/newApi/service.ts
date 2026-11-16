@@ -88,6 +88,18 @@ export class NewAPIService {
     return this.adminSessionPromise
   }
 
+  private async adminRequest(path: string, init: RequestInit = {}): Promise<any> {
+    try {
+      return await this.request(path, await this.adminKey(), init)
+    } catch (error) {
+      // A New API login from its web console can revoke the previous admin
+      // session. Re-authenticate once so Moss management actions keep working.
+      if ((error as { statusCode?: number })?.statusCode !== 401 || !this.config.adminUsername || !this.config.adminPassword) throw error
+      this.adminSession = null
+      return await this.request(path, await this.adminKey(), init)
+    }
+  }
+
   private modelPolicy(catalog: string[]): { model: string; fastModel: string; allowed: string[] } {
     const settings = getSystemSettings()
     const visible = settings.availableModels.length
@@ -171,7 +183,7 @@ export class NewAPIService {
     if (!name.length || name.length > 15) return fallback
     const username = `moss_${name.join('')}`
     for (let page = 1; ; page++) {
-      const response = await this.request(`/api/user/search?keyword=${encodeURIComponent(username)}&p=${page}&page_size=100`, await this.adminKey())
+      const response = await this.adminRequest(`/api/user/search?keyword=${encodeURIComponent(username)}&p=${page}&page_size=100`)
       const items = Array.isArray(response?.data?.items) ? response.data.items : []
       if (items.some((item: any) => String(item.username).toLowerCase() === username.toLowerCase())) return fallback
       if (!items.length || page * Number(response?.data?.page_size || items.length) >= Number(response?.data?.total || 0)) return username
@@ -181,8 +193,7 @@ export class NewAPIService {
   private async createAccount(auth: AuthContext, key: string): Promise<NewAPIAccount> {
     const username = await this.usernameFor(auth, key)
     const password = randomBytes(32).toString('base64url')
-    const adminKey = await this.adminKey()
-    const created = await this.request('/api/user/', adminKey, {
+    const created = await this.adminRequest('/api/user/', {
       method: 'POST',
       body: JSON.stringify({ username, password, display_name: username, role: 1 }),
     })
@@ -199,7 +210,7 @@ export class NewAPIService {
     // The create endpoint drops identity fields. Keep the stable Moss identity
     // in the admin-only remark so the DB synchronizer can bind OIDC independently
     // of the readable username. The internal credential key remains orgId:userId.
-    await this.request('/api/user/', adminKey, {
+    await this.adminRequest('/api/user/', {
       method: 'PUT',
       body: JSON.stringify({ id: userId, username, display_name: username, group: 'default', remark: `moss:${key}` }),
     })
@@ -231,7 +242,7 @@ export class NewAPIService {
   }
 
   private async changeQuota(userId: number, quota: number): Promise<void> {
-    await this.request('/api/user/manage', await this.adminKey(), {
+    await this.adminRequest('/api/user/manage', {
       method: 'POST',
       body: JSON.stringify({ id: userId, action: 'add_quota', mode: 'add', value: quota }),
     })
@@ -279,7 +290,7 @@ export class NewAPIService {
     const cached = await this.credentials.get('new-api-user', `${orgId}:${userId}`)
     const newApiUserId = Number(cached.userId)
     if (!Number.isSafeInteger(newApiUserId) || newApiUserId <= 0) return
-    await this.request('/api/user/manage', await this.adminKey(), {
+    await this.adminRequest('/api/user/manage', {
       method: 'POST',
       body: JSON.stringify({
         id: newApiUserId,
