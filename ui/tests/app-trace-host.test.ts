@@ -150,7 +150,7 @@ test('revoking capture discards queued snapshots and does not replay them after 
   await expect(fs.stat(path.join(f.directory, 'sessions/pending.json'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
-test('imports old raw records once, leaves originals intact, and never imports the old switch', async () => {
+test('keeps legacy raw records isolated from the App trace store', async () => {
   const f = await fixture()
   await fs.mkdir(path.join(f.home, 'traces'))
   await fs.writeFile(path.join(f.home, 'traces/legacy.jsonl'), '{"legacy":true}\n')
@@ -159,8 +159,8 @@ test('imports old raw records once, leaves originals intact, and never imports t
   expect(f.capture()).not.toBeNull()
   await expect(fs.stat(path.join(f.directory, 'traces/legacy.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' })
   await f.host.status({ appId: 'moss.trace', instanceId: f.id })
-  expect(await fs.readFile(path.join(f.directory, 'traces/legacy.jsonl'), 'utf8')).toContain('legacy')
   expect(await fs.readFile(path.join(f.home, 'traces/legacy.jsonl'), 'utf8')).toContain('legacy')
+  await expect(fs.stat(path.join(f.directory, 'traces/legacy.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
 test('Trace protocol exposes status only and denies undeclared capture grants and output paths', async () => {

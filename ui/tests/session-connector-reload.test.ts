@@ -16,6 +16,7 @@ function fixture() {
   const controller = new AbortController();
   const context: any = {
     normalizeStringList, connectorIdFromApp, refreshProjectSessionInstructions,
+    isAppScopedSession: (value: any) => Boolean(value?.channelAppId && value?.channelRuntimePolicy?.contextScope === 'app'),
     getRuntimeSessionConnectorIds: (value: any) => value.connectorIds,
     listAllStoredApps: () => [{ id: 'moss.baidu-netdisk', connectorApp: { id: 'baidu-netdisk' } }],
     appRuntime: { getInstallation: () => ({ enabled: true }) },

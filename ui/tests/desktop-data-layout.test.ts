@@ -38,7 +38,7 @@ describe('desktop data layout', () => {
     expect(isDesktopProjectRecord({ ...record, layoutVersion: 2 })).toBe(false);
     expect(isDesktopProjectRecord({ id: 'legacy-project', name: 'Legacy' })).toBe(false);
     expect(DESKTOP_SESSION_KIND).toBe('moss-session');
-    expect(DESKTOP_SESSION_LAYOUT_VERSION).toBe(2);
+    expect(DESKTOP_SESSION_LAYOUT_VERSION).toBe(3);
   });
 
   it('rejects path traversal in ids', () => {

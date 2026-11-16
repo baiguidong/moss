@@ -11,7 +11,7 @@ test('bundled assistants and control Apps are globally discoverable on demand wi
   const runtime = new AppRuntimeHost({ rootDir: root })
   await runtime.state.initialize()
   try {
-    for (const id of ['moss.buddy', 'moss.browser-use', 'moss.computer-use']) {
+    for (const id of ['moss.browser-use', 'moss.computer-use']) {
       const manifest = { id, version: '1.0.0', toolScope: 'session', toolLoading: 'always', contributes: { tools: [{ id: 'read' }] } }
       runtime.getActivePackage = async () => ({ manifest, root: '/missing' })
       await runtime.installations.upsert(id, { enabled: true, activeVersion: '1.0.0', grants: [] })

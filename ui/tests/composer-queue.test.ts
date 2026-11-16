@@ -93,11 +93,15 @@ function dispatchHarness(items: QueuedMessage[], host: any, dispatch?: any) {
   const state = {
     React: { useRef: (current: any) => ({ current }), useEffect: (fn: any) => fn(), useCallback: (fn: any) => fn },
     reconcileQueuedMessages, stopQueuedMessages, activeSessionIdRef: { current: 'another-session' },
+    activeSessionId: 'another-session', newSessionModel: null,
     selectedAssistant: null, resourceContext: (resource: any) => resource,
     resourceUses: [] as any[], recordHomeResourceUse: (...args: any[]) => { state.resourceUses.push(args); },
     setPendingSendRequests: (_update: any) => {}, receive: (_event: any) => {},
     queuedMessagesRef: { current: { session: items } }, queueEpochs: { current: new Map() },
     removedSessionIdsRef: { current: new Set() }, cleanIpcErrorMessage: (error: Error) => error.message,
+    getErrorMessage: (error: Error) => error.message,
+    pushAppNotification: () => {},
+    showPermissionNotice: () => {},
     dispatchToSession: dispatch, window: { agentDesktop: { ...host, onEvent: (fn: any) => { state.receive = fn; } } }, flush: (_id: string) => {},
     updateQueue: (id: string, update: any) => { (state.queuedMessagesRef.current as any)[id] = update((state.queuedMessagesRef.current as any)[id] ?? []); },
   };
@@ -220,6 +224,7 @@ function submitHarness() {
     setPreparingNewSession: () => {}, setDraftAppIds: () => {}, setDraftAppServiceIds: () => {},
     input: 'original', appSelection: null, appDraftWorkspace: undefined, draftProject: null, homeComposerMode: 'chat', planDecisionBusy: false,
     activeSessionId: 'session', activeDetail: { workspace: '/work', agentMode: 'local', busy: false },
+    newSessionModel: null,
     activeSessionIdRef: { current: 'session' }, activeDetailRef: { current: { workspace: '/work' } },
     inputDraftRef: { current: '' }, composerAttachmentsRef: { current: [] },
     composerChoicesRef: { current: { skills: [], agent: null } }, appSelectionDraftRef: { current: null },

@@ -20,6 +20,10 @@ test('context IPC uses live runtime settings, resolves unopened sessions, and sk
     ipcMain: { handle: (_channel: string, fn: typeof handle) => { handle = fn; } },
     getSessionRecord: (id: string) => sessions[id],
     getRuntimeModelSettings: () => settings,
+    resolveSessionModel: (sessionRecord: any, modelSettings: typeof settings) =>
+      typeof sessionRecord?.modelOverride === 'string' && sessionRecord.modelOverride.trim()
+        ? sessionRecord.modelOverride.trim()
+        : String(modelSettings.model || '').trim(),
     getDeclaredModelContextWindows: () => ({ 'gpt-5.5': 1_000_000 }),
     getClaudeRuntimeModule: async () => {
       loads++;
