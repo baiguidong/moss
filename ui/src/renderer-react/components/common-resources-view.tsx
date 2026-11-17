@@ -8,6 +8,7 @@ import {
   Hammer,
   Loader2,
   PackageOpen,
+  Plug,
   RefreshCw,
   UsersRound,
 } from "lucide-react";
@@ -21,6 +22,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { installedResourceSource, type InstalledSkill, type InstalledExpert, type InstalledResource } from "@/lib/installed-resources";
+import { getAppKind } from "@/lib/app-discovery";
 import type { StoredApp } from "../types";
 
 type CommonResourcesViewProps = {
@@ -28,6 +30,7 @@ type CommonResourcesViewProps = {
   onOpenSkills?: () => void;
   onOpenExperts?: () => void;
   onOpenApps?: () => void;
+  onOpenConnectors?: () => void;
   onOpenApp?: (name: string) => void;
 };
 
@@ -151,7 +154,7 @@ function EmptyResourceGroup({ label }: { label: string }) {
   );
 }
 
-export function CommonResourcesView({ apps, onOpenSkills, onOpenExperts, onOpenApps, onOpenApp }: CommonResourcesViewProps) {
+export function CommonResourcesView({ apps, onOpenSkills, onOpenExperts, onOpenConnectors, onOpenApps, onOpenApp }: CommonResourcesViewProps) {
   const [installedSkills, setInstalledSkills] = React.useState<InstalledSkill[]>([]);
   const [installedExperts, setInstalledExperts] = React.useState<InstalledExpert[]>([]);
   const [query, setQuery] = React.useState("");
@@ -215,7 +218,7 @@ export function CommonResourcesView({ apps, onOpenSkills, onOpenExperts, onOpenA
     expert.agentName,
     expert.tags,
   ).includes(normalizedQuery)), [installedExperts, normalizedQuery]);
-  const visibleApps = React.useMemo(() => apps.filter((app) => !normalizedQuery || searchableText(
+  const visibleAppResources = React.useMemo(() => apps.filter((app) => getAppKind(app) === 'app' && (!normalizedQuery || searchableText(
     app.id,
     app.name,
     app.displayName,
@@ -223,7 +226,16 @@ export function CommonResourcesView({ apps, onOpenSkills, onOpenExperts, onOpenA
     app.description,
     app.category,
     app.keywords,
-  ).includes(normalizedQuery)), [apps, normalizedQuery]);
+  ).includes(normalizedQuery))), [apps, normalizedQuery]);
+  const visibleConnectors = React.useMemo(() => apps.filter((app) => getAppKind(app) === 'tool' && (!normalizedQuery || searchableText(
+    app.id,
+    app.name,
+    app.displayName,
+    app.title,
+    app.description,
+    app.category,
+    app.keywords,
+  ).includes(normalizedQuery))), [apps, normalizedQuery]);
 
   return (
     <>
@@ -303,10 +315,10 @@ export function CommonResourcesView({ apps, onOpenSkills, onOpenExperts, onOpenA
                 ) : <EmptyResourceGroup label="专家" />}
               </ResourceGroup>
 
-              <ResourceGroup id="apps" icon={Blocks} title="应用" count={visibleApps.length} actionLabel="管理应用" onAction={onOpenApps}>
-                {visibleApps.length ? (
+              <ResourceGroup id="connectors" icon={Plug} title="连接器" count={visibleConnectors.length} actionLabel="管理连接器" onAction={onOpenConnectors}>
+                {visibleConnectors.length ? (
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
-                    {visibleApps.map((app) => {
+                    {visibleConnectors.map((app) => {
                       const title = firstText(app.displayName, app.title, app.name) || "未命名应用";
                       return (
                         <ResourceCard
@@ -316,8 +328,29 @@ export function CommonResourcesView({ apps, onOpenSkills, onOpenExperts, onOpenA
                           title={title}
                           subtitle={firstText(app.category, app.currentVersion && `v${app.currentVersion}`) || "Moss App"}
                           description={displayText(app.description)}
-                          meta={app.enabled === false ? "已停用" : app.currentVersion ? `v${app.currentVersion}` : "已安装"}
+                          meta="会话按需连接"
                           badges={app.hasBackend ? ["工具"] : app.hasUi ? ["界面"] : []}
+                        />
+                      );
+                    })}
+                  </div>
+                ) : <EmptyResourceGroup label="连接器" />}
+              </ResourceGroup>
+              <ResourceGroup id="apps" icon={Blocks} title="应用" count={visibleAppResources.length} actionLabel="管理应用" onAction={onOpenApps}>
+                {visibleAppResources.length ? (
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+                    {visibleAppResources.map((app) => {
+                      const title = firstText(app.displayName, app.title, app.name, app.id) || "未命名应用";
+                      return (
+                        <ResourceCard
+                          key={app.id || app.name}
+                          onOpen={onOpenApp ? () => onOpenApp(app.name) : undefined}
+                          icon={<AppIcon icon={app.icon} className="h-7 w-7 rounded-lg" />}
+                          title={title}
+                          subtitle={app.publisher?.name || "应用"}
+                          description={displayText(app.description)}
+                          meta={app.currentVersion ? `v${app.currentVersion}` : ""}
+                          badges={app.category ? [app.category] : []}
                         />
                       );
                     })}
@@ -326,8 +359,7 @@ export function CommonResourcesView({ apps, onOpenSkills, onOpenExperts, onOpenA
               </ResourceGroup>
             </>
           )}
-
-          {!loading && normalizedQuery && !visibleSkills.length && !visibleExperts.length && !visibleApps.length ? (
+          {!loading && normalizedQuery && !visibleSkills.length && !visibleExperts.length && !visibleConnectors.length && !visibleAppResources.length ? (
             <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl border border-dashed border-border/80 bg-muted/15 text-center">
               <PackageOpen className="h-8 w-8 text-muted-foreground/60" />
               <p className="mt-3 text-sm font-medium text-foreground">没有匹配的已安装资源</p>

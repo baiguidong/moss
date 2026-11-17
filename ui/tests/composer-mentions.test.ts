@@ -13,7 +13,16 @@ describe('composer mention tabs', () => {
       includeAssistants: true,
       includeAgents: true,
       includeSkills: true,
-    })).toEqual(['assistants', 'agents', 'skills']);
+    })).toEqual(['skills', 'assistants']);
+
+    expect(getComposerResourceTabs({
+      includeAssistants: true,
+      includeAgents: true,
+      includeSkills: true,
+      includeConnectors: true,
+      includeApps: true,
+      includeWorkflows: true,
+    })).toEqual(['skills', 'assistants', 'connectors', 'apps']);
 
     expect(getComposerResourceTabs({
       includeAssistants: false,

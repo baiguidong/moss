@@ -22,6 +22,8 @@ import { OperationDraftPanel } from '@/components/operation-draft-panel';
 import { OverviewView } from '@/components/overview-view';
 import { AgentMailView } from '@/components/agent-mail-view';
 import { ChatArea } from '@/components/chat-area';
+import { ComposerResourceSelectionArea } from '@/components/composer-resource-selection-area';
+import type { InstalledSkillOption } from '@/components/skill-selection-area';
 import { WindowChrome } from '@/components/window-chrome';
 import { PanelResizeHandle } from '@/components/panel-resize-handle';
 import { SessionPanelTabs } from '@/components/session-panel-tabs';
@@ -479,6 +481,13 @@ export default function App() {
   const [projectCreationDraft, setProjectCreationDraft] = React.useState<ProjectCreationDraft | null>(null);
   const [projectCreationBusy, setProjectCreationBusy] = React.useState(false);
   const [projectCreationInput, setProjectCreationInput] = React.useState('');
+  const [projectCreationWorkspace, setProjectCreationWorkspace] = React.useState<string | undefined>(undefined);
+  const [projectCreationModel, setProjectCreationModel] = React.useState<string | null>(null);
+  const [projectCreationSkillIds, setProjectCreationSkillIds] = React.useState<string[]>([]);
+  const [projectCreationExpertIds, setProjectCreationExpertIds] = React.useState<string[]>([]);
+  const [projectCreationAppIds, setProjectCreationAppIds] = React.useState<string[]>([]);
+  const [projectCreationAppServiceIds, setProjectCreationAppServiceIds] = React.useState<string[]>([]);
+  const [projectCreationSkills, setProjectCreationSkills] = React.useState<InstalledSkillOption[]>([]);
   const [creatingProjectSession, setCreatingProjectSession] = React.useState(false);
   const projectCreationEntryLock = React.useRef(false);
   const projectCreationReturnSessionRef = React.useRef<string | null>(null);
@@ -675,6 +684,15 @@ export default function App() {
     const assistants = result?.data ?? result ?? [];
     setInstalledAssistants(Array.isArray(assistants) ? assistants : []);
     return assistants;
+  }, []);
+
+  React.useEffect(() => {
+    let active = true;
+    void window.agentDesktop.getInstalledSkills().then(result => {
+      const entries = result?.success ? result.data : result;
+      if (active && Array.isArray(entries)) setProjectCreationSkills(entries as InstalledSkillOption[]);
+    }).catch(() => {});
+    return () => { active = false; };
   }, []);
 
 
@@ -1548,8 +1566,15 @@ export default function App() {
 
     const offAppsChanged = window.agentDesktop.onAppsChanged((payload) => {
       const changedName = payload?.appId || payload?.app?.id || payload?.app?.name;
+      if (payload?.action === 'runtime') return;
       if (changedName && changedName === embeddedAppName && payload?.action !== 'runtime') {
         setEmbeddedAppRevision((value) => value + 1);
+      }
+      if (payload?.action === 'enabled' && changedName && typeof payload.enabled === 'boolean') {
+        setApps(previous => previous.map(app => (app.id || app.name) === changedName
+          ? { ...app, enabled: payload.enabled, ...(Array.isArray(payload.instances) ? { instances: payload.instances } : {}) }
+          : app));
+        return;
       }
       void refreshApps();
     });
@@ -2131,14 +2156,23 @@ export default function App() {
     const firstMessageId = crypto.randomUUID();
     try {
       const createdId = await createAndOpenSession(
-        firstMessageTitle(prompt), undefined, undefined, 'default', 'local', [], [],
+        firstMessageTitle(prompt), projectCreationWorkspace, projectCreationExpertIds[0], 'default', 'local', projectCreationAppIds, projectCreationAppServiceIds,
         id => {
           sessionId = id;
           setPendingFirstMessage({ id: firstMessageId, sessionId: id, prompt, files: [], submittedAt: Date.now() });
         },
-        { projectCreationMode: true, mode: 'chat', skillIds: [] },
+        { projectCreationMode: true, mode: 'chat', skillIds: projectCreationSkillIds },
+        projectCreationModel,
       );
       setProjectCreationInput(current => current.trim() === prompt ? '' : current);
+      // The choices are copied into the creation session before this point;
+      // clear the entry draft so a later project starts without stale choices.
+      setProjectCreationWorkspace(undefined);
+      setProjectCreationModel(null);
+      setProjectCreationSkillIds([]);
+      setProjectCreationExpertIds([]);
+      setProjectCreationAppIds([]);
+      setProjectCreationAppServiceIds([]);
       await dispatchToSession(createdId, prompt, 'chat');
     } catch (error) {
       if (!sessionId) throw error; // Keep the project-page input if session creation failed.
@@ -2152,7 +2186,7 @@ export default function App() {
       projectCreationEntryLock.current = false;
       setCreatingProjectSession(false);
     }
-  }, [createAndOpenSession, dispatchToSession, updateQueue, showPermissionNotice]);
+  }, [createAndOpenSession, dispatchToSession, projectCreationAppIds, projectCreationAppServiceIds, projectCreationExpertIds, projectCreationModel, projectCreationSkillIds, projectCreationWorkspace, updateQueue, showPermissionNotice]);
 
   // Dispatch the next queued message when a turn ends. Kept in a ref so the
   // once-registered agent:state listener always calls the latest version.
@@ -3025,8 +3059,43 @@ export default function App() {
     />
   );
 
+  const projectCreationSelectedAssistant = installedAssistants.find(assistant => assistant.name === projectCreationExpertIds[0]) || null;
+  const projectCreationSelectedSkills = projectCreationSkills.filter(skill => projectCreationSkillIds.includes(skill.name));
+  const projectCreationResourceSelection = (
+    <AppToolSelectionContext.Provider value={{
+      apps,
+      selectedIds: projectCreationAppIds,
+      selectedServiceIds: projectCreationAppServiceIds,
+      enabled: true,
+      pending: creatingProjectSession,
+      nextTurn: false,
+      toggle: id => setProjectCreationAppIds(previous => previous.includes(id) ? previous.filter(value => value !== id) : [...previous, id]),
+      toggleService: id => setProjectCreationAppServiceIds(previous => previous.includes(id) ? previous.filter(value => value !== id) : [...previous, id]),
+      setServices: (appId, ids) => setProjectCreationAppServiceIds(previous => [
+        ...previous.filter(value => parseAppServiceKey(value)?.appId !== appId), ...ids,
+      ]),
+      openManager: () => setActiveView('apps'),
+      openConnectorManager: () => setActiveView('connectors'),
+    }}>
+      <ComposerResourceSelectionArea
+        assistants={installedAssistants}
+        selectedAssistant={projectCreationSelectedAssistant}
+        onSelectAssistant={assistant => setProjectCreationExpertIds([assistant.name])}
+        onClearAssistant={() => setProjectCreationExpertIds([])}
+        onOpenExpertHub={() => setActiveView('experts')}
+        skills={projectCreationSkills}
+        selectedSkills={projectCreationSelectedSkills}
+        onToggleSkill={skill => setProjectCreationSkillIds(previous => previous.includes(skill.name)
+          ? previous.filter(value => value !== skill.name)
+          : [...previous, skill.name])}
+        onOpenSkillHub={() => setActiveView('skills')}
+        triggerVisible
+      />
+    </AppToolSelectionContext.Provider>
+  );
+
   return (
-    <AppToolSelectionContext.Provider value={{ apps: (activeSessionId ? activeDetail?.agentMode === 'remote-direct' : newSessionAgentMode === 'remote-direct') ? apps.filter(app => app.connectorApp) : apps, selectedIds: selectedToolAppIds, selectedServiceIds: selectedToolServiceIds, toggleService: id => handleToolServices(parseAppServiceKey(id)?.appId || '', [], id), setServices: handleToolServices, enabled: true, pending: appSelectionPending, nextTurn: Boolean(activeDetail?.appToolsPending), toggle: handleToggleToolApp, openManager: () => setActiveView('apps') }}>
+    <AppToolSelectionContext.Provider value={{ apps: (activeSessionId ? activeDetail?.agentMode === 'remote-direct' : newSessionAgentMode === 'remote-direct') ? apps.filter(app => app.connectorApp) : apps, selectedIds: selectedToolAppIds, selectedServiceIds: selectedToolServiceIds, toggleService: id => handleToolServices(parseAppServiceKey(id)?.appId || '', [], id), setServices: handleToolServices, enabled: true, pending: appSelectionPending, nextTurn: Boolean(activeDetail?.appToolsPending), toggle: handleToggleToolApp, openManager: () => setActiveView('apps'), openConnectorManager: () => setActiveView('connectors') }}>
     <AppComposerContext.Provider value={{ selection: appSelection, select: handleSelectAppResource, submitVisualizationAnnotation: async (sessionId, input) => {
       if (sessionId !== activeSessionIdRef.current || activeDetailRef.current?.agentMode === 'remote-direct' || activeDetailRef.current?.isSubAgent) throw new Error('请在原本地主会话提交标注');
       const annotation = normalizeVisualizationAnnotation(input);
@@ -3395,14 +3464,18 @@ export default function App() {
               enabled={agentMailEnabled}
               onOpenSettings={() => { setSettingsInitialAppId(null); setActiveView('settings'); }}
             />
-          ) : activeView === 'common' || activeView === 'skills' || activeView === 'experts' || activeView === 'apps' ? (
+          ) : activeView === 'common' || activeView === 'skills' || activeView === 'experts' || activeView === 'connectors' || activeView === 'apps' ? (
             <ResourceHubView
               activeTab={activeView}
               onChangeTab={setActiveView}
               apps={apps}
               onOpenApp={handleLaunchApp}
               appsContent={
-                <AppsPanel apps={apps} loading={!appsLoaded} onLaunch={handleLaunchApp} onRefresh={refreshApps} initialTab={appHubTab} onTabChange={setAppHubTab}
+                <AppsPanel kind="app" apps={apps} loading={!appsLoaded} onLaunch={handleLaunchApp} onRefresh={refreshApps} initialTab={appHubTab} onTabChange={setAppHubTab}
+                />
+              }
+              connectorsContent={
+                <AppsPanel kind="connector" apps={apps} loading={!appsLoaded} onLaunch={handleLaunchApp} onRefresh={refreshApps} initialTab={appHubTab} onTabChange={setAppHubTab}
                 />
               }
             />
@@ -3416,6 +3489,12 @@ export default function App() {
               onOpenSession={handleSelectSession}
               creationPrompt={projectCreationInput}
               onCreationPromptChange={setProjectCreationInput}
+              creationWorkspace={projectCreationWorkspace}
+              onCreationWorkspaceChange={setProjectCreationWorkspace}
+              creationModel={projectCreationModel}
+              onCreationModelChange={(model) => setProjectCreationModel(model && model !== 'default' ? model : null)}
+              creationModelSettings={modelSettings ? { url: modelSettings.url, apiKey: modelSettings.apiKey, availableModels: modelSettings.availableModels } : undefined}
+              creationResourceSelection={projectCreationResourceSelection}
               creatingProjectSession={creatingProjectSession}
               onCreateProjectConversation={handleCreateProjectConversation}
               onNewSession={handleNewProjectSession}

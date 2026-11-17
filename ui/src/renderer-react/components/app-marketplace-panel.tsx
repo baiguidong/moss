@@ -23,13 +23,16 @@ import type {
   AppMarketplaceEntry,
   StoredApp,
 } from "../types";
+import { getAppKind } from '@/lib/app-discovery';
 
-export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = false }: {
+export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = false, kind }: {
   hub?: boolean;
+  kind?: 'app' | 'connector';
   installedApps: StoredApp[];
   onBack: () => void;
   onInstalled: () => Promise<unknown>;
 }) {
+  const resourceLabel = kind === 'connector' ? '连接器' : 'App';
   const [catalog, setCatalog] = React.useState<AppMarketplaceCatalog | null>(null);
   const [details, setDetails] = React.useState<Record<string, AppMarketplaceDetail>>({});
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
@@ -141,8 +144,10 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = 
     }
   };
 
-  const installedById = React.useMemo(() => new Map(installedApps.map((app) => [app.id || app.name, app])), [installedApps]);
-  const searchedApps = filterApps(catalog?.apps || [], query);
+  const scopedInstalledApps = React.useMemo(() => kind ? installedApps.filter(app => getAppKind(app) === (kind === 'connector' ? 'tool' : 'app')) : installedApps, [installedApps, kind]);
+  const installedById = React.useMemo(() => new Map(scopedInstalledApps.map((app) => [app.id || app.name, app])), [scopedInstalledApps]);
+  const scopedMarketApps = React.useMemo(() => kind ? (catalog?.apps || []).filter(app => getAppKind(app) === (kind === 'connector' ? 'tool' : 'app')) : (catalog?.apps || []), [catalog?.apps, kind]);
+  const searchedApps = filterApps(scopedMarketApps, query);
   const sectionApps = filterApps(searchedApps, '', category);
   const visibleApps = groupApps(sectionApps).flatMap(group => group.apps);
 
@@ -153,7 +158,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = 
   </>;
   return <>
     <div className={`${selected ? 'hidden' : 'flex'} h-full min-h-0 flex-col bg-background`}>
-      <AppHubToolbar tab="marketplace" installedCount={installedApps.length} onChangeTab={tab => { if (tab === 'installed') onBack(); }} busy={activeInstall}
+      <AppHubToolbar resourceName={kind === 'connector' ? '连接器' : '应用'} tab="marketplace" installedCount={scopedInstalledApps.length} onChangeTab={tab => { if (tab === 'installed') onBack(); }} busy={activeInstall}
         query={query} onQuery={setQuery} actions={toolbarActions}
         searchVisible={!selected}
         refresh={<Button size="icon-sm" variant="ghost" className="h-8 w-8 rounded-lg" title="刷新" aria-label="刷新" disabled={loading || activeInstall} aria-busy={loading} onClick={() => void loadCatalog(true)}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></Button>}
@@ -175,9 +180,9 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = 
         <div role="tabpanel" id="marketplace-apps" aria-labelledby={`marketplace-apps-${category}`} className="mt-3">
         {error && <div className="mb-4 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
         {loading && !catalog ? (
-          <div className="flex h-44 items-center justify-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin" />正在加载应用市场…</div>
+          <div className="flex h-44 items-center justify-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="h-4 w-4 animate-spin" />正在加载{resourceLabel}市场…</div>
         ) : visibleApps.length === 0 ? (
-          <div className="flex h-44 items-center justify-center rounded-lg border border-dashed border-border text-sm text-muted-foreground">{!catalog && refreshResult?.kind === "error" ? "应用市场加载失败，请点击刷新重试" : category !== 'all' || query ? "没有匹配的应用，可切换到全部或调整筛选" : "暂无适用于当前系统的 App"}</div>
+          <div className="flex h-44 items-center justify-center rounded-lg border border-dashed border-border text-sm text-muted-foreground">{!catalog && refreshResult?.kind === "error" ? `${resourceLabel}市场加载失败，请点击刷新重试` : category !== 'all' || query ? `没有匹配的${resourceLabel}，可切换到全部或调整筛选` : `暂无适用于当前系统的${resourceLabel}`}</div>
         ) : (
           <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
             {visibleApps.map(entry => <AppHubCard key={entry.id} id={entry.id} marketplace category={entry.category}

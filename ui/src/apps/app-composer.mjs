@@ -28,6 +28,11 @@ export function createAppComposer({ getRuntime, getSession }) {
         const result = await runtime.invoke(current.appId, instance.id, current.listAction, input, { invocation })
         return { provider: current, result }
       } catch (error) {
+        // A resource lookup can race with the App being disabled from the
+        // Apps page. Treat that transition as an empty provider instead of
+        // surfacing a rejected IPC request to the renderer.
+        if (error?.code === APP_ERROR_CODES.disabled) return null
+        if (error?.code === APP_ERROR_CODES.actionTimeout && !runtime.getInstallation(current.appId)?.enabled) return null
         // A restart can begin after the wait above. Retry this read once, while
         // retaining stale-generation rejection for all ordinary action calls.
         if (error?.code !== APP_ERROR_CODES.staleGeneration || attempt > 0) throw error

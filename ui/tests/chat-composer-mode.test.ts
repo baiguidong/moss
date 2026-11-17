@@ -65,7 +65,7 @@ describe('chat composer mode placement', () => {
     for (const label of ['添加文件', '模式', '专家', '技能']) {
       expect(addMenu).toContain(`>${label}</span>`);
     }
-    expect(addMenu).not.toContain('连接器');
+    expect(addMenu).toContain('连接器');
     expect(addMenu).toContain('DropdownMenuSubTrigger');
     expect(addMenu).toContain("style={{ overflow: 'visible' }}");
     expect(addMenu).not.toContain('<ChevronRight');

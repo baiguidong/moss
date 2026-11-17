@@ -30,7 +30,7 @@ export function ProjectAppDefaultsPicker({ apps, value, onChange, loading = fals
   return <div className="space-y-2.5 border-t border-border pt-5">
     <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-medium">App</span>
       <AppToolSelectionContext.Provider value={{ apps, selectedIds: appIds, selectedServiceIds: appServiceIds,
-        enabled: true, pending: loading, nextTurn: false, openManager: parent.openManager,
+        enabled: true, pending: loading, nextTurn: false, openManager: parent.openManager, openConnectorManager: parent.openConnectorManager,
         toggle: id => onChange({ appIds: appIds.includes(id) ? appIds.filter(item => item !== id) : [...appIds, id], appServiceIds }),
         toggleService: id => onChange({ appIds, appServiceIds: appServiceIds.includes(id) ? appServiceIds.filter(item => item !== id) : [...appServiceIds, id] }),
         setServices: (appId, ids) => onChange(setProjectAppServices(value, appId, ids)),

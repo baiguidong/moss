@@ -9,12 +9,13 @@ import { ResourceHubSearchTarget } from "@/components/resource-hub-search";
 import type { MainView } from "@/components/app-sidebar";
 import type { StoredApp } from "../types";
 
-export type ResourceHubTab = Extract<MainView, "skills" | "experts" | "common" | "apps">;
+export type ResourceHubTab = Extract<MainView, "skills" | "experts" | "connectors" | "common" | "apps">;
 
 const RESOURCE_HUB_TABS = [
   { view: "common", label: "常用" },
   { view: "skills", label: "技能" },
   { view: "experts", label: "专家" },
+  { view: "connectors", label: "连接器" },
   { view: "apps", label: "Apps" },
 ] as const;
 
@@ -50,11 +51,12 @@ export function ResourceHubTabs({
   );
 }
 
-export function ResourceHubView({ activeTab, onChangeTab, apps, appsContent, onOpenApp }: {
+export function ResourceHubView({ activeTab, onChangeTab, apps, appsContent, connectorsContent, onOpenApp }: {
   activeTab: ResourceHubTab;
   onChangeTab: (tab: ResourceHubTab) => void;
   apps?: StoredApp[];
   appsContent: React.ReactNode;
+  connectorsContent: React.ReactNode;
   onOpenApp?: (name: string) => void;
 }) {
   const [searchTarget, setSearchTarget] = React.useState<HTMLDivElement | null>(null);
@@ -74,9 +76,10 @@ export function ResourceHubView({ activeTab, onChangeTab, apps, appsContent, onO
             onOpenApp={onOpenApp}
             onOpenSkills={() => onChangeTab('skills')}
             onOpenExperts={() => onChangeTab('experts')}
+            onOpenConnectors={() => onChangeTab('connectors')}
             onOpenApps={() => onChangeTab('apps')}
           />
-        ) : activeTab === 'skills' ? <SkillHubView /> : activeTab === 'experts' ? <ExpertHubView /> : appsContent}
+        ) : activeTab === 'skills' ? <SkillHubView /> : activeTab === 'experts' ? <ExpertHubView /> : activeTab === 'connectors' ? connectorsContent : appsContent}
       </div>
     </div>
   </ResourceHubSearchTarget.Provider>;

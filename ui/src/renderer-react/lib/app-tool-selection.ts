@@ -17,6 +17,7 @@ export const AppToolSelectionContext = React.createContext<{
   toggleService?: (id: string) => void;
   setServices?: (appId: string, ids: string[]) => void;
   openManager: () => void;
+  openConnectorManager?: () => void;
 }>({ apps: [], selectedIds: [], enabled: false, pending: false, nextTurn: false, toggle: () => {}, openManager: () => {} });
 
 export const toolAppId = (app: StoredApp) => app.id || app.name;

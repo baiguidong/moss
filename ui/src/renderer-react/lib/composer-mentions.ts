@@ -1,5 +1,5 @@
 export type ComposerMentionTab = 'files' | 'agents' | 'skills' | 'assistants' | 'apps' | 'workflows';
-export type ComposerResourceTab = Exclude<ComposerMentionTab, 'files'>;
+export type ComposerResourceTab = Exclude<ComposerMentionTab, 'files'> | 'connectors';
 
 export function getComposerResourceTabs({
   includeAssistants,
@@ -7,19 +7,21 @@ export function getComposerResourceTabs({
   includeSkills,
   includeWorkflows = false,
   includeApps = false,
+  includeConnectors = false,
 }: {
   includeAssistants: boolean;
   includeAgents: boolean;
   includeSkills: boolean;
   includeWorkflows?: boolean;
   includeApps?: boolean;
+  includeConnectors?: boolean;
 }): ComposerResourceTab[] {
   const tabs: ComposerResourceTab[] = [];
-  if (includeAssistants) tabs.push('assistants');
-  if (includeAgents) tabs.push('agents');
   if (includeSkills) tabs.push('skills');
+  if (includeAssistants) tabs.push('assistants');
+  if (includeConnectors) tabs.push('connectors');
   if (includeApps) tabs.push('apps');
-  if (includeWorkflows) tabs.push('workflows');
+  // Workflows remain available through @ mentions, but are not session resources.
   return tabs;
 }
 

@@ -38,6 +38,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Pin,
+  Plug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { contextUsagePresentation, formatTokenCount, type ContextUsageInfo } from "@/lib/context-usage";
@@ -1147,18 +1148,12 @@ export function ComposerPanel({
           <Bot className="h-4 w-4" />
           <span className="flex-1">专家</span>
         </DropdownMenuItem>
-        {canSelectAgents ? (
-          <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('agents')}>
-            <GitFork className="h-4 w-4" />
-            <span className="flex-1">Agents</span>
-          </DropdownMenuItem>
-        ) : null}
         <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('skills')}>
           <Hammer className="h-4 w-4" />
           <span className="flex-1">技能</span>
         </DropdownMenuItem>
+        {toolApps.enabled && <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('connectors')}><Plug className="h-4 w-4" /><span>连接器</span></DropdownMenuItem>}
         {toolApps.enabled && <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('apps')}><AppIcon className="h-4 w-4" /><span>App</span></DropdownMenuItem>}
-        {appResources.available && <DropdownMenuItem className="gap-3 py-2.5" onSelect={() => openResourcePicker('workflows')}><GitFork className="h-4 w-4"/><span>工作流</span></DropdownMenuItem>}
       </DropdownMenuContent>
     </DropdownMenu>
   );

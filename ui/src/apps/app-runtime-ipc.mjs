@@ -31,9 +31,12 @@ export function registerAppRuntimeIpc(options) {
   }
   const changed = async (action, appId, result) => {
     result = await result
+    const enabled = result?.enabled ?? result?.installation?.enabled
     await emitChanged?.({
       action,
       appId,
+      ...(enabled !== undefined ? { enabled } : {}),
+      ...(Array.isArray(result?.instances) ? { instances: result.instances } : {}),
       ...(result?.currentVersion ? { app: result } : {}),
     })
     return result

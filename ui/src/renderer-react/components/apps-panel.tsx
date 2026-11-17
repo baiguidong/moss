@@ -13,7 +13,7 @@ import { filterApps, groupApps } from '@/lib/app-categories';
 import { supportsHostFeature } from '@/lib/host-environment';
 import {
   AlertCircle, Upload,
-  KeyRound, RefreshCw,
+  KeyRound, LoaderCircle, RefreshCw,
   Settings2, SquareTerminal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import { AppMarketplacePanel } from "@/components/app-marketplace-panel";
 import { AppInstallProgressView } from '@/components/app-install-progress';
 import { isAppInstallActive, useAppInstallProgress } from '@/lib/app-install-progress';
 import type { AppInstance, StoredApp, BuiltinApp } from "../types";
+import { getAppKind } from '@/lib/app-discovery';
 
 function Toggle({ checked, disabled, label, onChange }: { checked: boolean; disabled?: boolean; label: string; onChange: (checked: boolean) => void }) {
   // Keep the hidden focus target inside the list's scrollable content.
@@ -303,7 +304,8 @@ export function AppRuntimeControls({ app, instance, onChanged, onOpenSettings, o
 }
 
 
-export function AppsPanel({ apps, loading, onLaunch, onRefresh, initialTab = 'marketplace', onTabChange }: {
+export function AppsPanel({ apps, loading, onLaunch, onRefresh, initialTab = 'marketplace', onTabChange, kind }: {
+  kind?: 'app' | 'connector';
   initialTab?: AppHubTab;
   onTabChange?: (tab: AppHubTab) => void;
   apps: StoredApp[];
@@ -322,15 +324,33 @@ export function AppsPanel({ apps, loading, onLaunch, onRefresh, initialTab = 'ma
   const { detail: builtinId, open: openBuiltin, close: closeBuiltin } = useResourceDetail<string>();
   const [busy, setBusy] = React.useState<string | null>(null);
   const [error, setError] = React.useState("");
+  const [enabledOverrides, setEnabledOverrides] = React.useState<Record<string, boolean>>({});
+  const [pendingToggle, setPendingToggle] = React.useState<{ title: string; enabled: boolean } | null>(null);
   const { progress: archiveProgress, clearProgress: clearArchiveProgress } = useAppInstallProgress('local');
-  const installedById = new Map(apps.map(app => [app.id || app.name, app]));
-  const builtinCatalog = builtins.map(item => {
+  const scopedApps = kind ? apps.filter(app => getAppKind(app) === (kind === 'connector' ? 'tool' : 'app')) : apps;
+  const installedById = new Map(scopedApps.map(app => [app.id || app.name, app]));
+  const builtinCatalog = kind === 'connector' ? [] : builtins.map(item => {
     const app = installedById.get(item.id);
     return { ...app, id: item.id, name: app?.name || item.id, displayName: app?.displayName || item.displayName, description: app?.description || item.description, builtin: true };
   });
-  const searchedApps = filterApps(builtinsOpen ? builtinCatalog : apps, query);
+  const searchedApps = filterApps(builtinsOpen ? builtinCatalog : scopedApps, query);
   const matchedApps = filterApps(searchedApps, '', category);
   const visibleApps = groupApps(matchedApps).flatMap(group => group.apps);
+  const appEnabled = (app: StoredApp) => enabledOverrides[app.id || app.name] ?? isAppEnabled(app);
+  React.useEffect(() => {
+    setEnabledOverrides(current => {
+      let changed = false;
+      const next = { ...current };
+      for (const [id, value] of Object.entries(current)) {
+        const app = apps.find(item => (item.id || item.name) === id);
+        if (app && isAppEnabled(app) === value) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [apps]);
   const selectedBuiltin = builtins.find(item => item.id === builtinId);
   const openApp = (id: string, name: string) => {
     const builtin = builtinsOpen && builtins.find(item => item.id === id);
@@ -346,6 +366,24 @@ export function AppsPanel({ apps, loading, onLaunch, onRefresh, initialTab = 'ma
     finally { setBusy(null); }
   };
 
+  const toggleAppEnabled = async (app: StoredApp, next: boolean) => {
+    const id = app.id || app.name;
+    const previous = appEnabled(app);
+    setEnabledOverrides(current => ({ ...current, [id]: next }));
+    setPendingToggle({ title: app.displayName || app.title || app.name, enabled: next });
+    setBusy(`toggle:${id}`);
+    setError("");
+    try {
+      await setAppEnabled(app, next);
+    } catch (operationError) {
+      setEnabledOverrides(current => ({ ...current, [id]: previous }));
+      setError(errorMessage(operationError));
+    } finally {
+      setPendingToggle(null);
+      setBusy(current => current === `toggle:${id}` ? null : current);
+    }
+  };
+
   const installArchive = async () => {
     clearArchiveProgress('local');
     await run('install', async () => {
@@ -355,17 +393,17 @@ export function AppsPanel({ apps, loading, onLaunch, onRefresh, initialTab = 'ma
   };
 
   if (tab === 'marketplace') {
-    return <AppMarketplacePanel installedApps={apps} onBack={() => changeTab('installed')} onInstalled={onRefresh} hub />;
+    return <AppMarketplacePanel kind={kind} installedApps={apps} onBack={() => changeTab('installed')} onInstalled={onRefresh} hub />;
   }
 
   return (
     <>
     <div className={`${selectedBuiltin ? 'hidden' : 'flex'} h-full min-h-0 flex-col bg-background`}>
-      <AppHubToolbar tab="installed" installedCount={apps.length} onChangeTab={changeTab} query={query} onQuery={setQuery} searchPlaceholder={builtinsOpen ? '搜索内置应用' : undefined}
+      <AppHubToolbar resourceName={kind === 'connector' ? '连接器' : '应用'} tab="installed" installedCount={scopedApps.length} onChangeTab={changeTab} query={query} onQuery={setQuery} searchPlaceholder={builtinsOpen ? '搜索内置应用' : kind === 'connector' ? '搜索连接器' : undefined}
         searchVisible={!selectedBuiltin}
         refresh={<Button size="icon-sm" variant="ghost" className="h-8 w-8 rounded-lg" title="刷新" aria-label="刷新" disabled={loading || busy === 'refresh'} onClick={() => void run('refresh', async () => {})}><RefreshCw className={`h-4 w-4 ${loading || busy === 'refresh' ? 'animate-spin' : ''}`} /></Button>}
         busy={busy === 'install'} actions={<>
-          {builtins.length > 0 && <Button size="sm" variant={builtinsOpen ? 'secondary' : 'outline'} aria-pressed={builtinsOpen} className="h-8 rounded-lg px-3 text-xs" onClick={() => { setBuiltinsOpen(value => !value); setCategory('all'); }}>内置应用</Button>}
+          {kind !== 'connector' && builtins.length > 0 && <Button size="sm" variant={builtinsOpen ? 'secondary' : 'outline'} aria-pressed={builtinsOpen} className="h-8 rounded-lg px-3 text-xs" onClick={() => { setBuiltinsOpen(value => !value); setCategory('all'); }}>内置应用</Button>}
           <Button size="sm" variant="outline" className="h-8 rounded-lg px-3 text-xs" title="本地安装 ZIP" aria-label="本地安装 ZIP" disabled={busy === 'install' || isAppInstallActive(archiveProgress.local) || !supportsHostFeature('appInstallation')} onClick={() => void installArchive()}><Upload className="h-4 w-4" />{busy === 'install' ? '安装中…' : '添加应用'}</Button>
         </>} />
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -376,19 +414,31 @@ export function AppsPanel({ apps, loading, onLaunch, onRefresh, initialTab = 'ma
         {error && <div className="mb-4 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
         <div role="tabpanel" id="installed-apps" aria-labelledby={`installed-apps-${category}`} className="mt-3">
         {loading ? <div role="status" className="flex h-44 items-center justify-center text-sm text-muted-foreground">正在加载 Apps…</div> : visibleApps.length === 0 ? (
-          <div className="flex h-44 items-center justify-center rounded-lg border border-dashed border-border text-sm text-muted-foreground">{apps.length || builtinsOpen ? '没有匹配的 App，可切换到全部或调整筛选' : '暂无 App，请从应用市场安装'}</div>
+          <div className="flex h-44 items-center justify-center rounded-lg border border-dashed border-border text-sm text-muted-foreground">{scopedApps.length || builtinsOpen ? '没有匹配的 App，可切换到全部或调整筛选' : '暂无 App，请从应用市场安装'}</div>
         ) : (
           <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
             {visibleApps.map(app => <AppHubCard key={app.id || app.name} id={app.id || app.name} category={app.category}
               title={app.displayName || app.title || app.name} description={app.description}
               publisher={app.publisher?.name || app.trust?.publisher?.name || (app.builtin ? 'Moss' : '本地应用')}
-              icon={<AppIcon icon={app.icon} className="h-9 w-9 shrink-0 rounded-lg" />} onOpen={() => openApp(app.id || app.name, app.name)} />)}
+              icon={<AppIcon icon={app.icon} className="h-9 w-9 shrink-0 rounded-lg" />} onOpen={() => openApp(app.id || app.name, app.name)}
+              enabled={kind === 'app' && !builtinsOpen ? appEnabled(app) : undefined}
+              onToggleEnabled={kind === 'app' && !builtinsOpen ? (next) => void toggleAppEnabled(app, next) : undefined}
+              toggleBusy={Boolean(pendingToggle)} />)}
           </div>
         )}
         </div>
       </div>
       </div>
     </div>
+    {pendingToggle && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={pendingToggle.enabled ? '正在启用 App' : '正在停用 App'}>
+      <div className="flex w-full max-w-sm items-start gap-3 rounded-xl border border-border bg-card p-5 shadow-2xl">
+        <LoaderCircle className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-primary" />
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold">{pendingToggle.enabled ? '正在启用' : '正在停用'} {pendingToggle.title}</h2>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">正在{pendingToggle.enabled ? '准备应用运行环境' : '停止应用服务并清理运行状态'}，请稍候。完成前页面不会响应其它 App 操作。</p>
+        </div>
+      </div>
+    </div>}
     {selectedBuiltin && <AppBuiltinDetails key={selectedBuiltin.id} app={selectedBuiltin} installed={selectedBuiltin.installed || installedById.has(selectedBuiltin.id)} onBack={closeBuiltin}
       onOpen={() => onLaunch(installedById.get(selectedBuiltin.id)?.name || selectedBuiltin.id)}
       onRestore={async () => {

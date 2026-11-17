@@ -1,14 +1,22 @@
 import * as React from 'react';
-import { ArrowUp, Info, Loader2 } from 'lucide-react';
+import { ArrowUp, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { WorkspaceSelector } from '@/components/workspace-selector';
+import { ModelSelector } from '@/components/session-command-launcher';
+import type { DesktopSettings } from '@/types';
 
-export function ProjectCreationComposer({ value, onChange, busy, onSend }: {
+export function ProjectCreationComposer({ value, onChange, busy, onSend, workspace, onWorkspaceChange, model, onModelChange, modelSettings, resourceSelection }: {
   value: string;
   onChange: (value: string) => void;
   busy: boolean;
   onSend: (prompt: string) => Promise<void>;
+  workspace?: string;
+  onWorkspaceChange?: (workspace: string | undefined) => void;
+  model?: string | null;
+  onModelChange?: (model: string) => Promise<void> | void;
+  modelSettings?: Pick<DesktopSettings, 'url' | 'apiKey' | 'availableModels'>;
+  resourceSelection?: React.ReactNode;
 }) {
   const textarea = React.useRef<HTMLTextAreaElement>(null);
   const submitting = React.useRef(false);
@@ -41,12 +49,13 @@ export function ProjectCreationComposer({ value, onChange, busy, onSend }: {
             event.preventDefault(); void submit();
           }
         }} />
-      <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-1 sm:px-5">
-        <Tooltip>
-          <TooltipTrigger asChild><button type="button" aria-label="了解项目创建流程" className="inline-flex min-w-0 items-center gap-1.5 rounded-md text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"><Info className="h-3.5 w-3.5 shrink-0" /><span>确认方案后创建</span></button></TooltipTrigger>
-          <TooltipContent side="bottom" className="max-w-xs">先通过会话完善项目方案，确认后安装缺失资源并创建项目。后续项目会话会自动携带所选资源。</TooltipContent>
-        </Tooltip>
-        <div className="flex shrink-0 items-center gap-3"><span className="hidden text-xs text-muted-foreground sm:inline">Shift + Enter 换行</span>
+      <div className="flex flex-wrap items-center gap-2 px-4 pb-3 pt-1 sm:px-5">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          {onWorkspaceChange && <WorkspaceSelector value={workspace} onChange={onWorkspaceChange} disabled={busy} />}
+          {resourceSelection}
+          {onModelChange && <ModelSelector currentModel={model || undefined} onModelChange={async next => { await onModelChange(next); }} modelSettings={modelSettings} disabled={busy} />}
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-3"><span className="hidden text-xs text-muted-foreground sm:inline">Shift + Enter 换行</span>
           <Button type="submit" size="icon" aria-label="发送项目需求" title="发送项目需求" disabled={busy || !value.trim()} className="h-9 w-9 rounded-full">
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
           </Button>

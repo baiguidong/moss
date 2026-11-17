@@ -59,7 +59,7 @@ try {
     const cards = [...document.querySelectorAll('[data-app-category]')];
     return cards.filter(card => card.getBoundingClientRect().top === cards[0].getBoundingClientRect().top).length;
   }), 3);
-  assert.doesNotMatch(await js(() => document.querySelector('[data-app-open="moss.database"]').closest('section').textContent), /已启用|已停用|AI 工具|运行中|已停止/);
+  assert.match(await js(() => document.querySelector('[data-app-open="moss.database"]').closest('section').textContent), /已启用|未启用/);
   await capture('apps-installed-three-columns');
   await click('[data-app-open="moss.database"]');
   await until(() => js(() => !!document.querySelector('[data-app-details="moss.database"]')), 'installed card opens details');

@@ -81,7 +81,7 @@ export interface SidebarSession {
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
 }
 
-export type MainView = "chat" | "pending" | "drafts" | "projects" | "overview" | "mail" | "common" | "skills" | "experts" | "apps" | "settings" | "cron" | "embedded-app" | "app-info";
+export type MainView = "chat" | "pending" | "drafts" | "projects" | "overview" | "mail" | "common" | "skills" | "experts" | "connectors" | "apps" | "settings" | "cron" | "embedded-app" | "app-info";
 
 export type SidebarMoreView = Extract<MainView, "overview" | "mail" | "cron" | "drafts">;
 
@@ -522,7 +522,7 @@ export function AppSidebar({
             {!collapsed && "项目"}
           </Button>
           <Button
-            variant={activeView === "common" || activeView === "skills" || activeView === "experts" || activeView === "apps" || activeView === "app-info" ? "secondary" : "ghost"}
+            variant={activeView === "common" || activeView === "skills" || activeView === "experts" || activeView === "connectors" || activeView === "apps" || activeView === "app-info" ? "secondary" : "ghost"}
             className={cn("h-8 rounded-lg", collapsed ? "w-8 justify-center px-0" : "justify-start !pl-2")}
             onClick={() => onChangeView("common")}
             title="插件"

@@ -58,6 +58,12 @@ type ProjectWorkspaceProps = {
   onOpenSession: (sessionId: string) => void;
   creationPrompt: string;
   onCreationPromptChange: (value: string) => void;
+  creationWorkspace?: string;
+  onCreationWorkspaceChange?: (workspace: string | undefined) => void;
+  creationModel?: string | null;
+  onCreationModelChange?: (model: string) => Promise<void> | void;
+  creationModelSettings?: { url: string; apiKey: string; availableModels: string[] };
+  creationResourceSelection?: React.ReactNode;
   creatingProjectSession: boolean;
   onCreateProjectConversation: (prompt: string) => Promise<void>;
   onNewSession: (project: Project) => void;
@@ -267,6 +273,12 @@ function ProjectList({
   onDelete,
   creationPrompt,
   onCreationPromptChange,
+  creationWorkspace,
+  onCreationWorkspaceChange,
+  creationModel,
+  onCreationModelChange,
+  creationModelSettings,
+  creationResourceSelection,
   creatingProjectSession,
   onCreateProjectConversation,
   onNew,
@@ -279,6 +291,12 @@ function ProjectList({
   onDelete: (project: Project) => Promise<void>;
   creationPrompt: string;
   onCreationPromptChange: (value: string) => void;
+  creationWorkspace?: string;
+  onCreationWorkspaceChange?: (workspace: string | undefined) => void;
+  creationModel?: string | null;
+  onCreationModelChange?: (model: string) => Promise<void> | void;
+  creationModelSettings?: { url: string; apiKey: string; availableModels: string[] };
+  creationResourceSelection?: React.ReactNode;
   creatingProjectSession: boolean;
   onCreateProjectConversation: (prompt: string) => Promise<void>;
   onNew: () => void;
@@ -382,7 +400,10 @@ function ProjectList({
   return (
     <div ref={scrollRef} data-project-list-scroll className="h-full min-h-0 min-w-0 overflow-y-auto overscroll-contain bg-background [scrollbar-gutter:stable]">
       <div className="mx-auto w-full max-w-[1180px] px-4 sm:px-5">
-        <ProjectCreationComposer value={creationPrompt} onChange={onCreationPromptChange} busy={creatingProjectSession} onSend={onCreateProjectConversation} />
+        <ProjectCreationComposer value={creationPrompt} onChange={onCreationPromptChange} busy={creatingProjectSession} onSend={onCreateProjectConversation}
+          workspace={creationWorkspace} onWorkspaceChange={onCreationWorkspaceChange}
+          model={creationModel} onModelChange={onCreationModelChange} modelSettings={creationModelSettings}
+          resourceSelection={creationResourceSelection} />
         <section ref={listRef} aria-label="我的项目" className="pb-6">
           <div className="sticky top-0 z-10 -mx-1 flex flex-wrap items-center gap-2 bg-background/95 px-1 py-3 backdrop-blur">
             <h2 className="mr-1 shrink-0 text-sm font-semibold">我的项目 <span className="ml-1 font-normal text-muted-foreground">{filtered.length}</span></h2>
@@ -1014,6 +1035,12 @@ export function ProjectWorkspace({
   onOpenSession,
   creationPrompt,
   onCreationPromptChange,
+  creationWorkspace,
+  onCreationWorkspaceChange,
+  creationModel,
+  onCreationModelChange,
+  creationModelSettings,
+  creationResourceSelection,
   creatingProjectSession,
   onCreateProjectConversation,
   onNewSession,
@@ -1064,6 +1091,12 @@ export function ProjectWorkspace({
           }}
           creationPrompt={creationPrompt}
           onCreationPromptChange={onCreationPromptChange}
+          creationWorkspace={creationWorkspace}
+          onCreationWorkspaceChange={onCreationWorkspaceChange}
+          creationModel={creationModel}
+          onCreationModelChange={onCreationModelChange}
+          creationModelSettings={creationModelSettings}
+          creationResourceSelection={creationResourceSelection}
           creatingProjectSession={creatingProjectSession}
           onCreateProjectConversation={onCreateProjectConversation}
           onNew={() => setDialogOpen(true)}

@@ -7,7 +7,7 @@ import { resolveAppSettingsView, validateAppViewState } from './apps/app-view-bi
 import { selectedConnectorIds } from './apps/connector-app-selection.mjs';
 import { createAppDiscoveryPreferences } from './apps/app-discovery-preferences.mjs';
 import { createConnectorAppHost } from './apps/connector-app-host.mjs';
-import { connectorIdFromApp, getAppDiscovery } from '../../packages/app-sdk/src/discovery.mjs';
+import { connectorIdFromApp, getAppCatalogDiscovery } from '../../packages/app-sdk/src/discovery.mjs';
 import { parseAppServiceKey } from '../../packages/app-sdk/src/tool-services.mjs';
 import { setConnectorAppLifecycle, saveConnectorCredentials, provisionConnectorCredentials, refreshConnectorCliStatus, isConnectorAppActivationCurrent } from './connector-hub-ipc.mjs';
 import { createRestoreState } from './web/restore-state.mjs';
@@ -1713,7 +1713,22 @@ async function projectCreationProvider(input, sessionId) {
   assertProjectCreationSession(sessionId);
   if (input.action === 'get') return projectCreationService.get({ sessionId });
   if (input.action !== 'preview') throw new Error('不支持的项目方案操作。');
-  return projectCreationService.propose(input, sessionId);
+  const record = getSessionRecord(sessionId);
+  const selected = record?.projectDefaults?.__projectCreationSelections;
+  if (!selected) return projectCreationService.propose(input, sessionId);
+  const merge = (key) => [...new Set([...(Array.isArray(selected[key]) ? selected[key] : []), ...(Array.isArray(input[key]) ? input[key] : [])])];
+  const next = { ...input, skillIds: merge('skillIds'), expertIds: merge('expertIds'), appIds: merge('appIds'), appServiceIds: merge('appServiceIds') };
+  if (selected.assistantName) {
+    next.expertIds = [...new Set([selected.assistantName, ...next.expertIds])];
+    next.assistantName = selected.assistantName;
+  }
+  if (selected.workspaceExplicit && selected.workspace) {
+    next.workspace = selected.workspace;
+    // A manually chosen directory is authoritative; recommendations only
+    // fill this field when the creation entry had no directory selection.
+    next.workspaces = [selected.workspace];
+  }
+  return projectCreationService.propose(next, sessionId);
 }
 
 async function updateProject(projectId, updates = {}) {
@@ -2942,7 +2957,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
   const customSystemPrompt = typeof sessionRecord?.assistantSystemPrompt === 'string'
     ? sessionRecord.assistantSystemPrompt.trim()
     : '';
-  const projectCreationPrompt = sessionRecord?.projectCreationMode ? `${PROJECT_CREATION_SYSTEM_PROMPT}\n当前草稿：${JSON.stringify(await projectCreationService.get({ sessionId: sessionRecord.id }))}` : '';
+  const projectCreationPrompt = sessionRecord?.projectCreationMode ? `${PROJECT_CREATION_SYSTEM_PROMPT}\n用户在创建入口明确选择的配置（必须保留，推荐内容只能追加）：${JSON.stringify(sessionRecord.projectDefaults?.__projectCreationSelections || {})}\n当前草稿：${JSON.stringify(await projectCreationService.get({ sessionId: sessionRecord.id }))}` : '';
   const appendSystemPrompt = [
     appScoped ? undefined : desktopSettings.appendSystemPrompt,
     projectContextPrompt.appendSystemPrompt,
@@ -4691,7 +4706,10 @@ async function emitAppsChanged(payload = {}) {
     timestamp: Date.now(),
     ...nextPayload,
   });
-    refreshAllSessionModelResources();
+    // Runtime status transitions can arrive several times while an App is
+    // stopping. They do not change the installed resource catalog, so avoid
+    // rebuilding every session snapshot during that short lifecycle window.
+    if (nextPayload.action !== 'runtime') refreshAllSessionModelResources();
     if (appAuthoring?.initialized && appRuntime) {
       for (const installation of appRuntime.installations.list()) {
         void appRuntime.publishHostEvent(installation.appId, appDefaultInstanceId(installation.appId), 'moss.apps/v1', 'authoring.changed', { revision: Date.now() }).catch(() => {});
@@ -9511,7 +9529,32 @@ ipcMain.handle('agent:sync-remote-sessions', async () => {
 });
 
 async function createDesktopSession(payload = {}, internal = {}) {
-  if (payload.projectCreationMode) payload = { ...payload, projectId: null, mode: 'chat', assistant_name: '', appIds: [], appServiceIds: [], connectorIds: [], agentMode: 'local', permissionMode: 'default' };
+  if (payload.projectCreationMode) {
+    const selected = {
+      workspace: typeof payload.workspace === 'string' && payload.workspace.trim() ? payload.workspace.trim() : null,
+      workspaceExplicit: typeof payload.workspace === 'string' && Boolean(payload.workspace.trim()),
+      skillIds: normalizeStringList(payload.skillIds),
+      expertIds: typeof payload.assistant_name === 'string' && payload.assistant_name.trim() ? [payload.assistant_name.trim()] : [],
+      appIds: normalizeStringList(payload.appIds),
+      appServiceIds: normalizeStringList(payload.appServiceIds),
+      assistantName: typeof payload.assistant_name === 'string' && payload.assistant_name.trim() ? payload.assistant_name.trim() : null,
+    };
+    payload = {
+      ...payload,
+      projectId: null,
+      mode: 'chat',
+      projectDefaults: { ...(payload.projectDefaults || {}), __projectCreationSelections: selected },
+      // The creation session itself only exposes the project planning tools;
+      // keep the explicit choices in projectDefaults so missing Apps can be
+      // installed when the user confirms the generated project plan.
+      assistant_name: '',
+      appIds: [],
+      appServiceIds: [],
+      connectorIds: [],
+      agentMode: 'local',
+      permissionMode: 'default',
+    };
+  }
   if (payload.projectId) {
     const project = await readProject(payload.projectId);
     if (!project || project.archivedAt) throw new Error('Project not found.');
@@ -10500,7 +10543,10 @@ async function listAppsForRenderer() {
       mcpPresentation: manifest?.mcpApp?.presentation,
       publisher: manifest?.publisher,
       declaredSkills,
-      discovery: getAppDiscovery({ ...appEntry, discovery: manifest?.discovery }),
+      // Keep the renderer's resource sections aligned with the package shape:
+      // connector-only and data-only MCP packages are connectors, while Apps
+      // with their own UI/Backend remain in the Apps section.
+      discovery: getAppCatalogDiscovery(manifest || appEntry),
       connectorApp: manifest?.connectorApp ? { ...manifest.connectorApp, connection: connector || null } : undefined,
       hasUi: manifest ? Boolean(manifest.ui) : Boolean(appEntry.hasUi),
       uiBuiltin: manifest?.ui?.builtin || appEntry.uiBuiltin || null,
