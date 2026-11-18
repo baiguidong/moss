@@ -58,6 +58,7 @@ function createHarness(sessionMode = 'fixed') {
       getThreadContext: () => ({ summaryText: 'LEGACY_THREAD_SUMMARY' }),
     },
     persistAgentMailThreadSummary: noop,
+    managedResourceClient: { refresh: async () => null },
     assertWorkspaceVersionIdle: noop,
     localTranscriptSync: { refresh: noop, acknowledge: noop },
     shutdownSessionAgentTeam: (record: any) => { shutdownIds.push(record.id); },

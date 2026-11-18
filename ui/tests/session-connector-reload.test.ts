@@ -21,6 +21,7 @@ function fixture() {
     listAllStoredApps: () => [{ id: 'moss.baidu-netdisk', connectorApp: { id: 'baidu-netdisk' } }],
     appRuntime: { getInstallation: () => ({ enabled: true }) },
     readProjectSync: () => ({ instructions: '' }),
+    managedResourceClient: { refresh: async () => null },
     assertWorkspaceVersionIdle: () => {}, localTranscriptSync: { refresh: async () => {} },
     snapshotLegacyProjectDefaults: () => {},
     hasActiveAgentTeam: () => false, getProjectWorkerTasks: () => [], isActiveProjectWorker: () => false,
