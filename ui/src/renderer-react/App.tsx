@@ -1345,8 +1345,10 @@ export default function App() {
           refreshProjects(),
           refreshAssistants('local'),
         ]);
-        if (!cancelled && initialApps.length === 0) setActiveView('apps');
-        if (!cancelled && !window.mossWeb) requestAnimationFrame(() => { void window.agentDesktop.ipcInvoke('host:renderer-ready').catch(() => {}); });
+        if (!cancelled && !window.mossWeb) {
+          if (initialApps.length === 0) setActiveView('apps');
+          requestAnimationFrame(() => { void window.agentDesktop.ipcInvoke('host:renderer-ready').catch(() => {}); });
+        }
       } catch (error: any) {
         if (!cancelled) {
           setBootError(error?.message || String(error));
