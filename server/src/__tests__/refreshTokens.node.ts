@@ -206,6 +206,23 @@ test('HTTP token endpoint returns no-store refresh responses and rejects invalid
   } as ServerConfig, serverTestModels(f.db), f.service)
   try {
     const base = `http://127.0.0.1:${await server.ready}`
+    const passwordLogin = await fetch(`${base}/api/v1/auth/token`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'password', username: 'admin', password: 'admin-password' }),
+    })
+    assert.equal(passwordLogin.status, 200)
+    assert.equal(passwordLogin.headers.get('cache-control'), 'no-store')
+    const passwordTokens = await passwordLogin.json() as Record<string, unknown>
+    assert.ok(passwordTokens.access_token && passwordTokens.refresh_token)
+    const passwordRefresh = await fetch(`${base}/api/v1/auth/token`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: passwordTokens.refresh_token }),
+    })
+    assert.equal(passwordRefresh.status, 200)
+    assert.equal(passwordRefresh.headers.get('cache-control'), 'no-store')
+    const refreshedPasswordTokens = await passwordRefresh.json() as Record<string, unknown>
+    assert.ok(refreshedPasswordTokens.access_token && refreshedPasswordTokens.refresh_token)
+
     const first = await login(f)
     const post = (token: unknown) => fetch(`${base}/oidc/token`, {
       method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },

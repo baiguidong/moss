@@ -49,6 +49,10 @@ import type { ServerConfig, SessionRecord } from './types.js'
 
 type JsonBody = Record<string, unknown>
 
+// The admin console uses the password grant directly. Keep its rotating
+// refresh sessions separate from Desktop/WebUI OIDC clients.
+const ADMIN_AUTH_CLIENT_ID = 'moss-admin'
+
 const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -646,15 +650,25 @@ export function startServer(
           ? body.grant_type.trim()
           : 'password'
         if (grantType === 'password') {
-          writeJson(
-            res,
-            200,
-            await authService.issueTokenFromPassword({
-              username: typeof body.username === 'string' ? body.username : '',
-              email: typeof body.email === 'string' ? body.email : '',
-              password: typeof body.password === 'string' ? body.password : '',
-            }),
+          const result = await authService.issueTokenFromPassword({
+            username: typeof body.username === 'string' ? body.username : '',
+            email: typeof body.email === 'string' ? body.email : '',
+            password: typeof body.password === 'string' ? body.password : '',
+          })
+          const session = await authService.createRefreshSession(
+            result.access_token,
+            ADMIN_AUTH_CLIENT_ID,
           )
+          writeNoStoreJson(res, 200, { ...result, ...session })
+          return
+        }
+        if (grantType === 'refresh_token') {
+          const result = await authService.refreshAccessToken(
+            typeof body.refresh_token === 'string' ? body.refresh_token : '',
+            ADMIN_AUTH_CLIENT_ID,
+          )
+          if (!result) throw new OAuthLoginError(400, 'invalid_grant')
+          writeNoStoreJson(res, 200, result)
           return
         }
 

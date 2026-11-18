@@ -1,4 +1,4 @@
-import { authClient, setToken, getToken, removeToken } from './client'
+import { authClient, setToken, setRefreshToken, getToken, getRefreshToken, removeToken, removeRefreshToken } from './client'
 import type {
   LoginRequest,
   LoginResponse,
@@ -32,11 +32,14 @@ export async function login(
   }
   const response = await authClient.post<LoginResponse>('/api/v1/auth/token', body)
   setToken(response.access_token)
+  if (response.refresh_token) setRefreshToken(response.refresh_token)
+  else removeRefreshToken()
   return response
 }
 
 export async function logout(): Promise<void> {
   removeToken()
+  removeRefreshToken()
 }
 
 export async function getMe(): Promise<MeResponse> {
@@ -166,5 +169,5 @@ export async function rotateUserRagflowApiKey(userId: string): Promise<Pick<Ragf
 }
 
 export function isAuthenticated(): boolean {
-  return !!getToken()
+  return !!getToken() || !!getRefreshToken()
 }

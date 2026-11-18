@@ -1,6 +1,7 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 const TOKEN_KEY = 'moss_access_token'
+const REFRESH_TOKEN_KEY = 'moss_refresh_token'
 export const UNAUTHORIZED_EVENT = 'moss:unauthorized'
 
 export function getToken(): string | null {
@@ -13,9 +14,59 @@ export function setToken(token: string): void {
   localStorage.setItem(TOKEN_KEY, token)
 }
 
+export function getRefreshToken(): string | null {
+  if (typeof window === 'undefined') return null
+  return localStorage.getItem(REFRESH_TOKEN_KEY)
+}
+
+export function setRefreshToken(token: string): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(REFRESH_TOKEN_KEY, token)
+}
+
 export function removeToken(): void {
   if (typeof window === 'undefined') return
   localStorage.removeItem(TOKEN_KEY)
+}
+
+export function removeRefreshToken(): void {
+  if (typeof window === 'undefined') return
+  localStorage.removeItem(REFRESH_TOKEN_KEY)
+}
+
+let refreshInFlight: Promise<boolean> | null = null
+
+async function refreshAccessToken(baseUrl: string): Promise<boolean> {
+  const refreshToken = getRefreshToken()
+  if (!refreshToken) return false
+  if (refreshInFlight) return refreshInFlight
+
+  refreshInFlight = (async () => {
+    try {
+      const response = await fetch(`${baseUrl}/api/v1/auth/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: refreshToken }),
+      })
+      if (!response.ok) return false
+      const result = await response.json() as { access_token?: unknown; refresh_token?: unknown }
+      if (typeof result.access_token !== 'string' || !result.access_token) return false
+      setToken(result.access_token)
+      if (typeof result.refresh_token === 'string' && result.refresh_token) {
+        setRefreshToken(result.refresh_token)
+      } else {
+        removeRefreshToken()
+      }
+      return true
+    } catch {
+      return false
+    } finally {
+      refreshInFlight = null
+    }
+  })()
+
+  return refreshInFlight
 }
 
 interface ApiErrorResponse {
@@ -66,15 +117,26 @@ export class ApiClient {
       headers.set('Authorization', `Bearer ${token}`)
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    let response = await fetch(`${this.baseUrl}${path}`, {
       ...options,
       headers,
       credentials: 'include',
     })
 
+    if (response.status === 401 && await refreshAccessToken(this.baseUrl)) {
+      const refreshedToken = getToken()
+      if (refreshedToken) headers.set('Authorization', `Bearer ${refreshedToken}`)
+      response = await fetch(`${this.baseUrl}${path}`, {
+        ...options,
+        headers,
+        credentials: 'include',
+      })
+    }
+
     if (!response.ok) {
       if (response.status === 401) {
         removeToken()
+        removeRefreshToken()
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
         }

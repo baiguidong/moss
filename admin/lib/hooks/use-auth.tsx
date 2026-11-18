@@ -35,6 +35,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setScopes(response.scopes)
     } catch {
       localStorage.removeItem('moss_access_token')
+      localStorage.removeItem('moss_refresh_token')
       setUser(null)
       setScopes([])
     } finally {
