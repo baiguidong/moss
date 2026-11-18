@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ChevronRight, Download, LoaderCircle, PackageCheck } from 'lucide-react';
 import { AppMarketplaceIcon } from '@/components/app-marketplace-icon';
 import { AppDetailsSection, APP_DETAILS_LIST_CLASS, APP_DETAILS_ROW_CLASS } from '@/components/app-details-section';
@@ -8,22 +8,34 @@ import { supportsHostFeature } from '@/lib/host-environment';
 import { describeAppPermission } from '../../shared/app-capability-descriptions.mjs';
 import type { AppInstallProgress, AppMarketplaceDetail, AppMarketplaceEntry, StoredApp } from '@/types';
 
-export function AppMarketplaceDetails({ entry, detail, installed, version, busy, progress, error, detailError, hostApiVersion, onBack, onInstall, onVersion, onRetry }: {
+const platformNames: Record<string, string> = {
+  'darwin-arm64': 'macOS · Apple Silicon', 'darwin-x64': 'macOS · Intel',
+  'win32-x64': 'Windows · x64', 'win32-arm64': 'Windows · ARM64',
+  'linux-x64': 'Linux · x64', 'linux-arm64': 'Linux · ARM64',
+};
+
+export function AppMarketplaceDetails({ entry, detail, installed, version, busy, progress, error, detailError, hostApiVersion, hostPlatform, kitProgress, onSaveKit, onBack, onInstall, onVersion, onRetry }: {
   entry: AppMarketplaceEntry; detail?: AppMarketplaceDetail; installed?: StoredApp;
   version: string; busy: boolean; progress?: AppInstallProgress; error?: string; detailError?: string; hostApiVersion?: string;
+  hostPlatform?: string; kitProgress?: AppInstallProgress; onSaveKit(platform: string): void;
   onBack(): void; onInstall(): void; onVersion(version: string): void; onRetry(): void;
 }) {
   const backButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { backButton.current?.focus({ preventScroll: true }); }, []);
   const release = detail?.versions.find(item => item.version === version) || entry.latest;
+  const [preferredTarget, setPreferredTarget] = useState('');
+  const targets = Object.keys(release.offlineKits || {});
+  const kitTarget = targets.includes(preferredTarget) ? preferredTarget : hostPlatform && targets.includes(hostPlatform) ? hostPlatform : targets[0];
+  const kit = release.offlineKits?.[kitTarget];
   const compatible = (release.platformCompatible ?? entry.platformCompatible) && (release.hostCompatible ?? entry.hostCompatible);
   const sameVersion = installed?.currentVersion === version;
   const localModification = Boolean(installed?.localModification || entry.localModification);
-  const action = busy ? installed ? '更新中…' : '安装中…' : !installed ? '安装' : localModification ? sameVersion ? '本地版本冲突' : '安装市场版'
+  const installing = busy && kitProgress?.phase !== 'downloading';
+  const action = installing ? installed ? '更新中…' : '安装中…' : !installed ? '安装' : localModification ? sameVersion ? '本地版本冲突' : '安装市场版'
     : sameVersion ? '已安装' : version === entry.latestVersion && entry.updateAvailable ? '更新' : '安装此版本';
   const installSupported = supportsHostFeature('appInstallation');
   const bytes = release.artifact?.size || 0;
-  const size = bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  const size = bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MiB` : `${Math.max(1, Math.round(bytes / 1024))} KiB`;
   return <div data-app-market-details={entry.id} className="h-full min-h-0 overflow-y-auto bg-background">
     <div className="@container mx-auto max-w-3xl space-y-8 px-5 pb-12 pt-4 sm:px-9">
       <nav aria-label="市场详情导航" className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -34,10 +46,20 @@ export function AppMarketplaceDetails({ entry, detail, installed, version, busy,
         <AppMarketplaceIcon icon={entry.iconUrl} className="h-16 w-16 rounded-2xl" />
         <div className="min-w-0"><h1 className="text-2xl font-semibold tracking-tight">{entry.displayName}</h1><p className="mt-1.5 text-sm text-muted-foreground">{entry.publisher?.name || '应用市场'} · {entry.summary}</p></div>
         <Button className="col-span-2 w-fit rounded-full @2xl:col-span-1" disabled={busy || !detail || sameVersion || !compatible || !installSupported} onClick={onInstall}>
-          {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : sameVersion && !localModification ? <PackageCheck className="h-4 w-4" /> : <Download className="h-4 w-4" />}
-          {installSupported ? action : '此 Host 暂不支持安装授权'}
+          {installing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : sameVersion && !localModification ? <PackageCheck className="h-4 w-4" /> : <Download className="h-4 w-4" />}
+          {installSupported ? kit && action === '安装' ? '在线安装' : action : '此 Host 暂不支持安装授权'}
         </Button>
       </header>
+      {kit && <AppDetailsSection title="离线安装">
+        <div className="flex flex-wrap items-center gap-3 py-3">
+          <label className="flex items-center gap-2 text-sm">目标平台<select value={kitTarget} onChange={event => setPreferredTarget(event.target.value)} disabled={busy} className="h-9 rounded-lg border border-input bg-background px-2">
+            {targets.map(target => <option key={target} value={target}>{platformNames[target] || target}</option>)}
+          </select></label>
+          <Button variant="outline" disabled={busy || !detail} onClick={() => onSaveKit(kitTarget)}><Download className="h-4 w-4" />下载离线整包 · {(kit.size / 1024 ** 2).toFixed(1)} MiB</Button>
+        </div>
+        <p className="pb-3 text-sm text-muted-foreground">可拷至内网电脑。解压后，按包内安装说明在 Moss 中添加应用并准备本地资源。</p>
+        {kitProgress?.version === version && <AppInstallProgressView progress={kitProgress} />}
+      </AppDetailsSection>}
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {progress && <AppInstallProgressView progress={progress} />}
       {detailError ? <p role="alert" className="text-sm text-destructive">{detailError}<Button variant="outline" size="sm" className="ml-3 rounded-full" onClick={onRetry}>重试</Button></p>
@@ -49,7 +71,7 @@ export function AppMarketplaceDetails({ entry, detail, installed, version, busy,
         : '当前为本地修改版本。确认安装市场版后，本地版本和源码仍保留，可在版本历史中回滚。'}</p>}
       <AppDetailsSection title="基本信息"><dl className={APP_DETAILS_LIST_CLASS}>
         <div className={APP_DETAILS_ROW_CLASS}><dt className="text-muted-foreground">版本</dt><dd>{detail ? <select aria-label="可用版本" className="h-9 max-w-full rounded-lg border border-input bg-background px-3 text-sm" value={version} disabled={busy} onChange={event => onVersion(event.target.value)}>
-          {detail.versions.filter(item => item.platformCompatible).map(item => <option key={item.version} value={item.version}>{item.version}</option>)}
+          {detail.versions.filter(item => item.platformCompatible || Object.keys(item.offlineKits || {}).length).map(item => <option key={item.version} value={item.version}>{item.version}</option>)}
         </select> : version}</dd></div>
         {installed && <div className={APP_DETAILS_ROW_CLASS}><dt className="text-muted-foreground">已安装版本</dt><dd>{installed.currentVersion}{['invalid', 'incompatible'].includes(installed.packageStatus || '') ? ' · 当前版本不可用' : ''}</dd></div>}
         <div className={APP_DETAILS_ROW_CLASS}><dt className="text-muted-foreground">开发者</dt><dd>{entry.publisher?.name || '未提供'}</dd></div>

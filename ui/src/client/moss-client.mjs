@@ -245,6 +245,7 @@ export function createMossClient(transport, platform = {}) {
   appMarketplace: {
     list: (payload) => transport.invoke('app-market:list', payload),
     getDetails: (payload) => transport.invoke('app-market:get-details', payload),
+    saveOfflineKit: (payload) => transport.invoke('app-market:save-offline-kit', payload),
     install: (payload) => transport.invoke('app-market:install', payload),
   },
   listApps: () => transport.invoke('app:list'),

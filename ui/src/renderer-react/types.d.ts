@@ -1089,7 +1089,7 @@ export type AppVersion = {
 };
 
 export type AppInstallProgress = {
-  source: 'local' | 'marketplace';
+  source: 'local' | 'marketplace' | 'offline-kit';
   appId: string;
   version?: string;
   fileName?: string;
@@ -1118,6 +1118,7 @@ export type AppMarketplaceVersion = {
   releaseNotes: string;
   artifact: AppMarketplaceArtifact | null;
   artifacts?: Record<string, AppMarketplaceArtifact>;
+  offlineKits?: Record<string, { fileName: string; size: number; sha256: string }>;
   platformCompatible?: boolean;
   hostCompatible?: boolean;
 };
@@ -1623,6 +1624,7 @@ declare global {
       appDiscovery: (payload: AppDiscoveryPreferenceUpdate) => Promise<AppDiscoveryPreferences>;
       connectorApp: (payload: { appId: string; action?: 'status' | 'refresh' | 'setup' | 'auth' | 'credentials' | 'provision'; values?: Record<string, string>; sessionId?: string }) => Promise<{ connector: InstalledConnector; auth?: { status?: string } }>;
       appMarketplace: {
+        saveOfflineKit: (payload: { appId: string; version: string; platform: string }) => Promise<{ ok: boolean; canceled?: boolean; filePath?: string }>;
         list: (payload?: { forceRefresh?: boolean }) => Promise<AppMarketplaceCatalog>;
         getDetails: (payload: { appId: string; forceRefresh?: boolean }) => Promise<AppMarketplaceDetail>;
         install: (payload: { appId: string; version?: string; acceptPermissions?: boolean }) => Promise<{

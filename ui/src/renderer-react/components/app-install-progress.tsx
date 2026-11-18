@@ -32,7 +32,8 @@ export function AppInstallProgressView({ progress }: { progress: AppInstallProgr
   const total = Number.isFinite(progress.totalBytes) && progress.totalBytes! > 0 ? progress.totalBytes! : null;
   const received = Math.max(0, progress.receivedBytes || 0);
   const percent = downloading && total ? Math.min(100, Math.floor(received / total * 100)) : undefined;
-  const label = phaseLabels[progress.phase];
+  const label = progress.source === 'offline-kit' && progress.phase === 'completed' ? '离线整包已校验并保存'
+    : progress.source === 'offline-kit' && progress.phase === 'error' ? '离线包下载失败' : phaseLabels[progress.phase];
   const failed = progress.phase === "error";
 
   return (

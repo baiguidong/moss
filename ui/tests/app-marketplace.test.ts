@@ -918,3 +918,27 @@ it('reads a catalog with a legacy artifact field while exclusively selecting the
   expect(normalized.artifact).toBeUndefined()
   expect(normalized.artifacts['win32-x64'].fileName).toBe('windows.zip')
 })
+
+it('keeps a foreign offline target visible without offering to install its App on this host', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-market-target-'))
+  roots.push(root)
+  const base = version(Buffer.from('signed App'))
+  const target = 'darwin-arm64'
+  const fileName = 'example.app-1.2.0-offline-darwin-arm64.zip'
+  const kit = {
+    fileName, downloadUrl: new URL(fileName, base.artifact.downloadUrl).href,
+    size: 1024, sha256: 'a'.repeat(64), appSha256: base.artifact.sha256,
+    publisherId: 'moss', keyId: 'release-1', signature: Buffer.alloc(64).toString('base64'),
+  }
+  const latest = { ...base, platforms: [target], offlineKits: { [target]: kit } }
+  const service = createAppMarketplaceService({
+    indexUrl: 'https://example.com/index.json', cachePath: path.join(root, 'catalog.json'),
+    platform: 'win32-x64', getInstalledApps: async () => [],
+    download: async (url: string) => Buffer.from(JSON.stringify(url.endsWith('index.json') ? catalog(latest) : detail(latest))),
+  })
+  expect((await service.list()).apps[0]).toMatchObject({
+    platformCompatible: false, latest: { artifact: null, offlineKits: { [target]: kit } },
+  })
+  expect((await service.getDetails('example.app')).versions[0].offlineKits[target]).toEqual(kit)
+  await expect(service.install({ appId: 'example.app' })).rejects.toThrow('does not support win32-x64')
+})
