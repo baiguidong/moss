@@ -117,7 +117,7 @@ export function parseRemoteDirectServerInput(raw) {
   };
 }
 
-function decodeAccessTokenIdentity(authToken) {
+export function decodeAccessTokenIdentity(authToken) {
   const payload = String(authToken || '').split('.')[1];
   if (!payload) return { userId: '', orgId: '' };
   try {

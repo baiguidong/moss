@@ -1,4 +1,5 @@
-import { hostIpc as ipcMain } from './host/ipc.mjs';
+import { readManagedCatalog } from './shared/managed-resource-state.mjs';
+import { hostIpc } from './host/ipc.mjs';
 import electron from 'electron';
 
 import fsp from 'node:fs/promises';
@@ -1379,6 +1380,8 @@ export async function migrateLegacyExpertInstallations() {
 }
 
 export async function getInstalledExperts() {
+  const catalog = readManagedCatalog(MOSS_HOME);
+  if (catalog) return catalog.resources.filter(item => item.kind === 'expert');
   const experts = [];
   await migrateLegacyExperts();
   try {
@@ -1619,7 +1622,7 @@ async function uninstallExpert(sourcePath) {
   return { success: true };
 }
 
-export function registerPublicExpertHubIpcHandlers({ getDesktopSettings, notifyAssistantsChanged } = {}) {
+export function registerPublicExpertHubIpcHandlers({ ipcMain = hostIpc, getDesktopSettings, notifyAssistantsChanged } = {}) {
   const getBaseUrl = () => normalizeBaseUrl(getDesktopSettings?.()?.expertHub?.baseUrl);
 
   ipcMain.handle('public-experthub:get-config', async () => ({

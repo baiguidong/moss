@@ -33,7 +33,7 @@ export function InstalledResourceDetails({ resource, onBack, backLabel = '常用
   const [operationError, setOperationError] = React.useState('');
   const uninstallPending = React.useRef(false);
   const operationBusy = busy || uninstalling;
-  const canUninstall = installed && Boolean(resource.item.source) && !skill?.isBuiltin && Boolean(onUninstalled);
+  const canUninstall = resource.item.sourceType !== 'moss-server' && installed && Boolean(resource.item.source) && !skill?.isBuiltin && Boolean(onUninstalled);
   const uninstall = async () => {
     if (!canUninstall || operationBusy || uninstallPending.current) return;
     if (!window.confirm(`确定卸载${label}“${title}”？`)) return;

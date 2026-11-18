@@ -29,6 +29,7 @@ import type { PermissionDecision } from 'src/utils/permissions/PermissionResult.
 import { getRuleByContentsForTool } from 'src/utils/permissions/permissions.js'
 import { z } from 'zod/v4'
 import { clearInvokedSkillsForAgent } from '../../bootstrap/state.js'
+import { managedSkillSources } from '../../skills/loadSkillsDir.js'
 import { COMMAND_MESSAGE_TAG } from '../../constants/xml.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import {
@@ -67,6 +68,7 @@ import {
  * SkillTool needs this because getCommands() only returns local/bundled skills.
  */
 async function getAllCommands(context: ToolUseContext): Promise<Command[]> {
+  if (managedSkillSources()) return getCommands(getProjectRoot())
   // Only include MCP skills (loadedFrom === 'mcp'), not plain MCP prompts.
   // Before this filter, the model could invoke MCP prompts via SkillTool
   // if it guessed the mcp__server__prompt name — they weren't discoverable

@@ -1,4 +1,5 @@
 export type InstalledSkill = {
+  sourceType?: string;
   id?: string;
   name?: string;
   displayName?: string;
@@ -58,6 +59,7 @@ export function installedResourceTitle(resource: InstalledResource) {
 }
 
 export function installedResourceSource(resource: InstalledResource) {
+  if (resource.item.sourceType === 'moss-server') return 'Moss Server';
   if (resource.kind === 'skill') {
     return resource.item.isBuiltin ? 'Moss 内置' : resource.item.isHubInstalled ? 'SkillHub' : resource.item.isUploaded ? '本地导入' : '本地技能';
   }

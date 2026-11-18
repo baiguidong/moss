@@ -1,4 +1,5 @@
-import { hostIpc as ipcMain } from './host/ipc.mjs';
+import { readManagedCatalog } from './shared/managed-resource-state.mjs';
+import { hostIpc } from './host/ipc.mjs';
 import electron from 'electron';
 
 import fs from 'node:fs';
@@ -246,6 +247,8 @@ function findAssistantDir(name) {
 }
 
 export async function getInstalledAssistants() {
+  const catalog = readManagedCatalog(MOSS_HOME);
+  if (catalog) return catalog.resources.filter(item => item.kind === 'expert');
   const assistants = [];
   const seenAssistantNames = new Set();
 
@@ -310,7 +313,7 @@ export async function getInstalledAssistants() {
   return assistants;
 }
 
-export function registerAgentIpcHandlers() {
+export function registerAgentIpcHandlers(ipcMain = hostIpc) {
   // Fetch assistants from Hub with pagination
   ipcMain.handle('agent:fetchAssistants', async (_event, { cursor, limit = 20, query = '', category = '' } = {}) => {
     try {

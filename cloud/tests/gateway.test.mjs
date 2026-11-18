@@ -21,6 +21,8 @@ test('gateway authenticates routing, strips client credentials, closes WS on log
     } else {
       const user = req.headers.authorization?.replace('Bearer ', '');
       if (!['alice', 'bob'].includes(user)) { res.writeHead(401); res.end('{}'); return; }
+      if (req.url === '/api/v1/managed-resources/manifest') return respond(res, { enabled: true, userId: user, resources: [] });
+      if (req.url === '/api/v1/managed-resources/skill/skill-1/download') return res.end(Buffer.from([80, 75, 0, 255]));
       respond(res, req.url === '/api/v1/hosts' ? { hosts: revokedHost ? [{ id: revokedHost, access: { allowed: false, reason: 'revoked' } }] : [] } : identity(user));
     }
   });
@@ -63,6 +65,12 @@ test('gateway authenticates routing, strips client credentials, closes WS on log
   assert.equal(gateway.store.all().length, 1, 'Desktop reconnects to the same personal computer');
   assert.equal((await (await fetch(base() + '/api/private', { headers: { Cookie: desktopCookie } })).json()).cookie, 'moss_web=alice');
   const personal = gateway.store.all()[0];
+  const managed = (route, method = 'GET') => fetch(base() + '/_moss-auth/api/v1/managed-resources/' + route, {
+    method, headers: { 'X-Moss-Environment': personal.id, 'X-Moss-Host-Token': personal.controlToken, Authorization: 'Bearer alice' },
+  });
+  assert.deepEqual(await (await managed('manifest')).json(), { enabled: true, userId: 'alice', resources: [] });
+  assert.deepEqual(new Uint8Array(await (await managed('skill/skill-1/download')).arrayBuffer()), Uint8Array.of(80, 75, 0, 255));
+  assert.equal((await managed('skills/install', 'POST')).status, 404);
   const config = await fetch(base() + '/_moss-auth/web-config', { headers: { 'X-Moss-Environment': personal.id, 'X-Moss-Host-Token': personal.controlToken } });
   assert.equal((await config.json()).origin, env.MOSS_WEB_ORIGIN);
   const account = await (await fetch(base() + '/api/auth', { headers: { Cookie: ca } })).json();

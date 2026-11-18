@@ -1,5 +1,5 @@
 import { bundledResourcePath } from './bundled-resource-paths.mjs';
-import { hostIpc as ipcMain } from './host/ipc.mjs';
+import { hostIpc } from './host/ipc.mjs';
 import electron from 'electron';
 const { dialog } = electron;
 import fs from 'node:fs';
@@ -518,7 +518,7 @@ async function importLocalSkill(sourcePath) {
   }
 }
 
-export function registerPublicSkillHubIpcHandlers({ getDesktopSettings } = {}) {
+export function registerPublicSkillHubIpcHandlers({ ipcMain = hostIpc, getDesktopSettings } = {}) {
   const getApiBaseUrl = () => normalizeApiBaseUrl(getDesktopSettings?.()?.skillHub?.apiBaseUrl);
 
   ipcMain.handle('public-skillhub:get-config', async () => ({

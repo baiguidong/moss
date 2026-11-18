@@ -197,6 +197,10 @@ export interface SystemSettingsOpenIM {
   requestTimeoutMs: number
 }
 
+export interface SystemSettingsResourceControl {
+  enforceServerManagedSkillsExperts: boolean
+}
+
 export interface SystemSettings {
   webui?: { snapshots: { maxSnapshotsPerEnvironment: number; maxBytesPerEnvironment: number } }
   bypassPermissions: boolean
@@ -210,6 +214,7 @@ export interface SystemSettings {
   apiKey: string
   image: SystemSettingsImage
   openIM: SystemSettingsOpenIM
+  resourceControl: SystemSettingsResourceControl
   settingsPath: string
   settingsExists: boolean
   settingsLoaded: boolean
@@ -237,6 +242,7 @@ export interface UpdateSystemSettingsRequest {
     }
   }
   openIM?: Partial<SystemSettingsOpenIM>
+  resourceControl?: Partial<SystemSettingsResourceControl>
 }
 
 // Direct Connect Server Types

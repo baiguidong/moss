@@ -1,3 +1,4 @@
+import { readManagedCatalog } from '../../ui/src/shared/managed-resource-state.mjs'
 import { homedir } from 'os'
 import { isRetiredAppAuthoringResource } from '../../shared/retired-app-authoring-resources.mjs'
 import { readFile, readdir, stat } from 'fs/promises'
@@ -63,6 +64,8 @@ async function findAssistantDir(assistantName: string): Promise<string | null> {
   if (!normalized || normalized.includes('/') || normalized.includes('\\')) {
     return null
   }
+  const catalog = readManagedCatalog(MOSS_HOME)
+  if (catalog) return catalog.resources.find(item => item.kind === 'expert' && (item.id === normalized || item.name === normalized))?.source || null
   const names = normalized.startsWith('builtin-')
     ? [normalized, normalized.slice('builtin-'.length)]
     : [normalized]
@@ -118,6 +121,8 @@ export async function getAssistantSystemPrompt(
 }
 
 export async function getLocalInstalledSkills(): Promise<LocalInstalledSkill[]> {
+  const catalog = readManagedCatalog(MOSS_HOME)
+  if (catalog) return catalog.resources.filter(item => item.kind === 'skill')
   let entries
   try {
     entries = await readdir(SKILLS_DIR, { withFileTypes: true })

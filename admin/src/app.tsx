@@ -9,6 +9,7 @@ const SessionsPage = lazy(() => import('./pages/computers-page'))
 const UsersPage = lazy(() => import('./pages/users-page'))
 const UsagePage = lazy(() => import('./pages/usage-page'))
 const SystemSettingsPage = lazy(() => import('./pages/system-settings-page'))
+const ManagedResourcesPage = lazy(() => import('./pages/managed-resources-page'))
 
 function RouteLoader() {
   return (
@@ -85,6 +86,14 @@ export default function App() {
           element={
             <SuspendedRoute>
               <SystemSettingsPage />
+            </SuspendedRoute>
+          }
+        />
+        <Route
+          path="/managed-resources"
+          element={
+            <SuspendedRoute>
+              <ManagedResourcesPage />
             </SuspendedRoute>
           }
         />

@@ -37,6 +37,9 @@ import { authenticateHostReport, handleControlPlaneRoute } from './controlPlane.
 import { listSessionTasks } from './sessionTasks.js'
 import { createServerLogger, type ServerLogger } from './serverLog.js'
 import { NewAPIService } from './newApi/service.js'
+import { ManagedResourcesService, type ManagedResourceKind } from './managedResources.js'
+import { listManagedHubCards } from './managedHubCards.js'
+import { downloadHubExpert, downloadHubSkill, getHubSkill, hubExpert, hubText, listHubExperts, listHubSkills } from './managedHub.js'
 
 import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
 import { fetchModelCatalog } from '../../shared/model-list.mjs'
@@ -523,6 +526,7 @@ export function startServer(
   stop: () => Promise<void>
 } {
   const adminDistDir = resolveAdminDistDir()
+  const managedResources = new ManagedResourcesService()
   const agentMailService = new AgentMailService(
     new AgentMailRepository(models.db),
   )
@@ -987,7 +991,8 @@ export function startServer(
       }
 
       if (req.method === 'GET' && pathname === '/api/v1/bootstrap') {
-        writeJson(res, 200, {
+        const resourceControlEnabled = getSystemSettings().resourceControl?.enforceServerManagedSkillsExperts === true
+        writeNoStoreJson(res, 200, {
           client_data: null,
           additional_model_options: [],
           capabilities: {
@@ -1003,9 +1008,197 @@ export function startServer(
               enabled: ragflowIntegration?.enabled ?? false,
               version: 1,
             },
+            resource_control: { enabled: resourceControlEnabled },
           },
         })
         return
+      }
+
+      // The control plane may seed its managed catalog from the public hubs.
+      // These endpoints are administration-only; clients never use them.
+      if (req.method === 'GET' && (pathname === '/api/v1/managed-resources/hub/skills' || pathname === '/api/v1/managed-resources/hub/experts')) {
+        await authService.requireCurrentScope(auth, 'admin:settings')
+        if (url.searchParams.get('view') === 'cards') {
+          writeNoStoreJson(res, 200, await listManagedHubCards(pathname.endsWith('/skills') ? 'skill' : 'expert', url.searchParams))
+          return
+        }
+        const result = pathname.endsWith('/skills')
+          ? await listHubSkills({ keyword: url.searchParams.get('keyword') || '', page: Number(url.searchParams.get('page') || 1), pageSize: Number(url.searchParams.get('pageSize') || 24) })
+          : await listHubExperts()
+        writeJson(res, 200, result)
+        return
+      }
+
+      const hubInstallMatch = pathname.match(/^\/api\/v1\/managed-resources\/(skills|experts)\/install-from-hub$/)
+      if (hubInstallMatch && req.method === 'POST') {
+        await authService.requireCurrentScope(auth, 'admin:settings')
+        const body = await readJsonBody(req)
+        const kind: ManagedResourceKind = hubInstallMatch[1] === 'skills' ? 'skill' : 'expert'
+        const slug = typeof body.slug === 'string' ? body.slug.trim() : typeof body.id === 'string' ? body.id.trim() : ''
+        if (!slug) throw new HttpError(400, 'Missing hub resource id')
+        let dependencies: string[] = []
+        let metadata: Record<string, unknown> = {}
+        let packageBytes: Uint8Array
+        let version = typeof body.version === 'string' ? body.version : ''
+        let name = typeof body.name === 'string' ? body.name : slug
+        let displayName = typeof body.display_name === 'string' ? body.display_name : ''
+        let description = typeof body.description === 'string' ? body.description : ''
+        let icon = typeof body.icon === 'string' ? body.icon : ''
+        let category = typeof body.category === 'string' ? body.category : ''
+        if (kind === 'skill') {
+          const detail = await getHubSkill(slug, typeof body.namespace === 'string' ? body.namespace : undefined)
+          const skill = detail?.skill || detail || {}
+          const latest = detail?.latestVersion || {}
+          version = version || String(latest.version || skill.version || '1.0.0')
+          name = name === slug ? String(skill.name || skill.slug || slug) : name
+          displayName = displayName || hubText(skill.displayName || skill.display_name) || name
+          description = description || hubText(skill.description_zh || skill.summary_zh || skill.description || skill.summary)
+          icon = icon || hubText(skill.iconUrl || skill.icon)
+          category = category || hubText(skill.category?.nameZh || skill.category)
+          metadata = { source: 'skillhub', sourceId: skill.id || slug, namespace: body.namespace || skill.namespace || null }
+          packageBytes = await downloadHubSkill(slug, version, typeof body.namespace === 'string' ? body.namespace : undefined)
+        } else {
+          const expert = await hubExpert(slug)
+          version = version || String(expert.version || expert.updatedAt || '1.0.0')
+          name = name === slug ? hubText(expert.name) || String(expert.id || slug) : name
+          displayName = displayName || hubText(expert.displayName) || hubText(expert.display_name) || name
+          description = description || hubText(expert.description) || hubText(expert.profession)
+          icon = icon || hubText(expert.avatar) || hubText(expert.icon)
+          category = category || hubText(expert.categoryName) || hubText(expert.category) || hubText(expert.categoryId)
+          dependencies = (Array.isArray(expert.dependencies) ? expert.dependencies : []).filter((item: unknown) => typeof item === 'string')
+          metadata = { source: 'experthub', sourceId: expert.id || slug }
+          packageBytes = await downloadHubExpert(expert)
+        }
+        const resource = await managedResources.install({ orgId: auth.orgId, kind, slug, name, displayName, description, icon, category, version, dependencies, metadata, packageBytes })
+        writeJson(res, 200, { resource })
+        return
+      }
+
+      const managedResourcePath = pathname.match(/^\/api\/v1\/managed-resources(?:\/([^/]+))?(?:\/([^/]+))?(?:\/([^/]+))?$/)
+      if (managedResourcePath && managedResourcePath[1] !== 'users') {
+        const first = managedResourcePath[1] || ''
+        const second = managedResourcePath[2] || ''
+        const third = managedResourcePath[3] || ''
+        const resourceControlEnabled = getSystemSettings().resourceControl?.enforceServerManagedSkillsExperts === true
+        if (req.method === 'GET' && pathname === '/api/v1/managed-resources/manifest') {
+          await authService.requireCurrentScope(auth, 'sessions:create')
+          writeNoStoreJson(res, 200, {
+            ...await managedResources.manifest(auth.orgId, auth.userId),
+            enabled: getSystemSettings().resourceControl?.enforceServerManagedSkillsExperts === true,
+          })
+          return
+        }
+        if (first === 'manifest') throw new HttpError(404, 'Not found')
+        const kind = first === 'skills' || first === 'skill' ? 'skill' : first === 'experts' || first === 'expert' ? 'expert' : null
+        if (!kind) throw new HttpError(404, 'Not found')
+        if (req.method === 'GET' && second && third === 'download') {
+          await authService.requireCurrentScope(auth, 'sessions:create')
+          if (!resourceControlEnabled) throw new HttpError(404, 'Not found')
+          const resource = managedResources.getForUser(auth.orgId, auth.userId, kind, decodeURIComponent(second))
+          const bytes = resource ? managedResources.getPackage(resource) : null
+          if (!resource || !bytes) throw new HttpError(404, 'Not found')
+          res.writeHead(200, { 'cache-control': 'private, no-store', 'content-type': 'application/octet-stream', 'content-length': bytes.byteLength, 'x-moss-resource-sha256': resource.sha256 })
+          res.end(Buffer.from(bytes))
+          return
+        }
+        if (req.method === 'GET' && !second) {
+          await authService.requireCurrentScope(auth, 'admin:settings')
+          writeJson(res, 200, { resources: await managedResources.withIcons(managedResources.list(auth.orgId, kind)) })
+          return
+        }
+        if (req.method === 'POST' && !third && (!second || second === 'install')) {
+          await authService.requireCurrentScope(auth, 'admin:settings')
+          const body = await readJsonBody(req, 256 * 1024 * 1024)
+          const rawPackage = typeof body.package_base64 === 'string' ? body.package_base64 : ''
+          if (!rawPackage) throw new HttpError(400, '缺少资源 ZIP')
+          const packageBytes = Buffer.from(rawPackage, 'base64')
+          const resource = await managedResources.install({
+            orgId: auth.orgId,
+            kind,
+            slug: typeof body.slug === 'string' ? body.slug : '',
+            name: typeof body.name === 'string' ? body.name : undefined,
+            displayName: typeof body.display_name === 'string' ? body.display_name : undefined,
+            description: typeof body.description === 'string' ? body.description : undefined,
+            icon: typeof body.icon === 'string' ? body.icon : undefined,
+            category: typeof body.category === 'string' ? body.category : undefined,
+            version: typeof body.version === 'string' ? body.version : undefined,
+            dependencies: Array.isArray(body.dependencies) ? body.dependencies.filter((value): value is string => typeof value === 'string') : undefined,
+            metadata: body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata) ? body.metadata as Record<string, unknown> : undefined,
+            packageBytes,
+          })
+          writeJson(res, 200, { resource })
+          return
+        }
+        if (req.method === 'PATCH' && second && !third) {
+          await authService.requireCurrentScope(auth, 'admin:settings')
+          const body = await readJsonBody(req)
+          if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'Invalid enabled')
+          const resource = await managedResources.setEnabled(auth.orgId, kind, decodeURIComponent(second), body.enabled)
+          if (!resource) throw new HttpError(404, 'Not found')
+          writeJson(res, 200, { resource })
+          return
+        }
+        if (req.method === 'DELETE' && second && !third) {
+          await authService.requireCurrentScope(auth, 'admin:settings')
+          if (!await managedResources.remove(auth.orgId, kind, decodeURIComponent(second))) throw new HttpError(404, 'Not found')
+          writeJson(res, 200, { ok: true })
+          return
+        }
+        throw new HttpError(405, 'Method not allowed')
+      }
+
+      if (req.method === 'GET' && pathname === '/api/v1/managed-resources/users') {
+        await authService.requireCurrentScope(auth, 'admin:settings')
+        const [users, { departments }] = await Promise.all([
+          authService.listResourceUsers(auth.orgId, auth), authService.listDepartments(auth.orgId, auth),
+        ])
+        writeNoStoreJson(res, 200, { users, departments: departments.map(({ id, name, parentId }) => ({ id, name, parentId })) })
+        return
+      }
+
+      const assignmentMatch = pathname.match(/^\/api\/v1\/managed-resources\/users\/(skills|experts)\/assignments$/)
+      if (assignmentMatch) {
+        await authService.requireCurrentScope(auth, 'admin:settings')
+        if (req.method !== 'POST' && req.method !== 'PATCH') throw new HttpError(405, 'Method not allowed')
+        const body = await readJsonBody(req, 2 * 1024 * 1024)
+        function ids(key: string): string[] {
+          const value = body[key]
+          if (!Array.isArray(value) || !value.every(id => typeof id === 'string' && id.length > 0)) {
+            throw new HttpError(400, 'Invalid ' + key)
+          }
+          return [...new Set<string>(value)]
+        }
+        const userIds = ids('user_ids')
+        if (!userIds.length) throw new HttpError(400, '请选择授权用户')
+        const visible = new Set((await authService.listResourceUsers(auth.orgId, auth)).map(user => user.id))
+        if (!userIds.every(id => visible.has(id))) throw new HttpError(404, '请选择可管理的用户')
+        const kind = assignmentMatch[1] === 'skills' ? 'skill' : 'expert'
+        if (req.method === 'PATCH') managedResources.updateAssignments(auth.orgId, userIds, kind, ids('add'), ids('remove'))
+        writeNoStoreJson(res, 200, { assigned_counts: managedResources.assignmentCounts(auth.orgId, userIds, kind) })
+        return
+      }
+
+      const policyMatch = pathname.match(/^\/api\/v1\/managed-resources\/users\/([^/]+)\/(skills|experts)\/policy$/)
+      if (policyMatch) {
+        await authService.requireCurrentScope(auth, 'admin:settings')
+        const userId = decodeURIComponent(policyMatch[1] || '')
+        const user = await authService.getUserOrNull(userId, auth.orgId, auth)
+        if (!user) throw new HttpError(404, 'Unknown user_id')
+        const kind = policyMatch[2] === 'skills' ? 'skill' : 'expert' as ManagedResourceKind
+        if (req.method === 'GET') {
+          writeNoStoreJson(res, 200, { resource_ids: managedResources.getAssignedIds(auth.orgId, userId, kind) })
+          return
+        }
+        if (req.method === 'PUT') {
+          const body = await readJsonBody(req)
+          if (!Array.isArray(body.resource_ids) || !body.resource_ids.every(id => typeof id === 'string')) {
+            throw new HttpError(400, 'Invalid resource_ids')
+          }
+          await managedResources.setAssignedIds(auth.orgId, userId, kind, body.resource_ids as string[])
+          writeJson(res, 200, { ok: true })
+          return
+        }
+        throw new HttpError(405, 'Method not allowed')
       }
 
       if (

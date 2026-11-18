@@ -55,6 +55,8 @@ import {
   getSkillDirCommands,
   clearSkillCaches,
   getDynamicSkills,
+  managedSkillSources,
+  skillCatalogCacheKey,
 } from './skills/loadSkillsDir.js'
 import { getBundledSkills } from './skills/bundledSkills.js'
 import memoize from 'lodash-es/memoize.js'
@@ -149,7 +151,7 @@ async function getSkills(cwd: string): Promise<{
       return []
     })
     // Bundled skills are registered synchronously at startup
-    const bundledSkills = getBundledSkills()
+    const bundledSkills = managedSkillSources() ? [] : getBundledSkills()
     logForDebugging(
       `getSkills returning: ${skillDirCommands.length} skill dir commands, ${bundledSkills.length} bundled skills`,
     )
@@ -209,7 +211,7 @@ const loadAllCommands = memoize(async (cwd: string): Promise<Command[]> => {
     ...mergeBuiltinSkills(bundledSkills, skillDirCommands),
     ...COMMANDS(),
   ]
-})
+}, skillCatalogCacheKey)
 
 /**
  * Returns commands available to the current user. The expensive loading is
@@ -289,7 +291,7 @@ export function clearCommandsCache(): void {
 export function getMcpSkillCommands(
   mcpCommands: readonly Command[],
 ): readonly Command[] {
-  if (feature('MCP_SKILLS')) {
+  if (feature('MCP_SKILLS') && !managedSkillSources()) {
     return mcpCommands.filter(
       cmd =>
         cmd.type === 'prompt' &&
@@ -320,6 +322,7 @@ export const getSkillToolCommands = memoize(
           cmd.whenToUse),
     )
   },
+  skillCatalogCacheKey,
 )
 
 // Filters commands to include only skills. Skills are commands that provide
@@ -346,6 +349,7 @@ export const getSlashCommandToolSkills = memoize(
       return []
     }
   },
+  skillCatalogCacheKey,
 )
 
 export function findCommand(

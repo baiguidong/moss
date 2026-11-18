@@ -1,3 +1,4 @@
+import { readManagedCatalog } from '../../ui/src/shared/managed-resource-state.mjs'
 import { realpath } from 'fs/promises'
 import { isRetiredAppAuthoringResource } from '../../shared/retired-app-authoring-resources.mjs'
 import ignore from 'ignore'
@@ -67,6 +68,15 @@ import {
   SKILL_HUB_META_FILE,
 } from '../utils/skills/localSkillDirectories.js'
 import { registerMCPSkillBuilders } from './mcpSkillBuilders.js'
+
+export function managedSkillSources(): string[] | null {
+  const catalog = readManagedCatalog(process.env.MOSS_HOME || getMossConfigHomeDir())
+  return catalog ? catalog.resources.filter(item => item.kind === 'skill').map(item => item.source) : null
+}
+
+export function skillCatalogCacheKey(cwd: string): string {
+  return JSON.stringify([cwd, managedSkillSources()])
+}
 
 export type LoadedFrom =
   | 'commands_DEPRECATED'
@@ -343,6 +353,10 @@ export function createSkillCommand({
     hooks,
     skillRoot: baseDir,
     async getPromptForCommand(args, toolUseContext) {
+      const sources = managedSkillSources()
+      if (sources && (!baseDir || !sources.includes(baseDir))) {
+        throw new Error('该技能未获 Moss Server 授权')
+      }
       let finalContent = baseDir
         ? `Base directory for this skill: ${baseDir}\n\n${markdownContent}`
         : markdownContent
@@ -659,6 +673,11 @@ async function loadSkillsFromCommandsDir(
  */
 export const getSkillDirCommands = memoize(
   async (cwd: string): Promise<Command[]> => {
+    const sources = managedSkillSources()
+    if (sources) {
+      const results = await Promise.all(sources.map(source => loadSkillsFromSkillsDir(dirname(source), 'userSettings')))
+      return results.flat().filter(entry => sources.includes(dirname(entry.filePath))).map(entry => entry.skill)
+    }
     const userSkillsDir = join(getMossConfigHomeDir(), 'skills')
     const managedLocalSkillDirs =
       MANAGED_SKILL_SEARCH_DIRS.filter(directory => directory !== userSkillsDir)
@@ -828,7 +847,7 @@ export const getSkillDirCommands = memoize(
     return unconditionalSkills
   },
   (cwd: string) =>
-    `${cwd}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
+    `${skillCatalogCacheKey(cwd)}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
 )
 
 export function clearSkillCaches() {
@@ -949,6 +968,7 @@ export async function discoverSkillDirsForPaths(
  * @param dirs Array of skill directories to load from (should be sorted deepest first)
  */
 export async function addSkillDirectories(dirs: string[]): Promise<void> {
+  if (managedSkillSources()) return
   if (!isSettingSourceEnabled('projectSettings')) {
     logForDebugging(
       '[skills] Dynamic skill discovery skipped: projectSettings disabled',
@@ -1004,6 +1024,7 @@ export async function addSkillDirectories(dirs: string[]): Promise<void> {
  * These are skills discovered from file paths during the session.
  */
 export function getDynamicSkills(): Command[] {
+  if (managedSkillSources()) return []
   return Array.from(dynamicSkills.values())
 }
 

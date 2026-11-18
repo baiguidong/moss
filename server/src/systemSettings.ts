@@ -25,6 +25,10 @@ export type SystemSettingsOpenIM = {
   requestTimeoutMs: number
 }
 
+export type SystemSettingsResourceControl = {
+  enforceServerManagedSkillsExperts: boolean
+}
+
 export type SystemSettingsPayload = {
   bypassPermissions: boolean
   model: string
@@ -39,6 +43,7 @@ export type SystemSettingsPayload = {
   image: SystemSettingsImage
   webui?: { snapshots: SnapshotPolicy }
   openIM: SystemSettingsOpenIM
+  resourceControl: SystemSettingsResourceControl
   settingsPath: string
   settingsExists: boolean
   settingsLoaded: boolean
@@ -89,6 +94,9 @@ const DEFAULT_SYSTEM_SETTINGS: Omit<
     secret: '',
     webhookSecret: '',
     requestTimeoutMs: 15_000,
+  },
+  resourceControl: {
+    enforceServerManagedSkillsExperts: false,
   },
 }
 
@@ -337,6 +345,17 @@ function normalizeSystemSettings(
       DEFAULT_SYSTEM_SETTINGS.openIM.requestTimeoutMs,
   }
 
+  const sourceResourceControl = isRecord(source.resourceControl) ? source.resourceControl : {}
+  const existingResourceControl = isRecord(result.resourceControl) ? result.resourceControl : {}
+  result.resourceControl = {
+    enforceServerManagedSkillsExperts:
+      typeof sourceResourceControl.enforceServerManagedSkillsExperts === 'boolean'
+        ? sourceResourceControl.enforceServerManagedSkillsExperts
+        : typeof existingResourceControl.enforceServerManagedSkillsExperts === 'boolean'
+          ? existingResourceControl.enforceServerManagedSkillsExperts
+          : DEFAULT_SYSTEM_SETTINGS.resourceControl.enforceServerManagedSkillsExperts,
+  }
+
   result.webui = { snapshots: normalizeSnapshotPolicy({ ...recordField(recordField(existing, 'webui'), 'snapshots'), ...recordField(recordField(source, 'webui'), 'snapshots') }) }
   return result as PersistedSystemSettings
 }
@@ -384,6 +403,7 @@ function readSystemSettingsState(): SystemSettingsState {
       ...normalized,
       image: normalized.image || { ...DEFAULT_SYSTEM_SETTINGS.image },
       openIM: normalized.openIM || { ...DEFAULT_SYSTEM_SETTINGS.openIM },
+      resourceControl: normalized.resourceControl || { ...DEFAULT_SYSTEM_SETTINGS.resourceControl },
     }
     result.loaded = true
     return result
@@ -410,6 +430,7 @@ function toSystemSettingsPayload(
     image: state.value.image,
     webui: state.value.webui,
     openIM: state.value.openIM,
+    resourceControl: state.value.resourceControl,
     settingsPath: state.path,
     settingsExists: state.exists,
     settingsLoaded: state.loaded,
@@ -491,6 +512,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     models,
     webui: nextSettings.webui,
     openIM: nextSettings.openIM,
+    resourceControl: nextSettings.resourceControl,
     env,
   }
 
@@ -528,6 +550,7 @@ export function updateSystemSettings(patch: unknown): SystemSettingsPayload {
     image: nextSettings.image,
     webui: nextSettings.webui,
     openIM: nextSettings.openIM,
+    resourceControl: nextSettings.resourceControl,
     settingsPath,
     settingsExists: true,
     settingsLoaded: true,

@@ -458,6 +458,11 @@ export class AuthService {
     }
   }
 
+  async listResourceUsers(orgId: string, auth: AuthContext) {
+    const users = await this.listVisibleUsers(orgId, auth)
+    return users.map(({ id, name, email, departmentId }) => ({ id, name, email, departmentId }))
+  }
+
   async listDepartments(
     orgId: string,
     auth?: AuthContext,

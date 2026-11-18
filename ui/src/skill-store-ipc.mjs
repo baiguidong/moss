@@ -1,4 +1,5 @@
-import { hostIpc as ipcMain } from './host/ipc.mjs';
+import { readManagedCatalog } from './shared/managed-resource-state.mjs';
+import { hostIpc } from './host/ipc.mjs';
 import electron from 'electron';
 const { dialog } = electron;
 import fs from 'node:fs';
@@ -242,6 +243,8 @@ async function readInstalledSkills(root, skills) {
 }
 
 export async function getInstalledSkills() {
+  const catalog = readManagedCatalog(MOSS_HOME);
+  if (catalog) return catalog.resources.filter(item => item.kind === 'skill');
   const skills = [];
   for (const root of SKILL_SEARCH_DIRS) await readInstalledSkills(root, skills);
   return skills;
@@ -315,7 +318,7 @@ export async function installSkillFromZip(zipBuffer, skillName, skillMeta, versi
   }
 }
 
-export function registerSkillStoreIpcHandlers() {
+export function registerSkillStoreIpcHandlers(ipcMain = hostIpc) {
   // Fetch skills from Hub with pagination
   ipcMain.handle('skill-store:fetchSkills', async (_event, { cursor, limit = 20, query = '', category = '' } = {}) => {
     try {

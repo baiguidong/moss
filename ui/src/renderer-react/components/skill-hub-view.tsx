@@ -57,6 +57,7 @@ type RemoteSkill = {
 };
 
 type InstalledSkill = {
+  sourceType?: string;
   id?: string;
   slug?: string;
   name: string;
@@ -342,7 +343,7 @@ function InstalledSkillCard({
                 {name}
               </div>
               <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                {skill.isBuiltin ? "Moss 内置" : skill.isHubInstalled ? "SkillHub" : skill.isUploaded ? "本地导入" : "本地技能"}
+                {skill.sourceType === "moss-server" ? "Moss Server" : skill.isBuiltin ? "Moss 内置" : skill.isHubInstalled ? "SkillHub" : skill.isUploaded ? "本地导入" : "本地技能"}
               </div>
             </div>
           </div>
@@ -366,6 +367,7 @@ function InstalledSkillCard({
 }
 
 export function SkillHubView() {
+  const [managed, setManaged] = React.useState(false);
   const [tab, setTab] = React.useState<SkillTab>("hub");
   const [sortMode, setSortMode] = React.useState<SkillSortMode>("downloads");
   const [query, setQuery] = React.useState("");
@@ -422,8 +424,13 @@ export function SkillHubView() {
   const loadInstalled = React.useCallback(async () => {
     setInstalledLoading(true);
     try {
-      const res = await window.agentDesktop.skillHub.getInstalled() as { success?: boolean; data?: InstalledSkill[]; error?: string };
+      const res = await window.agentDesktop.skillHub.getInstalled() as { success?: boolean; managed?: boolean; data?: InstalledSkill[]; error?: string };
       if (!res?.success) throw new Error(res?.error || "读取已安装技能失败");
+      setManaged(res.managed === true);
+      if (res.managed) {
+        setTab("installed");
+        setError(res.error || "");
+      }
       setInstalledSkills(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -538,7 +545,7 @@ export function SkillHubView() {
     });
   }, [category, categoryNameByKey, deferredQuery, installedSkills]);
 
-  const tabs: Array<{ id: SkillTab; label: string }> = [
+  const tabs: Array<{ id: SkillTab; label: string }> = managed ? [{ id: "installed", label: "服务端已授权" }] : [
     { id: "hub", label: "全部技能" },
     { id: "installed", label: "已安装" },
   ];
@@ -617,10 +624,10 @@ export function SkillHubView() {
               </div>
             </>
           ) : null}
-          <Button variant="outline" size="sm" className="ml-auto h-8 rounded-lg px-3 text-xs" onClick={importLocal}>
+          {!managed && <Button variant="outline" size="sm" className="ml-auto h-8 rounded-lg px-3 text-xs" onClick={importLocal}>
             <Upload className="h-4 w-4" />
             添加技能
-          </Button>
+          </Button>}
           <ResourceHubSearch
             value={query}
             onChange={setQuery}
@@ -750,7 +757,7 @@ export function SkillHubView() {
       loading={detail.loading}
       error={detail.error || error}
       onRetry={detail.error ? () => void loadSkillDetail(detail.skill as RemoteSkill) : undefined}
-      actions={detail.remote && !detailInstalled && <Button className="rounded-full" disabled={detailInstalling} onClick={() => void installSkill(detail.skill as RemoteSkill)}>
+      actions={!managed && detail.remote && !detailInstalled && <Button className="rounded-full" disabled={detailInstalling} onClick={() => void installSkill(detail.skill as RemoteSkill)}>
         {detailInstalling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
         {detailInstalling ? '安装中…' : '安装'}
       </Button>}

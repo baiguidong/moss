@@ -3,18 +3,11 @@
 import { normalizeSnapshotPolicy } from '../../../shared/webui-snapshot-policy.mjs'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ComponentType, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { DashboardLayout } from '@/components/dashboard-layout'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { getSystemModelCatalog, getSystemSettings, updateSystemSettings } from '@/lib/api/settings'
@@ -27,27 +20,25 @@ import type {
 import {
   Copy,
   MessageSquare,
-  Server,
+  Cpu,
+  HardDrive,
+  Puzzle,
   TriangleAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
 type EditableSystemSettings = Pick<
   SystemSettings,
-  'openIM' | 'model' | 'availableModels' | 'fastModel' | 'image'
+  'openIM' | 'model' | 'availableModels' | 'fastModel' | 'image' | 'resourceControl'
 > & { webui: NonNullable<SystemSettings['webui']> }
 
 
-type SettingsSectionProps = {
-  icon: ComponentType<{ className?: string }>
-  title: string
-  children?: ReactNode
-}
-
-type SettingsFieldProps = {
-  label: string
-  children: ReactNode
-}
+const sections = [
+  { id: 'models', title: '模型', icon: Cpu },
+  { id: 'openim', title: 'OpenIM', icon: MessageSquare },
+  { id: 'resources', title: '技能与专家管控', icon: Puzzle },
+  { id: 'snapshots', title: 'WebUI 环境快照', icon: HardDrive },
+] as const
 
 function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
   return {
@@ -57,6 +48,7 @@ function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
     availableModels: [...settings.availableModels],
     fastModel: settings.fastModel,
     image: { ...settings.image },
+    resourceControl: { ...settings.resourceControl },
   }
 }
 
@@ -103,6 +95,9 @@ function buildSystemSettingsPatch(
   }
 
   if (JSON.stringify(draft.webui.snapshots) !== JSON.stringify(normalizeSnapshotPolicy(settings.webui?.snapshots))) patch.webui = draft.webui
+  if (draft.resourceControl.enforceServerManagedSkillsExperts !== settings.resourceControl.enforceServerManagedSkillsExperts) {
+    patch.resourceControl = { enforceServerManagedSkillsExperts: draft.resourceControl.enforceServerManagedSkillsExperts }
+  }
   return patch
 }
 
@@ -111,64 +106,23 @@ function generateSecret(): string {
   return Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('')
 }
 
-function SettingSection({
-  icon: Icon,
-  title,
-  children,
-}: SettingsSectionProps) {
-  return (
-    <Card>
-      <CardHeader className="border-b">
-        <CardTitle className="flex items-center gap-2">
-          <Icon className="size-4 text-muted-foreground" />
-          <span>{title}</span>
-        </CardTitle>
-      </CardHeader>
-      {children ? <CardContent className="space-y-5 pt-6">{children}</CardContent> : null}
-    </Card>
-  )
-}
-
-function SettingField({
-  label,
-  children,
-}: SettingsFieldProps) {
-  return (
-    <div className="grid gap-3 md:grid-cols-[minmax(0,240px)_minmax(0,1fr)] md:items-start md:gap-6">
-      <div className="space-y-1">
-        <Label className="text-sm font-medium">{label}</Label>
-      </div>
-      <div className="space-y-2">{children}</div>
-    </div>
-  )
+function SettingField({ label, children }: { label: string; children: ReactNode }) {
+  return <div className="grid min-w-0 gap-1.5 @min-[34rem]:grid-cols-[8rem_minmax(0,1fr)] @min-[34rem]:items-baseline @min-[34rem]:gap-4">
+    <span className="text-sm font-medium">{label}</span>
+    <div className="min-w-0">{children}</div>
+  </div>
 }
 
 function SettingsSkeleton() {
-  return (
-    <div className="space-y-6">
-      {[...Array(2)].map((_, index) => (
-        <Card key={index}>
-          <CardHeader className="border-b">
-            <Skeleton className="h-5 w-32" />
-          </CardHeader>
-          <CardContent className="space-y-4 pt-6">
-            {[...Array(3)].map((__, fieldIndex) => (
-              <div key={fieldIndex} className="grid gap-3 md:grid-cols-[240px_1fr] md:gap-6">
-                <div className="space-y-2">
-                  <Skeleton className="h-4 w-24" />
-                </div>
-                <Skeleton className="h-10 w-full" />
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      ))}
-    </div>
-  )
+  return <div aria-label="正在读取系统设置" className="flex gap-5">
+    <Skeleton className="h-32 w-32 shrink-0" />
+    <div className="flex-1 space-y-3">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8 max-w-xl" />)}</div>
+  </div>
 }
 
 export default function SystemSettingsPage() {
   const { scopes } = useAuth()
+  const [section, setSection] = useState<typeof sections[number]['id']>('models')
   const canManageSettings = hasScope(scopes, 'admin:settings')
   const [settings, setSettings] = useState<SystemSettings | null>(null)
   const [draft, setDraft] = useState<EditableSystemSettings | null>(null)
@@ -250,7 +204,7 @@ export default function SystemSettingsPage() {
   }
 
   useEffect(() => {
-    if (!settings || !draft) {
+    if (!settings || !draft || isSaving) {
       return
     }
     if (serializedDraft === serializedSettings) {
@@ -359,247 +313,274 @@ export default function SystemSettingsPage() {
 
   return (
     <DashboardLayout title="系统设置">
-      <div className="space-y-6">
-        {saveError ? (
-          <Alert variant="destructive">
-            <TriangleAlert className="size-4" />
-            <AlertTitle>自动保存失败</AlertTitle>
-            <AlertDescription>
-              <p>{saveError}</p>
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        <SettingSection
-          icon={Server}
-          title="模型"
-        >
-          <SettingField label="模型列表">
-            <div className="flex flex-wrap items-center gap-3">
-              <Button type="button" variant="outline" onClick={() => void fetchModelCatalog()} disabled={modelCatalogState === 'loading'}>
-                {modelCatalogState === 'loading' ? '获取中…' : '获取模型列表'}
-              </Button>
-              {modelCatalogState === 'error' ? <span className="text-sm text-destructive">获取失败</span> : null}
+      <div className="@container/settings">
+        <div className="grid min-w-0 gap-4 @min-[42rem]/settings:grid-cols-[9.5rem_minmax(0,1fr)] @min-[42rem]/settings:gap-6">
+          <nav aria-label="设置分类" className="flex min-w-0 gap-1 overflow-x-auto @min-[42rem]/settings:flex-col @min-[42rem]/settings:self-start">
+            {sections.map(({ id, title, icon: Icon }) => <button key={id} type="button" aria-current={section === id ? 'page' : undefined}
+              onClick={() => setSection(id)} className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-2.5 py-2 text-left text-sm focus-visible:ring-2 focus-visible:ring-ring ${section === id ? 'bg-primary/10 font-medium text-primary' : 'text-muted-foreground hover:bg-muted'}`}>
+              <Icon className="size-4 shrink-0" />{title}
+            </button>)}
+          </nav>
+          <section aria-labelledby="settings-heading" className="@container min-w-0 max-w-4xl space-y-3">
+            <div className="flex items-center justify-between border-b pb-2">
+              <h1 id="settings-heading" className="text-lg font-semibold">{sections.find(item => item.id === section)?.title}</h1>
+              {isSaving && <span role="status" className="text-xs text-muted-foreground">保存中…</span>}
             </div>
-          </SettingField>
+            {saveError ? (
+              <Alert variant="destructive">
+                <TriangleAlert className="size-4" />
+                <AlertTitle>自动保存失败</AlertTitle>
+                <AlertDescription>
+                  <p>{saveError}</p>
+                </AlertDescription>
+              </Alert>
+            ) : null}
 
-          <SettingField label="允许切换的模型">
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={selectAllModels} disabled={modelOptions.length === 0}>全选</Button>
-                <Button type="button" variant="outline" size="sm" onClick={invertModels} disabled={modelOptions.length === 0}>反选</Button>
-                <Button type="button" variant="ghost" size="sm" onClick={() => updateAllowedModels([])} disabled={modelOptions.length === 0}>全部允许</Button>
-                <span className="text-xs text-muted-foreground">留空表示不限制模型</span>
+            {section === 'models' && <div className="space-y-3">
+              <SettingField label="默认模型">
+                <select
+                  aria-label="默认模型" value={draft.model}
+                  onChange={event => setDraft(current => current ? { ...current, model: event.target.value } : current)}
+                  className="h-8 w-full max-w-xl rounded-md border border-input bg-background px-2 text-sm"
+                >
+                  <option value="">请选择默认模型</option>
+                  {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
+                </select>
+              </SettingField>
+
+              <SettingField label="快速模型">
+                <select
+                  aria-label="快速模型" value={draft.fastModel}
+                  onChange={event => setDraft(current => current ? { ...current, fastModel: event.target.value } : current)}
+                  className="h-8 w-full max-w-xl rounded-md border border-input bg-background px-2 text-sm"
+                >
+                  <option value="">留空时使用默认模型</option>
+                  {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
+                </select>
+              </SettingField>
+
+              <SettingField label="图片模型">
+                <select
+                  aria-label="图片模型" value={draft.image.model}
+                  onChange={event => setDraft(current => current ? { ...current, image: { model: event.target.value } } : current)}
+                  className="h-8 w-full max-w-xl rounded-md border border-input bg-background px-2 text-sm"
+                >
+                  <option value="">请选择图片模型</option>
+                  {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
+                </select>
+              </SettingField>
+              <div className="border-t pt-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-sm font-semibold">允许切换的模型</h2>
+                  <div className="flex items-center gap-2">
+                    <Button type="button" size="sm" variant="outline" onClick={() => void fetchModelCatalog()} disabled={modelCatalogState === 'loading'}>
+                      {modelCatalogState === 'loading' ? '获取中…' : '获取模型列表'}
+                    </Button>
+                    {modelCatalogState === 'error' ? <span className="text-sm text-destructive">获取失败</span> : null}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button type="button" variant="ghost" size="sm" onClick={selectAllModels} disabled={modelOptions.length === 0}>全选</Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={invertModels} disabled={modelOptions.length === 0}>反选</Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => updateAllowedModels([])} disabled={modelOptions.length === 0}>全部允许</Button>
+                    <span className="text-xs text-muted-foreground">留空表示不限制模型</span>
+                  </div>
+                  <div className="grid gap-x-3 gap-y-0.5 @min-[23rem]:grid-cols-2 @min-[42rem]:grid-cols-3">
+                    {modelOptions.map(model => {
+                      const checked = selectedModels.has(model)
+                      return (
+                        <label key={model} className="flex min-w-0 cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm hover:bg-muted/60">
+                          <input
+                            type="checkbox" className="accent-primary"
+                            checked={checked}
+                            onChange={event => setDraft(current => current ? {
+                              ...current,
+                              availableModels: event.target.checked
+                                ? [...new Set([...(current.availableModels.length === 0 ? modelOptions : current.availableModels), model])]
+                                : (current.availableModels.length === 0 ? modelOptions : current.availableModels).filter(item => item !== model),
+                            } : current)}
+                          />
+                          <span className="truncate">{model}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {modelOptions.map(model => {
-                const checked = selectedModels.has(model)
-                return (
-                  <label key={model} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={event => setDraft(current => current ? {
+            </div>}
+
+            {section === 'openim' && <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-muted-foreground">连接</h2>
+              <SettingField label="启用 OpenIM">
+                <div className="flex h-8 items-center">
+                  <Switch
+                    checked={draft.openIM.enabled}
+                    onCheckedChange={(checked) =>
+                      setDraft(current => current ? {
                         ...current,
-                        availableModels: event.target.checked
-                          ? [...new Set([...(current.availableModels.length === 0 ? modelOptions : current.availableModels), model])]
-                          : (current.availableModels.length === 0 ? modelOptions : current.availableModels).filter(item => item !== model),
-                      } : current)}
-                    />
-                    <span className="truncate">{model}</span>
-                  </label>
-                )
-              })}
-              </div>
-            </div>
-          </SettingField>
+                        openIM: { ...current.openIM, enabled: checked },
+                      } : current)
+                    }
+                    aria-label="启用 OpenIM"
+                  />
+                </div>
+              </SettingField>
 
-          <SettingField label="默认模型">
-            <select
-              value={draft.model}
-              onChange={event => setDraft(current => current ? { ...current, model: event.target.value } : current)}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-            >
-              <option value="">请选择默认模型</option>
-              {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
-            </select>
-          </SettingField>
-
-          <SettingField label="快速模型">
-            <select
-              value={draft.fastModel}
-              onChange={event => setDraft(current => current ? { ...current, fastModel: event.target.value } : current)}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-            >
-              <option value="">留空时使用默认模型</option>
-              {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
-            </select>
-          </SettingField>
-
-          <SettingField label="图片模型">
-            <select
-              value={draft.image.model}
-              onChange={event => setDraft(current => current ? { ...current, image: { model: event.target.value } } : current)}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-            >
-              <option value="">请选择图片模型</option>
-              {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
-            </select>
-          </SettingField>
-        </SettingSection>
-
-        <SettingSection
-          icon={MessageSquare}
-          title="OpenIM"
-        >
-          <SettingField label="启用 OpenIM">
-            <div className="flex h-10 items-center">
-              <Switch
-                checked={draft.openIM.enabled}
-                onCheckedChange={(checked) =>
-                  setDraft(current => current ? {
+              <SettingField label="实例 ID">
+                <Input
+                  aria-label="实例 ID" value={draft.openIM.instanceId}
+                  onChange={(event) => setDraft(current => current ? {
                     ...current,
-                    openIM: { ...current.openIM, enabled: checked },
-                  } : current)
-                }
-                aria-label="启用 OpenIM"
-              />
-            </div>
-          </SettingField>
+                    openIM: { ...current.openIM, instanceId: event.target.value },
+                  } : current)}
+                  placeholder="default"
+                />
+              </SettingField>
 
-          <SettingField label="实例 ID">
-            <Input
-              value={draft.openIM.instanceId}
-              onChange={(event) => setDraft(current => current ? {
-                ...current,
-                openIM: { ...current.openIM, instanceId: event.target.value },
-              } : current)}
-              placeholder="default"
-            />
-          </SettingField>
+              <SettingField label="API URL">
+                <Input
+                  aria-label="API URL" value={draft.openIM.apiUrl}
+                  onChange={(event) => setDraft(current => current ? {
+                    ...current,
+                    openIM: { ...current.openIM, apiUrl: event.target.value },
+                  } : current)}
+                  placeholder="http://10.0.1.180:10002"
+                />
+              </SettingField>
 
-          <SettingField label="API URL">
-            <Input
-              value={draft.openIM.apiUrl}
-              onChange={(event) => setDraft(current => current ? {
-                ...current,
-                openIM: { ...current.openIM, apiUrl: event.target.value },
-              } : current)}
-              placeholder="http://10.0.1.180:10002"
-            />
-          </SettingField>
+              <SettingField label="WebSocket URL">
+                <Input
+                  aria-label="WebSocket URL" value={draft.openIM.wsUrl}
+                  onChange={(event) => setDraft(current => current ? {
+                    ...current,
+                    openIM: { ...current.openIM, wsUrl: event.target.value },
+                  } : current)}
+                  placeholder="ws://10.0.1.180:10001"
+                />
+              </SettingField>
 
-          <SettingField label="WebSocket URL">
-            <Input
-              value={draft.openIM.wsUrl}
-              onChange={(event) => setDraft(current => current ? {
-                ...current,
-                openIM: { ...current.openIM, wsUrl: event.target.value },
-              } : current)}
-              placeholder="ws://10.0.1.180:10001"
-            />
-          </SettingField>
+              <SettingField label="Chat URL">
+                <Input
+                  aria-label="Chat URL" value={draft.openIM.chatUrl}
+                  onChange={(event) => setDraft(current => current ? {
+                    ...current,
+                    openIM: { ...current.openIM, chatUrl: event.target.value },
+                  } : current)}
+                  placeholder="http://10.0.1.180:10008"
+                />
+              </SettingField>
 
-          <SettingField label="Chat URL">
-            <Input
-              value={draft.openIM.chatUrl}
-              onChange={(event) => setDraft(current => current ? {
-                ...current,
-                openIM: { ...current.openIM, chatUrl: event.target.value },
-              } : current)}
-              placeholder="http://10.0.1.180:10008"
-            />
-          </SettingField>
+              <SettingField label="请求超时（毫秒）">
+                <Input
+                  type="number"
+                  min={1000}
+                  max={120000}
+                  step={1000}
+                  aria-label="请求超时（毫秒）" value={draft.openIM.requestTimeoutMs}
+                  onChange={(event) => setDraft(current => current ? {
+                    ...current,
+                    openIM: {
+                      ...current.openIM,
+                      requestTimeoutMs: Number(event.target.value) || 15000,
+                    },
+                  } : current)}
+                />
+              </SettingField>
 
-          <SettingField label="管理员用户 ID">
-            <Input
-              value={draft.openIM.adminUserId}
-              onChange={(event) => setDraft(current => current ? {
-                ...current,
-                openIM: { ...current.openIM, adminUserId: event.target.value },
-              } : current)}
-              placeholder="imAdmin"
-            />
-          </SettingField>
+              <h2 className="border-t pt-3 text-sm font-semibold text-muted-foreground">身份与密钥</h2>
+              <SettingField label="管理员用户 ID">
+                <Input
+                  aria-label="管理员用户 ID" value={draft.openIM.adminUserId}
+                  onChange={(event) => setDraft(current => current ? {
+                    ...current,
+                    openIM: { ...current.openIM, adminUserId: event.target.value },
+                  } : current)}
+                  placeholder="imAdmin"
+                />
+              </SettingField>
 
-          <SettingField label="OpenIM 管理密钥">
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Input
-                type="password"
-                value={draft.openIM.secret}
-                className="font-mono text-xs"
-                onChange={(event) => setDraft(current => current ? {
-                  ...current,
-                  openIM: { ...current.openIM, secret: event.target.value },
-                } : current)}
-              />
-              {draft.openIM.secret ? (
-                <Button variant="outline" size="sm" onClick={() => void handleCopy(draft.openIM.secret, 'OpenIM 管理密钥')}>
-                  <Copy className="mr-2 size-4" />复制
-                </Button>
-              ) : null}
-            </div>
-          </SettingField>
+              <SettingField label="OpenIM 管理密钥">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <Input
+                    type="password"
+                    aria-label="OpenIM 管理密钥" value={draft.openIM.secret}
+                    className="font-mono text-xs"
+                    onChange={(event) => setDraft(current => current ? {
+                      ...current,
+                      openIM: { ...current.openIM, secret: event.target.value },
+                    } : current)}
+                  />
+                  {draft.openIM.secret ? (
+                    <Button variant="outline" size="sm" onClick={() => void handleCopy(draft.openIM.secret, 'OpenIM 管理密钥')}>
+                      <Copy className="size-3.5" />复制
+                    </Button>
+                  ) : null}
+                </div>
+              </SettingField>
 
-          <SettingField label="Webhook 密钥">
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Input
-                type="password"
-                value={draft.openIM.webhookSecret}
-                className="font-mono text-xs"
-                onChange={(event) => setDraft(current => current ? {
-                  ...current,
-                  openIM: { ...current.openIM, webhookSecret: event.target.value },
-                } : current)}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setDraft(current => current ? {
-                  ...current,
-                  openIM: { ...current.openIM, webhookSecret: generateSecret() },
-                } : current)}
-              >
-                生成
-              </Button>
-              {draft.openIM.webhookSecret ? (
-                <Button variant="outline" size="sm" onClick={() => void handleCopy(draft.openIM.webhookSecret, 'Webhook 密钥')}>
-                  <Copy className="mr-2 size-4" />复制
-                </Button>
-              ) : null}
-            </div>
-          </SettingField>
+              <SettingField label="Webhook 密钥">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <Input
+                    type="password"
+                    aria-label="Webhook 密钥" value={draft.openIM.webhookSecret}
+                    className="font-mono text-xs"
+                    onChange={(event) => setDraft(current => current ? {
+                      ...current,
+                      openIM: { ...current.openIM, webhookSecret: event.target.value },
+                    } : current)}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setDraft(current => current ? {
+                      ...current,
+                      openIM: { ...current.openIM, webhookSecret: generateSecret() },
+                    } : current)}
+                  >
+                    生成
+                  </Button>
+                  {draft.openIM.webhookSecret ? (
+                    <Button variant="outline" size="sm" onClick={() => void handleCopy(draft.openIM.webhookSecret, 'Webhook 密钥')}>
+                      <Copy className="size-3.5" />复制
+                    </Button>
+                  ) : null}
+                </div>
+              </SettingField>
 
-          <SettingField label="请求超时（毫秒）">
-            <Input
-              type="number"
-              min={1000}
-              max={120000}
-              step={1000}
-              value={draft.openIM.requestTimeoutMs}
-              onChange={(event) => setDraft(current => current ? {
-                ...current,
-                openIM: {
-                  ...current.openIM,
-                  requestTimeoutMs: Number(event.target.value) || 15000,
-                },
-              } : current)}
-            />
-          </SettingField>
-        </SettingSection>
+            </div>}
 
-        <SettingSection icon={Server} title="WebUI 环境快照">
-          <SettingField label="快照数量上限">
-            <Input type="number" min={1} step={1} value={draft.webui.snapshots.maxSnapshotsPerEnvironment} onChange={event => setDraft(current => current ? { ...current, webui: { snapshots: { ...current.webui.snapshots, maxSnapshotsPerEnvironment: Number(event.target.value) } } } : current)} />
-          </SettingField>
-          <SettingField label="空间上限（GiB）">
-            <Input type="number" min={1} step={1} value={draft.webui.snapshots.maxBytesPerEnvironment / 1024 ** 3} onChange={event => setDraft(current => current ? { ...current, webui: { snapshots: { ...current.webui.snapshots, maxBytesPerEnvironment: Number(event.target.value) * 1024 ** 3 } } } : current)} />
-          </SettingField>
-        </SettingSection>
+            {section === 'resources' && <div>
+              <SettingField label="启用服务端技能/专家管控">
+                <div className="space-y-2">
+                  <div className="flex h-8 items-center">
+                    <Switch
+                      checked={draft.resourceControl.enforceServerManagedSkillsExperts}
+                      onCheckedChange={checked => setDraft(current => current ? {
+                        ...current,
+                        resourceControl: { ...current.resourceControl, enforceServerManagedSkillsExperts: checked },
+                      } : current)}
+                      aria-label="启用服务端技能/专家管控"
+                    />
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    开启后，客户端仅可使用服务端已安装并授权的技能和专家。安装、移除和授权统一在 Moss Server 管理。
+                  </p>
+                </div>
+              </SettingField>
+            </div>}
 
-
-
+            {section === 'snapshots' && <div className="max-w-xl space-y-3">
+              <SettingField label="快照数量上限">
+                <Input type="number" min={1} step={1} aria-label="快照数量上限" value={draft.webui.snapshots.maxSnapshotsPerEnvironment} onChange={event => setDraft(current => current ? { ...current, webui: { snapshots: { ...current.webui.snapshots, maxSnapshotsPerEnvironment: Number(event.target.value) } } } : current)} />
+              </SettingField>
+              <SettingField label="空间上限（GiB）">
+                <Input type="number" min={1} step={1} aria-label="空间上限（GiB）" value={draft.webui.snapshots.maxBytesPerEnvironment / 1024 ** 3} onChange={event => setDraft(current => current ? { ...current, webui: { snapshots: { ...current.webui.snapshots, maxBytesPerEnvironment: Number(event.target.value) * 1024 ** 3 } } } : current)} />
+              </SettingField>
+            </div>}
+          </section>
+        </div>
       </div>
     </DashboardLayout>
   )

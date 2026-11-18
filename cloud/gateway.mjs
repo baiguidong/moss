@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -235,6 +236,15 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
           }
           const response = await fetch(`${authBase}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: req.headers.authorization || '' }, body: JSON.stringify(input), redirect: 'error', signal: AbortSignal.timeout(15000) });
           return json(res, response.status, await response.json());
+        }
+        if (!authBase && req.method === 'GET' && endpoint === '/api/v1/bootstrap') return json(res, 200, { capabilities: {} });
+        if (authBase && req.method === 'GET' && (endpoint === '/api/v1/managed-resources/manifest' ||
+          /^\/api\/v1\/managed-resources\/(skill|expert)\/[a-zA-Z0-9_-]+\/download$/.test(endpoint))) {
+          const response = await fetch(`${authBase}${endpoint}`, { headers: { Authorization: req.headers.authorization || '' }, redirect: 'error', signal: AbortSignal.timeout(30000) });
+          res.writeHead(response.status, { 'Content-Type': response.headers.get('content-type') || 'application/octet-stream', 'Cache-Control': 'private, no-store' });
+          if (response.body) await pipeline(Readable.fromWeb(response.body), res);
+          else res.end();
+          return;
         }
         if (authBase && (endpoint.startsWith('/api/v1/agent-mail/') || endpoint === '/api/v1/bootstrap')) {
           const response = await fetch(`${authBase}${endpoint}${url.search}`, { method: req.method,

@@ -7,6 +7,7 @@ import {
   Users,
   Laptop,
   Settings,
+  Puzzle,
   LogOut,
 } from 'lucide-react'
 
@@ -51,6 +52,12 @@ const menuItems: NavItem[] = [
 
 const systemItems: NavItem[] = [
   {
+    title: '技能与专家',
+    url: '/managed-resources',
+    icon: Puzzle,
+    requiredScope: 'admin:settings',
+  },
+  {
     title: '系统设置',
     url: '/settings',
     icon: Settings,
@@ -89,22 +96,22 @@ export function AppSidebar() {
   }
 
   return (
-    <aside className="flex h-full w-[248px] flex-col border-r border-border/70 bg-[var(--sidebar)]">
+    <aside className="flex h-full w-14 shrink-0 flex-col md:w-[248px] border-r border-border/70 bg-[var(--sidebar)]">
       {/* Header */}
-      <div className="flex h-[68px] items-center gap-3 border-b border-border/70 px-4">
+      <div className="flex h-14 items-center justify-center gap-3 border-b border-border/70 md:h-[68px] md:justify-start md:px-4">
         <div className="flex size-9 items-center justify-center overflow-hidden rounded-xl bg-white shadow-[0_5px_14px_rgba(52,118,80,0.18)]">
           <img src={`${import.meta.env.BASE_URL}moss-m-icon.png`} alt="moss" className="size-9" />
         </div>
-        <div className="min-w-0">
+        <div className="hidden min-w-0 md:block">
           <span className="block truncate text-[15px] font-semibold tracking-tight">moss</span>
           <span className="block text-[11px] text-muted-foreground">控制平面</span>
         </div>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-3 py-5">
-        <div className="mb-6">
-          <p className="mb-2 px-3 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/80">工作区</p>
+      <nav className="flex-1 overflow-y-auto px-1.5 py-3 md:px-3 md:py-5">
+        <div className="mb-3 md:mb-6">
+          <p className="mb-2 hidden px-3 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/80 md:block">工作区</p>
           <ul className="space-y-0.5">
             {visibleMenuItems.map((item) => {
               const isActive =
@@ -115,14 +122,16 @@ export function AppSidebar() {
                 <li key={item.title}>
                   <Link
                     to={item.url}
-                    className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors ${
+                    aria-label={item.title}
+                    title={item.title}
+                    className={`flex items-center justify-center gap-3 rounded-lg py-2.5 text-sm md:justify-start md:px-3 transition-colors ${
                       isActive
                         ? 'bg-primary/10 font-medium text-primary'
                         : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
                     }`}
                   >
                     <item.icon className="size-4" />
-                    <span>{item.title}</span>
+                    <span className="hidden md:inline">{item.title}</span>
                   </Link>
                 </li>
               )
@@ -131,7 +140,7 @@ export function AppSidebar() {
         </div>
 
         <div>
-          <p className="mb-2 px-3 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/80">管理</p>
+          <p className="mb-2 hidden px-3 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/80 md:block">管理</p>
           <ul className="space-y-0.5">
             {visibleSystemItems.map((item) => {
               const isActive =
@@ -142,14 +151,16 @@ export function AppSidebar() {
                 <li key={item.title}>
                   <Link
                     to={item.url}
-                    className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors ${
+                    aria-label={item.title}
+                    title={item.title}
+                    className={`flex items-center justify-center gap-3 rounded-lg py-2.5 text-sm md:justify-start md:px-3 transition-colors ${
                       isActive
                         ? 'bg-primary/10 text-primary font-medium'
                         : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
                     }`}
                   >
                     <item.icon className="size-4" />
-                    <span>{item.title}</span>
+                    <span className="hidden md:inline">{item.title}</span>
                   </Link>
                 </li>
               )
@@ -159,20 +170,22 @@ export function AppSidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="border-t border-border/70 p-3">
-        <div className="flex items-center gap-3">
-          <Avatar className="size-9">
+      <div className="border-t border-border/70 p-1.5 md:p-3">
+        <div className="flex items-center justify-center gap-3 md:justify-start">
+          <Avatar className="hidden size-9 md:flex">
             <AvatarFallback className="bg-primary/10 text-primary text-xs">
               {user?.name?.slice(0, 1) || 'U'}
             </AvatarFallback>
           </Avatar>
-          <div className="flex-1 min-w-0">
+          <div className="hidden min-w-0 flex-1 md:block">
             <p className="truncate text-sm font-medium">{user?.name || 'User'}</p>
             <p className="truncate text-[11px] text-muted-foreground">{user?.role ? roleLabels[user.role] : '已登录'}</p>
           </div>
           <Button
             variant="ghost"
             size="icon"
+            aria-label="退出登录"
+            title="退出登录"
             onClick={() => void handleLogout()}
             className="shrink-0 rounded-lg text-muted-foreground hover:text-foreground"
           >

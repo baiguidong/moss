@@ -2,6 +2,9 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { isRetiredAppAuthoringResource } from '../../shared/retired-app-authoring-resources.mjs';
 
+import { readManagedCatalog } from './shared/managed-resource-state.mjs';
+import { MOSS_HOME } from './moss-home.mjs';
+
 export const ASSISTANT_META_FILE = '_moss_meta.json';
 
 const DEFAULT_ASSISTANT_PROMPT_FILE = 'assistant.md';
@@ -42,6 +45,10 @@ export async function findAssistantDirByName(assistantName, searchDirs) {
     return null;
   }
 
+  const catalog = readManagedCatalog(MOSS_HOME);
+  if (catalog) {
+    return catalog.resources.find(item => item.kind === 'expert' && [item.id, item.name, item.slug].includes(normalizedAssistantName))?.source || null;
+  }
   const directories = searchDirs
     .map((entry) => ({
       dir: typeof entry === 'string' ? entry : entry?.dir,
@@ -128,7 +135,9 @@ export async function resolveAssistantRuleFile(assistantDir, _assistantName, pre
 }
 
 export async function readAssistantContext(assistantDir, assistantName) {
-  if (isRetiredAppAuthoringResource(assistantDir)) return { meta: null, ruleFile: undefined, rules: '', enabledSkillIdentifiers: [] };
+  const catalog = readManagedCatalog(MOSS_HOME);
+  if ((catalog && !catalog.resources.some(item => item.kind === 'expert' && item.source === assistantDir)) ||
+      isRetiredAppAuthoringResource(assistantDir)) return { meta: null, ruleFile: undefined, rules: '', enabledSkillIdentifiers: [] };
   const meta = await readAssistantMeta(assistantDir);
   const ruleFile = await resolveAssistantRuleFile(
     assistantDir,

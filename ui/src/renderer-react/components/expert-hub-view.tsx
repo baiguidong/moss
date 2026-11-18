@@ -400,7 +400,7 @@ function InstalledExpertCard({
                 {expert.displayName || expert.name}
               </div>
               <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                {expert.profession || expert.categoryName || "本地专家"}
+                {expert.profession || expert.categoryName || (expert.sourceType === "moss-server" ? "Moss Server" : "本地专家")}
               </div>
             </div>
           </div>
@@ -427,6 +427,7 @@ function InstalledExpertCard({
 }
 
 export function ExpertHubView() {
+  const [managed, setManaged] = React.useState(false);
   const [tab, setTab] = React.useState<ExpertTab>("recommend");
   const [query, setQuery] = React.useState("");
   const deferredQuery = React.useDeferredValue(query.trim());
@@ -466,8 +467,13 @@ export function ExpertHubView() {
   const loadInstalled = React.useCallback(async () => {
     setInstalledLoading(true);
     try {
-      const res = await window.agentDesktop.expertHub.getInstalled() as { success?: boolean; data?: InstalledExpert[]; error?: string };
+      const res = await window.agentDesktop.expertHub.getInstalled() as { success?: boolean; managed?: boolean; data?: InstalledExpert[]; error?: string };
       if (!res?.success) throw new Error(res?.error || "读取已安装专家失败");
+      setManaged(res.managed === true);
+      if (res.managed) {
+        setTab("installed");
+        setError(res.error || "");
+      }
       setInstalledExperts(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -675,7 +681,7 @@ export function ExpertHubView() {
     });
   }, [category, deferredQuery, installedExperts, typeFilter]);
 
-  const tabs: Array<{ id: ExpertTab; label: string }> = [
+  const tabs: Array<{ id: ExpertTab; label: string }> = managed ? [{ id: "installed", label: "服务端已授权" }] : [
     { id: "recommend", label: "推荐" },
     { id: "hub", label: "专家中心" },
     { id: "installed", label: "我安装的" },
@@ -988,7 +994,7 @@ export function ExpertHubView() {
         loading={detail.loading}
         error={detail.error}
         onRetry={detail.error ? () => void loadExpertDetail(detail.expertId) : undefined}
-        actions={detail.remote && !detailInstalled && <Button className="rounded-full" disabled={detailInstalling || !detail.expert.promptFile} onClick={() => void installExpert(detail.expert as RemoteExpert)}>
+        actions={!managed && detail.remote && !detailInstalled && <Button className="rounded-full" disabled={detailInstalling || !detail.expert.promptFile} onClick={() => void installExpert(detail.expert as RemoteExpert)}>
           {detailInstalling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
           {detailInstalling ? `安装中 ${formatElapsed(Math.floor((now - (busyStartedAt[detailInstallingKey] || now)) / 1000))}` : '召唤专家'}
         </Button>}

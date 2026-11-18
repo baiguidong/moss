@@ -107,6 +107,8 @@ import { createSessionSearchIndex } from './session-search-index.mjs';
 import { createWorkspaceCatalog } from './workspace-catalog.mjs';
 import { getInstalledSkills, registerSkillStoreIpcHandlers } from './skill-store-ipc.mjs';
 import { registerPublicSkillHubIpcHandlers, searchPublicSkills, installPublicSkill, getPublicSkillDetail } from './public-skillhub-ipc.mjs';
+import { readManagedCatalog } from './shared/managed-resource-state.mjs';
+import { createManagedResourceClient, managedResourceIpc, managedResourcePage } from './managed-resource-client.mjs';
 import {
   migrateLegacyExpertInstallations,
   registerPublicExpertHubIpcHandlers,
@@ -357,6 +359,7 @@ import { createAppToolCallReviewer } from './apps/app-tool-call-review.mjs';
 import { createAppOperationDraftHandlers } from './apps/app-operation-drafts.mjs';
 import {
   createEnterpriseAccountClient,
+  decodeAccessTokenIdentity,
   parseRemoteDirectServerInput,
   setEnterpriseFetchImplementation,
 } from './enterprise-account-client.mjs';
@@ -1621,8 +1624,26 @@ function assertProjectCreationSession(sessionId) {
   if (!record || record.deleted || record.isSubAgent || !record.projectCreationMode) throw new Error('项目创建会话不可用。');
 }
 
+const managedResourceClient = createManagedResourceClient({
+  accountKey() {
+    if (isWebHost && process.env.MOSS_WEB_AUTH_SERVER) return JSON.stringify([process.env.MOSS_WEB_AUTH_SERVER, process.env.MOSS_WEB_OWNER_ID]);
+    const account = getEnterpriseAccountSettings();
+    if (!account.serverUrl || !(account.accessToken || account.refreshToken || account.userPassword)) return '';
+    return JSON.stringify([account.serverUrl, account.userEmail, decodeAccessTokenIdentity(account.accessToken)]);
+  },
+  resolveConnection() {
+    if (isWebHost && process.env.MOSS_WEB_AUTH_SERVER) return {
+      serverUrl: process.env.MOSS_WEB_AUTH_SERVER, authToken: webServer?.auth.getHostAccessToken(),
+      headers: process.env.MOSS_WEB_CONTROL_TOKEN ? { 'X-Moss-Environment': process.env.MOSS_ENVIRONMENT_ID, 'X-Moss-Host-Token': process.env.MOSS_WEB_CONTROL_TOKEN } : {},
+    };
+    return resolveEnterpriseAccountConnection(undefined, { fetchImpl: enterpriseAccountTransport.fetch });
+  },
+  fetchImpl: (...args) => isWebHost ? fetch(...args) : enterpriseAccountTransport.fetch(...args),
+});
+
 const projectCreationResources = createProjectCreationResources({
   installed: async kind => {
+    if (kind !== 'app') await managedResourceClient.refresh();
     if (kind === 'skill') {
       const entries = await getInstalledSkills();
       return (await Promise.all(entries.map(async entry => {
@@ -1650,6 +1671,8 @@ const projectCreationResources = createProjectCreationResources({
     }));
   },
   search: async (kind, query, limit) => {
+    const catalog = kind === 'app' ? null : await managedResourceClient.refresh();
+    if (catalog) return managedResourcePage(catalog, kind, { query, pageSize: limit }).entries;
     if (kind === 'skill') return (await searchPublicSkills({ baseUrl: desktopSettings.skillHub?.apiBaseUrl, query, pageSize: limit })).skills;
     if (kind === 'expert') return filterExperts((await loadExpertBundle(desktopSettings.expertHub?.baseUrl)).experts, { query, sortBy: 'updated' }).slice(0, limit);
     if (!appMarketplaceService) throw new Error('App 市场尚未就绪。');
@@ -1657,6 +1680,8 @@ const projectCreationResources = createProjectCreationResources({
       [entry.id, entry.displayName, entry.summary, entry.description, ...(entry.keywords || [])].join(' ').toLowerCase().includes(query.toLowerCase())).slice(0, limit);
   },
   browse: async ({ kind, query, page, pageSize }) => {
+    const catalog = kind === 'app' ? null : await managedResourceClient.refresh();
+    if (catalog) return managedResourcePage(catalog, kind, { query, page, pageSize });
     if (kind === 'skill') {
       const result = await searchPublicSkills({ baseUrl: desktopSettings.skillHub?.apiBaseUrl, query, page, pageSize });
       return { entries: result.skills, total: result.total, hasMore: page * pageSize < result.total };
@@ -1668,6 +1693,8 @@ const projectCreationResources = createProjectCreationResources({
     return { entries: entries.slice((page - 1) * pageSize, page * pageSize), total: entries.length, hasMore: page * pageSize < entries.length };
   },
   detail: async (kind, id) => {
+    const catalog = kind === 'app' ? null : await managedResourceClient.refresh();
+    if (catalog) return catalog.resources.find(item => item.kind === kind && item.id === id);
     if (kind === 'skill') return getPublicSkillDetail({ baseUrl: desktopSettings.skillHub?.apiBaseUrl, id });
     if (kind === 'expert') return (await loadExpertBundle(desktopSettings.expertHub?.baseUrl, { forceRefresh: true })).experts.find(entry => entry.id === id);
     if (!appMarketplaceService) throw new Error('App 市场尚未就绪。');
@@ -1676,6 +1703,8 @@ const projectCreationResources = createProjectCreationResources({
     return { ...detail, version: version.version, permissions: version.permissions, digest: version.artifact?.sha256 || '' };
   },
   install: async (kind, resource) => {
+    const catalog = kind === 'app' ? null : await managedResourceClient.refresh();
+    if (catalog) throw new Error('资源由 Moss Server 分配。');
     if (kind === 'skill') {
       const collision = (await getInstalledSkills()).find(entry => path.basename(entry.source) === resource.slug && (entry.id || entry.name) !== resource.id);
       if (collision) throw new Error(`技能目录与“${collision.displayName || collision.name}”冲突，请在技能管理中处理后重试。`);
@@ -2062,13 +2091,14 @@ async function getSessionPluginCatalog(sessionRecord) {
   const runtime = await getClaudeRuntimeModule();
   const { selectedAppIds, selectedAppServiceIds } = getRuntimeSessionAppSelection(sessionRecord);
   const selectedServiceAppIds = selectedAppServiceIds.map(parseAppServiceKey).map(value => value?.appId).filter(Boolean);
+  const managed = readManagedCatalog(MOSS_HOME);
   const catalogAppIds = normalizeStringList([...selectedAppIds, ...selectedServiceAppIds]);
   const [installedSkills, contributions, appSkills] = await Promise.all([
     getInstalledSkills(),
     appRuntime
       ? appRuntime.listContributions({ kinds: ['tools'], loadSchemas: false, selectedAppIds, selectedAppServiceIds }).catch(() => ({ tools: [] }))
       : Promise.resolve({ tools: [] }),
-    appRuntime && !isAppScopedSession(sessionRecord) && sessionRecord?.agentMode !== 'remote-direct'
+    appRuntime && !managed && !isAppScopedSession(sessionRecord) && sessionRecord?.agentMode !== 'remote-direct'
       ? resolveAppSkills(appRuntime, selectedAppIds).catch(() => ({ skills: [] }))
       : Promise.resolve({ skills: [] }),
   ]);
@@ -2113,7 +2143,7 @@ async function getSessionPluginCatalog(sessionRecord) {
     skillKeys.add(id);
     skills.push({ id, name: id, displayName: id, description: String(skill.description || ''), source: 'app' });
   }
-  for (const id of normalizeStringList([
+  for (const id of managed ? [] : normalizeStringList([
     ...(sessionRecord?.skillIds || []),
     ...(sessionRecord?.projectDefaults?.skillIds || []),
   ])) {
@@ -2129,8 +2159,8 @@ async function getSessionPluginCatalog(sessionRecord) {
     sessionRecord?.assistantName,
     ...(sessionRecord?.projectDefaults?.expertIds || []),
   ]);
-  const expertById = new Map(assistants.map(assistant => [assistant.name, assistant]));
-  const experts = expertIds.map(id => {
+  const expertById = new Map(assistants.flatMap(assistant => [[assistant.name, assistant], [assistant.id, assistant]]));
+  const experts = expertIds.filter(id => !managed || expertById.has(id)).map(id => {
     const assistant = expertById.get(id);
     return assistant
       ? { id: assistant.name, name: assistant.name, displayName: assistant.displayName || assistant.name, description: assistant.description || '', avatar: assistant.avatar || '', emoji: assistant.emoji || '' }
@@ -2933,7 +2963,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
           return [];
         }),
   ]);
-  const appSkills = appScoped || sessionRecord?.agentMode === 'remote-direct' ? { skills: [], directories: [], prompt: '' } : await resolveAppSkills(appRuntime, selectedAppIds);
+  const appSkills = appScoped || sessionRecord?.agentMode === 'remote-direct' || readManagedCatalog(MOSS_HOME) ? { skills: [], directories: [], prompt: '' } : await resolveAppSkills(appRuntime, selectedAppIds);
   const connectorOwners = Object.fromEntries(connectorAppIds.flatMap(appId =>
     Object.keys(getConnectorMcpServers([getStoredConnectorId(appId)], connectorRuntimeCredentials))
       .map(name => [name, {
@@ -3209,6 +3239,7 @@ function refreshDesktopSettings(payload = {}, { policyUpdate = false } = {}) {
   ) {
     cloudComputerWindow?.close();
     hostControl.invalidate();
+    void managedResourceClient.refresh().catch(error => mossLog('warn', 'resources', error.message));
     enterpriseAccountNetFetch.reset(nextServerUrl);
     void hostControl.refresh();
     agentMailPoller?.refresh();
@@ -3715,6 +3746,7 @@ async function runSessionPromptObserved({
   attachments = [],
   resources = [],
   runtimeSystemPrompt = '',
+  selectedSkills,
   preparedTools = [],
   composerContext,
   visualizationAnnotation,
@@ -3729,6 +3761,19 @@ async function runSessionPromptObserved({
 }) {
   controllerSignal?.throwIfAborted();
   assertWorkspaceVersionIdle(sessionRecord);
+  const catalog = await managedResourceClient.refresh();
+  if (Array.isArray(selectedSkills) && selectedSkills.length) {
+    const granted = catalog ? resolveInstalledSkillInfos(selectedSkills.map(skill => skill?.name || skill),
+      catalog.resources.filter(item => item.kind === 'skill')) : selectedSkills;
+    const instruction = buildSelectedSkillsInstruction(granted);
+    if (instruction) runtimePrompt = instruction + '\n\n' + runtimePrompt;
+  }
+  const catalogKey = catalog ? JSON.stringify([catalog.identity, catalog.resources.map(item => [item.id, item.sha256])]) : '';
+  if ((sessionRecord.managedCatalogKey || '') !== catalogKey) {
+    await disposeRuntime(sessionRecord);
+    await prepareAssistantContextForSessionStart(sessionRecord);
+    sessionRecord.managedCatalogKey = catalogKey;
+  }
   await localTranscriptSync.refresh(sessionRecord);
   if (sessionRecord.projectId && !sessionRecord.isSubAgent) {
     snapshotLegacyProjectDefaults(sessionRecord);
@@ -8188,10 +8233,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     getRuntime: () => appRuntime, getAppStates: () => appWindowStates.values(),
     getApps: () => readAppRegistry().apps, log: mossLog,
   });
-  registerSkillStoreIpcHandlers();
-  registerPublicSkillHubIpcHandlers({ getDesktopSettings: () => desktopSettings });
+  const resourceIpc = managedResourceIpc(ipcMain, managedResourceClient);
+  void managedResourceClient.refresh().catch(error => mossLog('warn', 'resources', error.message));
+  registerSkillStoreIpcHandlers(resourceIpc);
+  registerPublicSkillHubIpcHandlers({ getDesktopSettings: () => desktopSettings, ipcMain: resourceIpc });
   registerPublicExpertHubIpcHandlers({
     getDesktopSettings: () => desktopSettings,
+    ipcMain: resourceIpc,
     notifyAssistantsChanged: (payload) => emitToRenderer('agent:assistants-changed', payload),
   });
   registerConnectorHubIpcHandlers({
@@ -8208,7 +8256,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       return reload
     },
   });
-  registerAgentIpcHandlers();
+  registerAgentIpcHandlers(resourceIpc);
   const resolveTerminalLaunch = async ({ sessionId, action } = {}) => {
       assertUpdateWorkAllowed();
       const sessionRecord = getSessionRecord(sessionId);
@@ -9363,13 +9411,15 @@ ipcMain.handle('project:get', async (_event, { projectId } = {}) => {
   const project = await readProject(projectId);
   if (!project) throw new Error('Project not found.');
   const assistantId = project.assistantName ?? (project.expertIds?.length === 1 ? project.expertIds[0] : null);
+  const catalog = await managedResourceClient.refresh();
   const [skills, assistants] = await Promise.all([
     getInstalledSkills(), assistantId ? resolveProjectExpertInfos(project, [assistantId]) : [],
   ]);
   const resolved = resolveInstalledSkillInfos(project.skillIds, skills);
   return { ...await enrichProjectBestEffort(project), composerDefaults: {
-    skills: project.skillIds.map(id => { const skill = resolved.find(item => item.id === id); return { name: skill?.name || id, source: skill?.path, displayName: skill?.name || `${id}（不可用）` }; }),
-    assistantName: assistants[0]?.name || assistantId || null,
+    skills: catalog ? resolved.map(skill => ({ name: skill.name, source: skill.path, displayName: skill.name })) :
+      project.skillIds.map(id => { const skill = resolved.find(item => item.id === id); return { name: skill?.name || id, source: skill?.path, displayName: skill?.name || `${id}（不可用）` }; }),
+    assistantName: assistants[0]?.name || (catalog ? null : assistantId) || null,
   } };
 
 });
@@ -9833,6 +9883,7 @@ ipcMain.handle('agent:get-session', async (_event, { sessionId }) => {
 
 ipcMain.handle('agent:get-session-plugin-catalog', async (_event, { sessionId }) => {
   const sessionRecord = getSessionRecord(sessionId);
+  await managedResourceClient.refresh();
   return refreshSessionModelResources(sessionRecord);
 });
 
@@ -11117,10 +11168,6 @@ async function sendAgentPromptNow(event, {
   const attachmentSuffix = buildFileAttachmentPrompt(filePaths);
 
   const bashContextPrefix = isPlanOnly ? '' : consumePendingBashContexts(sessionRecord);
-  const effectiveSkills = skills;
-  const selectedSkillsInstruction = isPlanOnly
-    ? ''
-    : buildSelectedSkillsInstruction(effectiveSkills);
   const explicitAgentInstruction = explicitAgent
     ? buildExplicitAgentDispatchInstruction(explicitAgent.agentType)
     : '';
@@ -11132,7 +11179,6 @@ async function sendAgentPromptNow(event, {
       appTasksPromptContext(await appExecutionHost?.listSessionHistory(sessionRecord.id) || []),
       await appAuthoring?.promptForSession(sessionRecord.id) || '',
       bashContextPrefix.trim(),
-      selectedSkillsInstruction,
       preparedApp?.instruction || '',
       preparedAnnotation?.instruction || '',
       explicitAgentInstruction,
@@ -11144,6 +11190,7 @@ async function sendAgentPromptNow(event, {
 
   controllerSignal?.throwIfAborted();
   const turn = await runSessionPrompt({ sessionRecord, sender, runtimePrompt, visibleUserPrompt,
+    selectedSkills: isPlanOnly ? [] : skills,
     clientMessageId, onAccepted,
     attachments: visibleAttachments, resources: appResources,
     preparedTools: isPlanOnly ? [] : preparedApp?.tools || [], composerContext: appContext,

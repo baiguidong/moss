@@ -111,6 +111,7 @@
           "model-context-options.mjs",
           "project-icon.mjs",
           "workspace-preview.mjs",
+          "managed-resource-package.mjs",
           "retired-app-authoring-resources.mjs",
           "retired-app-authoring-resources.json"
         ]
