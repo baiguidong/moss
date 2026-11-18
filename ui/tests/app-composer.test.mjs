@@ -101,8 +101,9 @@ test('stale resource listing retries once with fresh provider and instance metad
 
 test('listing retries are bounded, preserve other errors, and never replay resource resolution', async () => {
   const provider = { id: 'example/projects', appId: 'example', listAction: 'list', resolveAction: 'resolve' }
-  let calls = 0, code = APP_ERROR_CODES.staleGeneration
+  let enabled = true, calls = 0, code = APP_ERROR_CODES.staleGeneration
   const runtime = {
+    getInstallation: () => ({ enabled }),
     listContributions: async () => ({ resourceProviders: [provider] }),
     requireContribution: async () => provider,
     resolveContributionInstance: () => ({ id: 'default' }),
@@ -111,11 +112,18 @@ test('listing retries are bounded, preserve other errors, and never replay resou
   const composer = createAppComposer({ getRuntime: () => runtime, getSession: () => null })
   await assert.rejects(composer.list(), { code })
   assert.equal(calls, 2)
-  for (code of [APP_ERROR_CODES.invalidOutput, APP_ERROR_CODES.disabled, APP_ERROR_CODES.actionCanceled]) {
+  for (code of [APP_ERROR_CODES.invalidOutput, APP_ERROR_CODES.actionTimeout, APP_ERROR_CODES.actionCanceled]) {
     calls = 0
     await assert.rejects(composer.list(), { code })
     assert.equal(calls, 1)
   }
+  enabled = false
+  for (code of [APP_ERROR_CODES.disabled, APP_ERROR_CODES.actionTimeout]) {
+    calls = 0
+    assert.deepEqual(await composer.list(), { items: [], providers: [] })
+    assert.equal(calls, 1)
+  }
+  enabled = true
   calls = 0; code = APP_ERROR_CODES.staleGeneration
   await assert.rejects(composer.resolve({ providerId: provider.id, intent: 'use' }), { code })
   assert.equal(calls, 1)
