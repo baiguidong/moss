@@ -7,6 +7,7 @@ import {
 
 const TRANSACTION_ID = 't'.repeat(43);
 const AUTHORIZATION_URL = `https://moss.example.com/api/v1/auth/oauth/authorize/${TRANSACTION_ID}`;
+const OIDC_AUTHORIZATION_URL = 'https://moss.example.com/oidc/authorize?client_id=moss-desktop&redirect_uri=http%3A%2F%2F127.0.0.1%3A54321%2Fcallback&response_type=code&state=state1234567890123456&code_challenge=challenge&code_challenge_method=S256';
 const REDIRECT_URI = 'http://127.0.0.1:54321/callback';
 
 function fakeWindow() {
@@ -82,6 +83,33 @@ describe('remote direct authentication window', () => {
       AUTHORIZATION_URL,
       REDIRECT_URI,
     )).toBe(false);
+    expect(isAllowedRemoteAuthNavigation(
+      OIDC_AUTHORIZATION_URL,
+      OIDC_AUTHORIZATION_URL,
+      REDIRECT_URI,
+    )).toBe(true);
+    expect(isAllowedRemoteAuthNavigation(
+      AUTHORIZATION_URL,
+      OIDC_AUTHORIZATION_URL,
+      REDIRECT_URI,
+    )).toBe(true);
+    expect(isAllowedRemoteAuthNavigation(
+      'https://moss.example.com/api/v1/auth/oauth/authorize/not-a-transaction',
+      OIDC_AUTHORIZATION_URL,
+      REDIRECT_URI,
+    )).toBe(false);
+  });
+
+  it('accepts the OIDC authorization endpoint and its server transaction redirect', async () => {
+    const window = fakeWindow();
+    await openRemoteDirectAuthorizationWindow({
+      createWindow: () => window,
+      authorizationUrl: OIDC_AUTHORIZATION_URL,
+      redirectUri: REDIRECT_URI,
+    });
+    const blocked = { prevented: false, preventDefault() { this.prevented = true; } };
+    window.webContents.emit('will-redirect', blocked, AUTHORIZATION_URL);
+    expect(blocked.prevented).toBe(false);
   });
 
   it('uses an isolated sandbox and treats a user-closed window as cancellation', async () => {

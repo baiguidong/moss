@@ -62,6 +62,7 @@ try {
           certificateVerifyProc: (request, callback) => store.verifyCertificate(request, callback),
         });
         assert.equal(window.isVisible(), true);
+        assert.deepEqual(window.getSize(), [1024, 700]);
         assert.equal(window.webContents.getURL(), authorizationUrl);
         assert.equal(window.webContents.getTitle(), '登录 Moss Server');
         await window.loadURL(`${origin}/api/v1/auth/oauth/authorize`);

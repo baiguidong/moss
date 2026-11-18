@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 const AUTHORIZE_PATH = '/api/v1/auth/oauth/authorize';
+const OIDC_AUTHORIZE_PATH = '/oidc/authorize';
+const TRANSACTION_AUTH_PATH = /^\/api\/v1\/auth\/oauth\/authorize\/[A-Za-z0-9_-]{43}$/;
 
 function parseUrl(value) {
   try {
@@ -19,9 +21,16 @@ export function isAllowedRemoteAuthNavigation(targetUrl, authorizationUrl, redir
   }
 
   if (target.origin === authorization.origin) {
+    // The first navigation to an OIDC authorization endpoint carries the
+    // OAuth parameters in its query string. Subsequent redirects land on
+    // the server's transaction-bound login page without a query.
+    if (target.href === authorization.href) return true;
+    if (target.pathname === authorization.pathname) {
+      return target.search === authorization.search;
+    }
     return !target.search && (
-      target.pathname === authorization.pathname
-      || target.pathname === AUTHORIZE_PATH
+      target.pathname === AUTHORIZE_PATH
+      || TRANSACTION_AUTH_PATH.test(target.pathname)
     );
   }
 
@@ -57,8 +66,10 @@ export async function openRemoteDirectAuthorizationWindow({
   if (
     !authorization
     || !loopbackCallback
-    || !/^\/api\/v1\/auth\/oauth\/authorize\/[A-Za-z0-9_-]{43}$/.test(authorization.pathname)
-    || authorization.search
+    || !(
+      (TRANSACTION_AUTH_PATH.test(authorization.pathname) && !authorization.search)
+      || (authorization.pathname === OIDC_AUTHORIZE_PATH && Boolean(authorization.search))
+    )
     || authorization.hash
     || authorization.username
     || authorization.password
@@ -68,8 +79,8 @@ export async function openRemoteDirectAuthorizationWindow({
 
   const authWindow = createWindow({
     title: '登录到 Moss Server',
-    width: 520,
-    height: 680,
+    width: 1024,
+    height: 700,
     minWidth: 420,
     minHeight: 560,
     parent: parentWindow && !parentWindow.isDestroyed?.() ? parentWindow : undefined,
