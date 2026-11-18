@@ -11,11 +11,12 @@ import { getAppCategoryForApp } from '../../../packages/app-sdk/src/categories.m
 import { validateAppPackage } from '../../../packages/app-runtime/src/index.mjs'
 import { downloadFileBuffer } from '../download-utils.mjs'
 import { MOSS_HOME } from '../moss-home.mjs'
+import { downloadOfflineKit, verifyOfflineKit } from './offline-kit-download.mjs'
 import { installAppArchive } from './app-runtime.mjs'
 import { appCapabilityDeclarationChanged, describeAppTools, describePreviousAppCapabilities } from './app-tool-disclosure.mjs'
 
 const INSTALL_CANCELED = 'MOSS_APP_MARKET_INSTALL_CANCELED'
-const MARKET_CACHE_VERSION = 2
+const MARKET_CACHE_VERSION = 3
 const MARKET_CACHE_TTL_MS = 5 * 60 * 1000
 const MARKET_REQUEST_TIMEOUT_MS = 15_000
 const MAX_CATALOG_BYTES = 5 * 1024 * 1024
@@ -81,6 +82,20 @@ export function normalizeMarketplaceVersion(raw, baseUrl) {
     if (keys.length !== platforms.length || keys.some(key => !platforms.includes(key))) throw new Error('Artifact platforms must exactly match version platforms')
     delivery = { artifacts: Object.fromEntries(keys.map(key => [key, normalizeArtifact(raw.artifacts[key])])) }
   } else delivery = { artifact: normalizeArtifact(raw.artifact) }
+  if (raw.offlineKits !== undefined) {
+    if (!isObject(raw.offlineKits)) throw new Error('Invalid offline kits')
+    const kits = {}
+    for (const [target, kit] of Object.entries(raw.offlineKits)) {
+      const base = delivery.artifacts?.[target] || delivery.artifact
+      if (!platforms.includes(target) || !isObject(kit) || !base?.signed || kit.appSha256 !== base.sha256
+          || kit.fileName !== base.fileName.slice(0, -4) + '-offline-' + target + '.zip'
+          || kit.publisherId !== base.publisherId || kit.keyId !== base.keyId
+          || !/^[a-f0-9]{64}$/.test(kit.sha256) || !/^[A-Za-z0-9+/]{86}==$/.test(kit.signature)
+          || !Number.isSafeInteger(kit.size) || kit.size <= 0 || kit.size > 2 * 1024 ** 3) throw new Error('Invalid offline kit metadata')
+      kits[target] = { ...kit, downloadUrl: safeHttpsUrl(kit.downloadUrl, baseUrl, 'offlineKit.downloadUrl') }
+    }
+    delivery.offlineKits = kits
+  }
   return { version, hostApi, platforms,
     permissions: normalizeStringArray(raw.permissions || [], 'permissions'),
     publishedAt: safeString(raw.publishedAt, 'publishedAt', { required: false }),
@@ -295,7 +310,7 @@ export function createAppMarketplaceService(options = {}) {
       // The Host owns the target platform. A browser's OS is unrelated to the
       // Linux computer where its Apps execute. Keep the shared cache complete.
       apps: result.index.apps
-        .filter((entry) => selectMarketplaceArtifact(entry.latest, platform))
+        .filter((entry) => selectMarketplaceArtifact(entry.latest, platform) || Object.keys(entry.latest.offlineKits || {}).length)
         .map((entry) => enrichSummary(entry, installedApps, platform)),
     }
   }
@@ -524,11 +539,36 @@ export function createAppMarketplaceService(options = {}) {
     return operation
   }
 
-  return { list, getDetails, install }
+  const saving = new Set()
+  async function saveOfflineKit({ appId, version, platform: target }) {
+    const detail = await getDetails(appId)
+    const selected = detail.versions.find(item => item.version === version)
+    const kit = selected?.offlineKits?.[target]
+    if (!kit || !SUPPORTED_PLATFORMS.has(target) || kit.publisherId !== detail.publisher?.id) throw new Error('所选版本未提供该平台的离线包')
+    const publisher = trustedPublishers instanceof Map ? trustedPublishers.get(kit.publisherId) : trustedPublishers[kit.publisherId]
+    verifyOfflineKit(appId, version, target, kit, publisher)
+    if (saving.has(appId)) throw new Error('此应用的离线包正在下载')
+    saving.add(appId)
+    const report = (phase, patch = {}) => options.emitProgress?.({ source: 'offline-kit', appId, version, fileName: kit.fileName, totalBytes: kit.size, phase, ...patch })
+    try {
+      const file = await options.chooseOfflineKitDestination(kit.fileName)
+      if (!file) { report('canceled'); return { ok: false, canceled: true } }
+      report('downloading', { receivedBytes: 0 })
+      await downloadOfflineKit(kit, file, { validateUrl: url => safeHttpsUrl(url, undefined, 'offlineKit.downloadUrl'),
+        onProgress: receivedBytes => report('downloading', { receivedBytes }) })
+      report('completed')
+      return { ok: true, filePath: file }
+    } catch (error) {
+      report('error', { error: error.message })
+      throw error
+    } finally { saving.delete(appId) }
+  }
+  return { list, getDetails, install, saveOfflineKit }
 }
 
 export function registerAppMarketplaceIpc({ ipcMain, service }) {
   ipcMain.handle('app-market:list', (_event, payload = {}) => service.list(payload))
   ipcMain.handle('app-market:get-details', (_event, payload = {}) => service.getDetails(payload.appId, payload))
+  ipcMain.handle('app-market:save-offline-kit', (_event, payload = {}) => service.saveOfflineKit(payload))
   ipcMain.handle('app-market:install', (_event, payload = {}) => service.install(payload))
 }

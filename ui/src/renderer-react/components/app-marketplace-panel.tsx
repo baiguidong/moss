@@ -49,6 +49,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = 
   const [error, setError] = React.useState("");
   const { progress, clearProgress } = useAppInstallProgress("marketplace");
   const { progress: archiveProgress, clearProgress: clearArchiveProgress } = useAppInstallProgress('local');
+  const { progress: kitProgress, clearProgress: clearKitProgress } = useAppInstallProgress('offline-kit');
   const [importing, setImporting] = React.useState(false);
   const importArchive = async () => {
     setImporting(true); setError(''); clearArchiveProgress('local');
@@ -144,6 +145,17 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = 
     }
   };
 
+  const saveOfflineKit = async (entry: AppMarketplaceEntry, platform: string) => {
+    const version = selectedVersions[entry.id] || entry.latestVersion;
+    setPendingAppIds(current => new Set(current).add(entry.id));
+    clearKitProgress(entry.id);
+    setError('');
+    try {
+      await window.agentDesktop.appMarketplace.saveOfflineKit({ appId: entry.id, version, platform });
+    } catch (reason) { setError(cleanIpcErrorMessage(reason)); }
+    finally { setPendingAppIds(current => { const next = new Set(current); next.delete(entry.id); return next; }); }
+  };
+
   const scopedInstalledApps = React.useMemo(() => kind ? installedApps.filter(app => getAppKind(app) === (kind === 'connector' ? 'tool' : 'app')) : installedApps, [installedApps, kind]);
   const installedById = React.useMemo(() => new Map(scopedInstalledApps.map((app) => [app.id || app.name, app])), [scopedInstalledApps]);
   const scopedMarketApps = React.useMemo(() => kind ? (catalog?.apps || []).filter(app => getAppKind(app) === (kind === 'connector' ? 'tool' : 'app')) : (catalog?.apps || []), [catalog?.apps, kind]);
@@ -152,7 +164,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = 
   const visibleApps = groupApps(sectionApps).flatMap(group => group.apps);
 
   const selected = catalog?.apps.find(entry => entry.id === selectedId);
-  const activeInstall = pendingAppIds.size > 0 || importing || Object.values(progress).some(isAppInstallActive) || isAppInstallActive(archiveProgress.local);
+  const activeInstall = pendingAppIds.size > 0 || importing || Object.values(progress).some(isAppInstallActive) || Object.values(kitProgress).some(isAppInstallActive) || isAppInstallActive(archiveProgress.local);
   const toolbarActions = <>
     <Button size="sm" variant="outline" className="h-8 rounded-lg px-3 text-xs" title="本地安装 ZIP" aria-label="本地安装 ZIP" disabled={importing || isAppInstallActive(archiveProgress.local) || !supportsHostFeature('appInstallation')} onClick={() => void importArchive()}><Upload className="h-4 w-4" />{importing ? '安装中…' : '添加应用'}</Button>
   </>;
@@ -196,7 +208,8 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = 
     </div>
     {selected && <AppMarketplaceDetails key={selected.id} entry={selected} detail={details[selected.id]} installed={installedById.get(selected.id)}
       version={selectedVersions[selected.id] || selected.latestVersion} hostApiVersion={catalog?.hostApiVersion}
-      busy={pendingAppIds.has(selected.id) || isAppInstallActive(progress[selected.id])} progress={progress[selected.id]}
+      hostPlatform={catalog?.platform} onSaveKit={platform => void saveOfflineKit(selected, platform)} kitProgress={kitProgress[selected.id]}
+      busy={pendingAppIds.has(selected.id) || isAppInstallActive(progress[selected.id]) || isAppInstallActive(kitProgress[selected.id])} progress={progress[selected.id]}
       error={error} detailError={detailErrors[selected.id]} onBack={() => setSelectedId(null)} onInstall={() => void install(selected)}
       onVersion={version => setSelectedVersions(current => ({ ...current, [selected.id]: version }))} onRetry={() => void openDetails(selected)} />}
     </>;

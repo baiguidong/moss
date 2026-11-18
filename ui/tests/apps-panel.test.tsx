@@ -225,7 +225,7 @@ describe('Apps management', () => {
     expect(markup).not.toContain('placeholder="搜索 App"');
     expect(markup).toContain('role="tablist"');
     expect(markup).not.toContain('title="返回已安装 App"');
-    expect(markup).toContain('正在加载应用市场');
+    expect(markup).toContain('正在加载App市场');
   });
 
   test('uses the App settings page instead of duplicating single-instance configuration', () => {

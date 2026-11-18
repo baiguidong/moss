@@ -5010,7 +5010,7 @@ function attachEmbeddedAppWebContents(pending, targetWebContents, embedId) {
   state.workspace = pending.sessionId ? getSessionRecord(pending.sessionId).workspace : pending.workspace;
   configureAppWebContents(targetWebContents, pending.bundleToken);
   targetWebContents.once('destroyed', () => {
-    disposeAppWebContentsState(targetWebContents.id);
+    disposeAppWebContentsState(pending.webContentsId);
     pendingEmbeddedApps.delete(embedId);
     pendingEmbeddedAppsByToken.delete(pending.bundleToken);
   });
@@ -5303,11 +5303,12 @@ function launchAppWindow(appEntry, source = {}) {
     });
 
     appWindows.set(windowKey, appWindow);
-    const state = createAppWindowState({ ...appEntry, bundleToken }, appWindow, source);
+    createAppWindowState({ ...appEntry, bundleToken }, appWindow, source);
+    const webContentsId = appWindow.webContents.id;
     configureAppWebContents(appWindow.webContents, bundleToken);
-    appWindow.on('closed', () => {
-      disposeAppWebContentsState(appWindow.webContents.id);
-      appWindows.delete(windowKey);
+    appWindow.once('closed', () => {
+      disposeAppWebContentsState(webContentsId);
+      if (appWindows.get(windowKey) === appWindow) appWindows.delete(windowKey);
     });
     void appWindow.loadURL(source.route ? entryUrl.split("#")[0] + source.route : entryUrl);
     return appWindow;
@@ -8099,7 +8100,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     });
   const appInstallProgress = new Map();
   const emitAppInstallProgress = (progress) => {
-    const key = progress.source === 'local' ? 'local' : `marketplace:${progress.appId}`;
+    const key = progress.source === 'local' ? 'local' : `${progress.source}:${progress.appId}`;
     if (['completed', 'error', 'canceled'].includes(progress.phase)) appInstallProgress.delete(key);
     else appInstallProgress.set(key, progress);
     emitToRenderer('app:install-progress', progress);
@@ -8168,6 +8169,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     connectorAppHost.finishUpgrade(listAllStoredApps());
   }
   appMarketplaceService = createAppMarketplaceService({
+    chooseOfflineKitDestination: async fileName => {
+      const result = await appDialog.showSaveDialog({ title: '保存离线整包', defaultPath: fileName, filters: [{ name: 'ZIP', extensions: ['zip'] }] });
+      return result.canceled ? null : result.filePath;
+    },
     indexUrl: appMarketConfiguration.indexUrl,
     cachePath: path.join(MOSS_HOME, 'app-market', 'catalog-v1.json'),
     trustedPublishers,
