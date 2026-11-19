@@ -12,7 +12,7 @@ import { validateAppPackage } from '../../../packages/app-runtime/src/index.mjs'
 import { downloadFileBuffer } from '../download-utils.mjs'
 import { MOSS_HOME } from '../moss-home.mjs'
 import { downloadOfflineKit, verifyOfflineKit } from './offline-kit-download.mjs'
-import { installAppArchive } from './app-runtime.mjs'
+import { extractAppArchive, installAppArchive } from './app-runtime.mjs'
 import { appCapabilityDeclarationChanged, describeAppTools, describePreviousAppCapabilities } from './app-tool-disclosure.mjs'
 
 const INSTALL_CANCELED = 'MOSS_APP_MARKET_INSTALL_CANCELED'
@@ -340,8 +340,21 @@ export function createAppMarketplaceService(options = {}) {
     }
   }
 
-  async function install({ appId, version: requestedVersion, acceptPermissions = false } = {}) {
-    if (installLocks.has(appId)) return installLocks.get(appId)
+  function verifiedOfflineKit(detail, version, target) {
+    const kit = version?.offlineKits?.[target]
+    if (!kit || !SUPPORTED_PLATFORMS.has(target) || kit.publisherId !== detail.publisher?.id) throw new Error('所选版本未提供该平台的离线包')
+    const publisher = trustedPublishers instanceof Map ? trustedPublishers.get(kit.publisherId) : trustedPublishers[kit.publisherId]
+    verifyOfflineKit(detail.id, version.version, target, kit, publisher)
+    return kit
+  }
+
+  async function install({ appId, version: requestedVersion, packageType = 'online', acceptPermissions = false } = {}) {
+    if (!['online', 'full'].includes(packageType)) throw new Error('未知安装包类型')
+    const pending = installLocks.get(appId)
+    if (pending) {
+      if (pending.version === requestedVersion && pending.packageType === packageType) return pending.operation
+      throw new Error('此应用正在安装，请稍后重试')
+    }
     let progress = { source: 'marketplace', appId, version: requestedVersion || '' }
     const report = (patch) => {
       progress = { ...progress, ...patch }
@@ -356,6 +369,7 @@ export function createAppMarketplaceService(options = {}) {
       if (!compatibility.hostCompatible) throw new Error(`App ${appId}@${version.version} requires Host API ${version.hostApi}`)
       if (!version.artifact.signed) throw new Error(`App ${appId}@${version.version} is not signed`)
 
+      const kit = packageType === 'full' ? verifiedOfflineKit(detail, version, platform) : null
       const runtime = options.getRuntime()
       const installationRevision = options.getInstallationRevision?.(appId)
       const installedEntry = (await options.getInstalledApps()).find(entry => (entry.id || entry.name) === appId)
@@ -394,26 +408,44 @@ export function createAppMarketplaceService(options = {}) {
         return { ok: false, requiresPermissionApproval: true, appId, version: version.version, permissions: addedPermissions }
       }
 
-      report({ phase: 'downloading', version: version.version, receivedBytes: 0, totalBytes: version.artifact.size })
-      const archive = await download(version.artifact.downloadUrl, {
-        userAgent: 'Moss-AppMarket/1.0',
-        maxBytes: MAX_APP_BYTES,
-        onProgress: ({ receivedBytes }) => report({ phase: 'downloading', receivedBytes }),
-      })
-      report({ phase: 'verifying', receivedBytes: archive.length })
-      if (version.artifact.size && archive.length !== version.artifact.size) {
-        throw new Error(`App download size mismatch: ${appId}@${version.version}`)
-      }
-      const checksum = createHash('sha256').update(archive).digest('hex')
-      if (checksum !== version.artifact.sha256) throw new Error(`App download checksum mismatch: ${appId}@${version.version}`)
-
-      const temporaryRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'moss-market-app-'))
-      const archivePath = path.join(temporaryRoot, version.artifact.fileName)
+      // Stage full packages on the same volume as their versioned resources for atomic publication.
+      const stagingParent = kit ? path.join(runtime.appsDir, appId, 'offline-kits') : os.tmpdir()
+      if (kit) await fsp.mkdir(stagingParent, { recursive: true })
+      const temporaryRoot = await fsp.mkdtemp(path.join(stagingParent, 'moss-market-app-'))
+      const media = path.join(temporaryRoot, 'media')
+      const artifact = version.artifact
+      const archivePath = path.join(kit ? media : temporaryRoot, artifact.fileName)
+      const resources = kit && path.join(stagingParent, version.version + '-' + kit.sha256)
+      let resourcesPublished = false
       let packageInstallStarted = false
       let activationCompleted = false
       let commitRevision
       try {
-        await fsp.writeFile(archivePath, archive, { mode: 0o600 })
+        const delivery = kit || artifact
+        report({ phase: 'downloading', version: version.version, fileName: delivery.fileName, receivedBytes: 0, totalBytes: delivery.size })
+        const onProgress = receivedBytes => report({ phase: 'downloading', receivedBytes })
+        let archive
+        if (kit) {
+          const file = path.join(temporaryRoot, kit.fileName)
+          await downloadOfflineKit(kit, file, { validateUrl: url => safeHttpsUrl(url, undefined, 'offlineKit.downloadUrl'), onProgress })
+          report({ phase: 'extracting' })
+          await extractAppArchive(file, media, { maxFileBytes: 2 * 1024 ** 3, maxArchiveBytes: 4 * 1024 ** 3 })
+          await fsp.unlink(file)
+          if ((await fsp.stat(path.join(media, 'offline.json'))).size > 64 * 1024) throw new Error('完整包内的资源清单过大')
+          const marker = JSON.parse(await fsp.readFile(path.join(media, 'offline.json'), 'utf8'))
+          if (marker.format !== 1 || marker.appId !== appId || marker.version !== version.version || marker.platform !== platform)
+            throw new Error('完整包内的资源与所选应用版本或平台不匹配')
+          if ((await fsp.stat(archivePath)).size !== artifact.size) throw new Error('完整包内的 App 安装包大小不匹配')
+          archive = await fsp.readFile(archivePath)
+        } else {
+          archive = await download(artifact.downloadUrl, {
+            userAgent: 'Moss-AppMarket/1.0', maxBytes: MAX_APP_BYTES, onProgress: ({ receivedBytes }) => onProgress(receivedBytes),
+          })
+          await fsp.writeFile(archivePath, archive, { mode: 0o600 })
+        }
+        report({ phase: 'verifying', receivedBytes: kit ? kit.size : archive.length })
+        if (archive.length !== artifact.size) throw new Error(`App download size mismatch: ${appId}@${version.version}`)
+        if (createHash('sha256').update(archive).digest('hex') !== artifact.sha256) throw new Error(`App download checksum mismatch: ${appId}@${version.version}`)
         const app = await archiveInstaller(runtime, archivePath, {
           onProgress: report,
           installPackage: async (packageRoot) => {
@@ -458,6 +490,15 @@ export function createAppMarketplaceService(options = {}) {
             await assertInstallationUnchanged()
             assertReviewedPackage(packageInfo, await packageValidator(packageRoot, { trustedPublishers, requireTrustedPublisher: true, platform }))
             report({ phase: 'installing' })
+            if (resources) {
+              try {
+                await fsp.rename(media, resources)
+                resourcesPublished = true
+              } catch (error) {
+                // An earlier installation of the identical signed kit already owns this directory.
+                if (!['EEXIST', 'ENOTEMPTY'].includes(error.code)) throw error
+              }
+            }
             packageInstallStarted = true
             return options.installPackage(packageRoot, {
               trustedPublishers,
@@ -465,7 +506,8 @@ export function createAppMarketplaceService(options = {}) {
               onCommit: state => { commitRevision = state.installationRevision },
               validateCommit: assertInstallationUnchanged, expectedPackageChecksums: packageInfo.checksums,
               requireTrustedPublisher: true,
-              marketplaceSource: { catalogUrl: indexUrl, appId, version: version.version },
+              marketplaceSource: { catalogUrl: indexUrl, appId, version: version.version,
+                ...(resources ? { offlineKitMarker: path.join(resources, 'offline.json') } : {}) },
               ...(installationRevision !== undefined ? {
                 expectedInstallationRevision: installationRevision,
                 expectedBaseVersion: installedEntry?.currentVersion || null,
@@ -522,6 +564,7 @@ export function createAppMarketplaceService(options = {}) {
         }
         throw error
       } finally {
+        if (resourcesPublished && !activationCompleted) await fsp.rm(resources, { recursive: true, force: true })
         await fsp.rm(temporaryRoot, { recursive: true, force: true })
       }
     })().then((result) => {
@@ -535,7 +578,7 @@ export function createAppMarketplaceService(options = {}) {
       report({ phase: 'error', error: error.message || String(error) })
       throw error
     }).finally(() => installLocks.delete(appId))
-    installLocks.set(appId, operation)
+    installLocks.set(appId, { version: requestedVersion, packageType, operation })
     return operation
   }
 
@@ -543,10 +586,7 @@ export function createAppMarketplaceService(options = {}) {
   async function saveOfflineKit({ appId, version, platform: target }) {
     const detail = await getDetails(appId)
     const selected = detail.versions.find(item => item.version === version)
-    const kit = selected?.offlineKits?.[target]
-    if (!kit || !SUPPORTED_PLATFORMS.has(target) || kit.publisherId !== detail.publisher?.id) throw new Error('所选版本未提供该平台的离线包')
-    const publisher = trustedPublishers instanceof Map ? trustedPublishers.get(kit.publisherId) : trustedPublishers[kit.publisherId]
-    verifyOfflineKit(appId, version, target, kit, publisher)
+    const kit = verifiedOfflineKit(detail, selected, target)
     if (saving.has(appId)) throw new Error('此应用的离线包正在下载')
     saving.add(appId)
     const report = (phase, patch = {}) => options.emitProgress?.({ source: 'offline-kit', appId, version, fileName: kit.fileName, totalBytes: kit.size, phase, ...patch })

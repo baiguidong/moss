@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ChevronRight, Download, LoaderCircle, PackageCheck } from 'lucide-react';
+import { AppMarketplacePackageDialog, packageSize, type MarketPackageType } from '@/components/app-marketplace-package-dialog';
 import { AppMarketplaceIcon } from '@/components/app-marketplace-icon';
 import { AppDetailsSection, APP_DETAILS_LIST_CLASS, APP_DETAILS_ROW_CLASS } from '@/components/app-details-section';
 import { AppInstallProgressView } from '@/components/app-install-progress';
@@ -8,25 +9,17 @@ import { supportsHostFeature } from '@/lib/host-environment';
 import { describeAppPermission } from '../../shared/app-capability-descriptions.mjs';
 import type { AppInstallProgress, AppMarketplaceDetail, AppMarketplaceEntry, StoredApp } from '@/types';
 
-const platformNames: Record<string, string> = {
-  'darwin-arm64': 'macOS · Apple Silicon', 'darwin-x64': 'macOS · Intel',
-  'win32-x64': 'Windows · x64', 'win32-arm64': 'Windows · ARM64',
-  'linux-x64': 'Linux · x64', 'linux-arm64': 'Linux · ARM64',
-};
-
-export function AppMarketplaceDetails({ entry, detail, installed, version, busy, progress, error, detailError, hostApiVersion, hostPlatform, kitProgress, onSaveKit, onBack, onInstall, onVersion, onRetry }: {
+export function AppMarketplaceDetails({ entry, detail, installed, version, busy, progress, error, detailError, hostApiVersion, hostPlatform, promptUpdate, kitProgress, onSaveKit, onBack, onInstall, onVersion, onRetry }: {
   entry: AppMarketplaceEntry; detail?: AppMarketplaceDetail; installed?: StoredApp;
   version: string; busy: boolean; progress?: AppInstallProgress; error?: string; detailError?: string; hostApiVersion?: string;
-  hostPlatform?: string; kitProgress?: AppInstallProgress; onSaveKit(platform: string): void;
-  onBack(): void; onInstall(): void; onVersion(version: string): void; onRetry(): void;
+  hostPlatform?: string; promptUpdate?: boolean; kitProgress?: AppInstallProgress; onSaveKit(platform: string): void;
+  onBack(): void; onInstall(type: MarketPackageType): void; onVersion(version: string): void; onRetry(): void;
 }) {
   const backButton = useRef<HTMLButtonElement>(null);
   useEffect(() => { backButton.current?.focus({ preventScroll: true }); }, []);
   const release = detail?.versions.find(item => item.version === version) || entry.latest;
-  const [preferredTarget, setPreferredTarget] = useState('');
-  const targets = Object.keys(release.offlineKits || {});
-  const kitTarget = targets.includes(preferredTarget) ? preferredTarget : hostPlatform && targets.includes(hostPlatform) ? hostPlatform : targets[0];
-  const kit = release.offlineKits?.[kitTarget];
+  const [choosing, setChoosing] = useState(Boolean(promptUpdate && entry.updateAvailable));
+  const hasKits = Object.keys(release.offlineKits || {}).length > 0;
   const compatible = (release.platformCompatible ?? entry.platformCompatible) && (release.hostCompatible ?? entry.hostCompatible);
   const sameVersion = installed?.currentVersion === version;
   const localModification = Boolean(installed?.localModification || entry.localModification);
@@ -34,8 +27,9 @@ export function AppMarketplaceDetails({ entry, detail, installed, version, busy,
   const action = installing ? installed ? '更新中…' : '安装中…' : !installed ? '安装' : localModification ? sameVersion ? '本地版本冲突' : '安装市场版'
     : sameVersion ? '已安装' : version === entry.latestVersion && entry.updateAvailable ? '更新' : '安装此版本';
   const installSupported = supportsHostFeature('appInstallation');
-  const bytes = release.artifact?.size || 0;
-  const size = bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MiB` : `${Math.max(1, Math.round(bytes / 1024))} KiB`;
+  const canInstall = !sameVersion && compatible && installSupported;
+  const downloadOnly = hasKits && !canInstall;
+  const offlineMarker = sameVersion && installed?.marketplaceSource?.version === version && installed.marketplaceSource.offlineKitMarker;
   return <div data-app-market-details={entry.id} className="h-full min-h-0 overflow-y-auto bg-background">
     <div className="@container mx-auto max-w-3xl space-y-8 px-5 pb-12 pt-4 sm:px-9">
       <nav aria-label="市场详情导航" className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -45,21 +39,14 @@ export function AppMarketplaceDetails({ entry, detail, installed, version, busy,
       <header className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-4 @2xl:grid-cols-[auto_minmax(0,1fr)_auto]">
         <AppMarketplaceIcon icon={entry.iconUrl} className="h-16 w-16 rounded-2xl" />
         <div className="min-w-0"><h1 className="text-2xl font-semibold tracking-tight">{entry.displayName}</h1><p className="mt-1.5 text-sm text-muted-foreground">{entry.publisher?.name || '应用市场'} · {entry.summary}</p></div>
-        <Button className="col-span-2 w-fit rounded-full @2xl:col-span-1" disabled={busy || !detail || sameVersion || !compatible || !installSupported} onClick={onInstall}>
-          {installing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : sameVersion && !localModification ? <PackageCheck className="h-4 w-4" /> : <Download className="h-4 w-4" />}
-          {installSupported ? kit && action === '安装' ? '在线安装' : action : '此 Host 暂不支持安装授权'}
+        <Button className="col-span-2 w-fit rounded-full @2xl:col-span-1" disabled={busy || !detail || (!canInstall && !hasKits)} onClick={() => hasKits ? setChoosing(true) : onInstall('online')}>
+          {installing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : sameVersion && !downloadOnly && !localModification ? <PackageCheck className="h-4 w-4" /> : <Download className="h-4 w-4" />}
+          {downloadOnly ? '下载' : installSupported ? action : '此 Host 暂不支持安装授权'}
         </Button>
       </header>
-      {kit && <AppDetailsSection title="离线安装">
-        <div className="flex flex-wrap items-center gap-3 py-3">
-          <label className="flex items-center gap-2 text-sm">目标平台<select value={kitTarget} onChange={event => setPreferredTarget(event.target.value)} disabled={busy} className="h-9 rounded-lg border border-input bg-background px-2">
-            {targets.map(target => <option key={target} value={target}>{platformNames[target] || target}</option>)}
-          </select></label>
-          <Button variant="outline" disabled={busy || !detail} onClick={() => onSaveKit(kitTarget)}><Download className="h-4 w-4" />下载离线整包 · {(kit.size / 1024 ** 2).toFixed(1)} MiB</Button>
-        </div>
-        <p className="pb-3 text-sm text-muted-foreground">可拷至内网电脑。解压后，按包内安装说明在 Moss 中添加应用并准备本地资源。</p>
-        {kitProgress?.version === version && <AppInstallProgressView progress={kitProgress} />}
-      </AppDetailsSection>}
+      {choosing && hasKits && detail && <AppMarketplacePackageDialog name={entry.displayName} release={release} action={action}
+        hostPlatform={hostPlatform} canInstall={canInstall} onClose={() => setChoosing(false)} onInstall={onInstall} onDownload={onSaveKit} />}
+      {kitProgress?.version === version && <AppInstallProgressView progress={kitProgress} />}
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {progress && <AppInstallProgressView progress={progress} />}
       {detailError ? <p role="alert" className="text-sm text-destructive">{detailError}<Button variant="outline" size="sm" className="ml-3 rounded-full" onClick={onRetry}>重试</Button></p>
@@ -75,7 +62,8 @@ export function AppMarketplaceDetails({ entry, detail, installed, version, busy,
         </select> : version}</dd></div>
         {installed && <div className={APP_DETAILS_ROW_CLASS}><dt className="text-muted-foreground">已安装版本</dt><dd>{installed.currentVersion}{['invalid', 'incompatible'].includes(installed.packageStatus || '') ? ' · 当前版本不可用' : ''}</dd></div>}
         <div className={APP_DETAILS_ROW_CLASS}><dt className="text-muted-foreground">开发者</dt><dd>{entry.publisher?.name || '未提供'}</dd></div>
-        <div className={APP_DETAILS_ROW_CLASS}><dt className="text-muted-foreground">安装包</dt><dd>{release.artifact ? size : '无适用安装包'}</dd></div>
+        <div className={APP_DETAILS_ROW_CLASS}><dt className="text-muted-foreground">安装包</dt><dd>{release.artifact ? packageSize(release.artifact.size) : '无适用安装包'}</dd></div>
+        {offlineMarker && <div className={APP_DETAILS_ROW_CLASS}><dt className="text-muted-foreground">随包资源</dt><dd><Button size="sm" variant="outline" onClick={() => void window.agentDesktop.shell.showItemInFolder(offlineMarker)}>显示 offline.json</Button></dd></div>}
         <div className={APP_DETAILS_ROW_CLASS}><dt className="text-muted-foreground">签名</dt><dd>{release.artifact?.signed ? '已签名' : '未签名'}</dd></div>
         <div className={APP_DETAILS_ROW_CLASS}><dt className="text-muted-foreground">Host API</dt><dd>{release.hostApi}</dd></div>
       </dl></AppDetailsSection>

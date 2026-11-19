@@ -79,7 +79,7 @@ export function AppDetailsView({ app, installedApps, onBack, onTry, onOpenApp, o
       if (request.current === revision) setSkill({ id: item.id, title: item.title, error: cleanIpcErrorMessage(String(cause)) });
     }
   };
-  if (marketOpen) return <AppMarketplacePanel installedApps={installedApps || [app]} onBack={() => setMarketOpen(false)} onInstalled={onRefresh} />;
+  if (marketOpen) return <AppMarketplacePanel updateAppId={appId} installedApps={installedApps || [app]} onBack={() => setMarketOpen(false)} onInstalled={onRefresh} />;
   return <div data-app-details={appId} className="flex h-full min-h-0 min-w-0 flex-col bg-background lg:flex-row">
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
       <div className="@container mx-auto max-w-3xl space-y-8 px-5 pb-12 pt-4 sm:px-9">

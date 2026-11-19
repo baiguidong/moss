@@ -985,6 +985,7 @@ export type StoredApp = {
   localModification?: Record<string, unknown> | null;
   marketplaceSource?: {
     catalogUrl: string;
+    offlineKitMarker?: string;
     appId: string;
     version: string;
   };
@@ -1073,6 +1074,7 @@ export type AppVersion = {
   note: string;
   marketplaceSource?: {
     catalogUrl: string;
+    offlineKitMarker?: string;
     appId: string;
     version: string;
   } | null;
@@ -1627,7 +1629,7 @@ declare global {
         saveOfflineKit: (payload: { appId: string; version: string; platform: string }) => Promise<{ ok: boolean; canceled?: boolean; filePath?: string }>;
         list: (payload?: { forceRefresh?: boolean }) => Promise<AppMarketplaceCatalog>;
         getDetails: (payload: { appId: string; forceRefresh?: boolean }) => Promise<AppMarketplaceDetail>;
-        install: (payload: { appId: string; version?: string; acceptPermissions?: boolean }) => Promise<{
+        install: (payload: { appId: string; version?: string; packageType?: 'online' | 'full'; acceptPermissions?: boolean }) => Promise<{
           ok: boolean;
           alreadyInstalled?: boolean;
           canceled?: boolean;

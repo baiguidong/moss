@@ -23,12 +23,14 @@ const {
 const platform = process.platform + '-' + process.arch
 const kit = release.offlineKits[platform],
   online = release.artifacts?.[platform] || release.artifact
-const output = path.join(releaseDir, 'verification')
+const output = process.env.MOSS_TEST_OUTPUT_DIR || path.join(releaseDir, 'verification')
+const previousZip = process.env.MOSS_TEST_PREVIOUS_APP_ZIP
+let offlineMarker
 const mode = process.argv.includes('--offline')
   ? 'offline'
   : process.argv.includes('--online')
     ? 'online'
-    : 'market'
+    : process.argv.includes('--full') ? 'full' : 'market'
 const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'moss-market-test-'))
 const media = path.join(root, 'media')
 const saved = path.join(output, kit.fileName)
@@ -62,7 +64,7 @@ dialog.showMessageBox = async (...args) => {
 dialog.showSaveDialog = async () => ({ canceled: false, filePath: saved })
 dialog.showOpenDialog = async (...args) => ({
   canceled: false,
-  filePaths: [path.join(media, args.at(-1).title === 'Install Moss App' ? online.fileName : 'offline.json')],
+  filePaths: [args.at(-1).title === 'Install Moss App' ? (previousZip || path.join(media, online.fileName)) : (offlineMarker || path.join(media, 'offline.json'))],
 })
 const site = path.join(root, 'catalog')
 let origin, server
@@ -223,6 +225,8 @@ async function prepare() {
     const unpack = spawnSync('unzip', ['-q', saved, '-d', media], { encoding: 'utf8' })
     assert.equal(unpack.status, 0, unpack.stderr)
     assert.equal(await sha256(path.join(media, online.fileName)), online.sha256)
+  }
+  if (mode === 'offline' || mode === 'full') {
     const start = AppProcessSupervisor.prototype.startNow
     AppProcessSupervisor.prototype.startNow = async function (key, options) {
       if (this.definitions.get(key)?.appId !== id) return start.call(this, key, options)
@@ -254,7 +258,7 @@ const startupError = await prepare().then(
 async function run() {
   try {
     if (startupError) throw startupError
-    const win = await until(() => uiWindows[0], 'desktop window')
+    const win = await until(() => uiWindows[0], 'desktop window', 180000)
     win.setSize(1400, 950)
     await until(() => js(win, () => Boolean(window.agentDesktop?.appMarketplace)), 'production preload')
     await until(
@@ -295,6 +299,12 @@ async function run() {
           ),
         'signed App installation and activation',
       )
+    if (previousZip && mode === 'full') {
+      await until(() => btn(win, '添加应用'), 'install earlier App')
+      await confirmReviewedInstall(win)
+      await until(() => js(win, async (id, version) => (await window.agentDesktop.listApps()).some(app => app.id === id && app.currentVersion !== version), id, release.version), 'previous App installed')
+      approvals.length = 0
+    }
     if (mode !== 'offline') {
       await until(
         () =>
@@ -311,46 +321,59 @@ async function run() {
           ),
         'market details',
       )
-      await until(
-        () =>
-          js(win, () =>
-            [...document.querySelectorAll('button')].some(
-              (b) => b.textContent.includes('下载离线整包') && !b.disabled,
-            ),
-          ),
-        'download choices',
-      )
+      const action = previousZip && mode === 'full' ? '更新' : '安装'
+      const openChoices = async () => {
+        await until(() => js(win, text => {
+          const b = [...document.querySelectorAll('[data-app-market-details] header button')].find(b => b.textContent.trim() === text && !b.disabled)
+          if (b) { b.click(); return true }
+        }, action), action + ' entry')
+        await until(() => js(win, () => document.querySelector('dialog[open] input[value="online"]')?.checked), 'online selected by default')
+      }
+      const choose = choice => js(win, value => {
+        const radio = document.querySelector('dialog[open] input[value="' + value + '"]')
+        if (!radio || radio.disabled) return false
+        radio.click()
+        return true
+      }, choice)
+      const confirmChoice = () => js(win, () => document.querySelector('dialog[open] button[type="submit"]').click())
+      await openChoices()
+      assert.deepEqual(await js(win, () => [...document.querySelectorAll('dialog[open] input[type="radio"]')].map(radio => radio.value)), ['full', 'online', 'download'])
+      if (mode === 'market' || mode === 'full') {
+        await js(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))))
+        await delay(300)
+        await fsp.writeFile(path.join(output, action === '更新' ? 'update-choices.png' : 'market-choices.png'), (await win.webContents.capturePage()).toPNG())
+      }
       if (mode === 'market') {
-        // Wait for Chromium to paint the updated details before reading its compositor surface.
-        await js(
-          win,
-          () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))),
-        )
-        await delay(400)
-        await fsp.writeFile(path.join(output, 'market-choices.png'), (await win.webContents.capturePage()).toPNG())
-        assert.ok(await btn(win, '下载离线整包'))
+        assert.ok(await choose('full'))
+        await js(win, () => document.querySelector('dialog[open] button[type="button"]').click())
+        await until(() => js(win, () => !document.querySelector('dialog[open] input[name="package-type"]')), 'cancel package choice')
+        await openChoices()
+        assert.equal(requests.length, 0)
+        assert.ok(await choose('download'))
+        assert.equal(await js(win, () => document.querySelector('dialog[open] select').value), platform)
+        await confirmChoice()
         await until(
           () => fs.existsSync(saved) && js(win, () => document.body.innerText.includes('离线整包已校验并保存')),
-          'verified save',
-          600000,
-        )
+          'verified save', 600000)
         assert.equal(await sha256(saved), kit.sha256)
+        assert.ok(await js(win, async id => !(await window.agentDesktop.listApps()).some(app => app.id === id), id))
+        await openChoices()
+        checks.push('Cancel resets the selection', 'Download saves the verified kit without installing')
       }
-      assert.ok(await btn(win, '在线安装'))
+      if (mode === 'full') assert.ok(await choose('full'))
+      await confirmChoice()
       await confirmReviewedInstall(win)
       await activated()
-      if (mode === 'market') {
-        assert.deepEqual(requests, [kit.fileName, online.fileName])
-        if (process.env.MOSS_TEST_GITHUB_DRAFT_ID)
-          checks.push('Core fetched both artifacts directly from the GitHub Release CDN')
-        checks.push('Both UI choices', 'Saved and verified full transfer kit')
+      if (mode === 'full') {
+        assert.deepEqual(requests, [kit.fileName])
+        offlineMarker = await js(win, async id => (await window.agentDesktop.listApps()).find(app => app.id === id)?.marketplaceSource?.offlineKitMarker, id)
+        assert.equal(JSON.parse(await fsp.readFile(offlineMarker)).version, release.version)
+        assert.ok(fs.existsSync(path.join(path.dirname(offlineMarker), 'model', 'onnx', 'model_quantized.onnx')))
+        checks.push('Full package installs the embedded App and retains local resources')
       } else {
-        assert.deepEqual(requests, [online.fileName])
+        assert.deepEqual(requests, mode === 'market' ? [kit.fileName, online.fileName] : [online.fileName])
+        checks.push('Default online package installation and activation')
       }
-      checks.push(
-        'Generated index/detail read by Core',
-        'Online ZIP download, trusted installation and activation',
-      )
     } else {
       await until(
         () =>
@@ -381,7 +404,7 @@ async function run() {
       await until(() => js(rag, () => Boolean(window.mossApp?.actions)), 'App preload')
       const initial = await js(rag, () => window.mossApp.actions.invoke('engine.status', {}))
       assert.equal(initial.result?.installed, false, JSON.stringify(initial))
-      await until(() => btn(rag, mode === 'offline' ? '选择离线包' : '在线准备'), 'engine setup button')
+      await until(() => btn(rag, mode === 'online' ? '在线准备' : '选择离线包'), 'engine setup button')
       await until(
         () =>
           js(rag, async () => {
@@ -414,7 +437,7 @@ async function run() {
           limit: 2,
         })
       })
-      if (mode === 'offline') assert.ok(sandboxStarts > 0, 'RAG backend ran under the network sandbox')
+      if (mode === 'offline' || mode === 'full') assert.ok(sandboxStarts > 0, 'RAG backend ran under the network sandbox')
       searchHit = result.items[0].filepath
       assert.match(searchHit, /renewal\.md$/)
       checks.push('Cold ' + mode + ' venv and model', 'Cross-language semantic search')

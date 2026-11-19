@@ -3,6 +3,7 @@
 import { AppHubToolbar } from '@/components/app-hub-toolbar';
 import { AppHubCard } from '@/components/app-hub-card';
 import { AppMarketplaceDetails } from '@/components/app-marketplace-details';
+import type { MarketPackageType } from '@/components/app-marketplace-package-dialog';
 import { AppMarketplaceIcon } from '@/components/app-marketplace-icon';
 import { supportsHostFeature } from '@/lib/host-environment';
 
@@ -25,8 +26,9 @@ import type {
 } from "../types";
 import { getAppKind } from '@/lib/app-discovery';
 
-export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = false, kind }: {
+export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = false, kind, updateAppId }: {
   hub?: boolean;
+  updateAppId?: string;
   kind?: 'app' | 'connector';
   installedApps: StoredApp[];
   onBack: () => void;
@@ -56,7 +58,10 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = 
     try {
       const result = await window.agentDesktop.installAppArchive();
       if (!result.ok && !result.canceled) throw new Error(result.error || 'App 安装失败');
-      if (result.ok) await onInstalled();
+      if (result.ok) {
+        await onInstalled();
+        await loadCatalog();
+      }
     } catch (reason) { setError(cleanIpcErrorMessage(reason)); }
     finally { setImporting(false); }
   };
@@ -97,7 +102,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = 
     return () => { catalogRequest.current++; };
   }, [loadCatalog]);
 
-  const openDetails = async (entry: AppMarketplaceEntry) => {
+  const openDetails = React.useCallback(async (entry: AppMarketplaceEntry) => {
     if (selectedId !== entry.id) {
       detailTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setError('');
@@ -113,15 +118,25 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = 
     } catch (cause) {
       if (request === catalogRequest.current) setDetailErrors(current => ({ ...current, [entry.id]: cleanIpcErrorMessage(cause) }));
     }
-  };
+  }, [selectedId, details]);
 
-  const install = async (entry: AppMarketplaceEntry) => {
+  const openedUpdate = React.useRef(false);
+  React.useEffect(() => {
+    const entry = updateAppId && catalog?.apps.find(item => item.id === updateAppId);
+    if (!openedUpdate.current && entry) {
+      openedUpdate.current = true;
+      void openDetails(entry);
+    }
+  }, [catalog, updateAppId, openDetails]);
+
+  const install = async (entry: AppMarketplaceEntry, packageType: MarketPackageType) => {
     const version = selectedVersions[entry.id] || entry.latestVersion;
     setPendingAppIds((current) => new Set(current).add(entry.id));
     clearProgress(entry.id);
+    clearKitProgress(entry.id);
     setError("");
     try {
-      let result = await window.agentDesktop.appMarketplace.install({ appId: entry.id, version });
+      let result = await window.agentDesktop.appMarketplace.install({ appId: entry.id, packageType, version });
       if (result.requiresPermissionApproval) {
         const permissions = result.permissions || [];
         const accepted = window.confirm([
@@ -132,7 +147,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = 
           "是否继续安装并授权？",
         ].join("\n"));
         if (!accepted) return;
-        result = await window.agentDesktop.appMarketplace.install({ appId: entry.id, version, acceptPermissions: true });
+        result = await window.agentDesktop.appMarketplace.install({ appId: entry.id, packageType, version, acceptPermissions: true });
       }
       if (result.canceled) return;
       if (!result.ok) throw new Error("App 安装未完成");
@@ -149,6 +164,7 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = 
     const version = selectedVersions[entry.id] || entry.latestVersion;
     setPendingAppIds(current => new Set(current).add(entry.id));
     clearKitProgress(entry.id);
+    clearProgress(entry.id);
     setError('');
     try {
       await window.agentDesktop.appMarketplace.saveOfflineKit({ appId: entry.id, version, platform });
@@ -208,9 +224,9 @@ export function AppMarketplacePanel({ installedApps, onBack, onInstalled, hub = 
     </div>
     {selected && <AppMarketplaceDetails key={selected.id} entry={selected} detail={details[selected.id]} installed={installedById.get(selected.id)}
       version={selectedVersions[selected.id] || selected.latestVersion} hostApiVersion={catalog?.hostApiVersion}
-      hostPlatform={catalog?.platform} onSaveKit={platform => void saveOfflineKit(selected, platform)} kitProgress={kitProgress[selected.id]}
+      promptUpdate={updateAppId === selected.id} hostPlatform={catalog?.platform} onSaveKit={platform => void saveOfflineKit(selected, platform)} kitProgress={kitProgress[selected.id]}
       busy={pendingAppIds.has(selected.id) || isAppInstallActive(progress[selected.id]) || isAppInstallActive(kitProgress[selected.id])} progress={progress[selected.id]}
-      error={error} detailError={detailErrors[selected.id]} onBack={() => setSelectedId(null)} onInstall={() => void install(selected)}
+      error={error} detailError={detailErrors[selected.id]} onBack={updateAppId === selected.id ? onBack : () => setSelectedId(null)} onInstall={type => void install(selected, type)}
       onVersion={version => setSelectedVersions(current => ({ ...current, [selected.id]: version }))} onRetry={() => void openDetails(selected)} />}
     </>;
 }
