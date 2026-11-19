@@ -37,6 +37,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   permissionMode: DEFAULT_PERMISSION_MODE,
   bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
   model: '',
+  modelListMode: 'auto',
   availableModels: [],
   fastModel: '',
   declaredContextByModel: {},
@@ -343,6 +344,11 @@ export function normalizeDesktopSettings(input, existing = {}) {
     source.availableModels ?? sourceText.availableModels ??
     result.availableModels ?? existingText.availableModels,
   );
+  const modelListMode = source.modelListMode ?? sourceText.modelListMode ?? result.modelListMode ?? existingText.modelListMode;
+  const hasLegacyModelList = normalizeModelList(sourceText.availableModels).length > 0 ||
+    result.availableModels.some(model => model !== result.model);
+  result.modelListMode = modelListMode === 'auto' || modelListMode === 'manual'
+    ? modelListMode : (hasLegacyModelList ? 'manual' : 'auto');
   if (result.model && !result.availableModels.includes(result.model)) {
     result.availableModels.unshift(result.model);
   }
@@ -825,7 +831,7 @@ export function normalizeDesktopSettings(input, existing = {}) {
 }
 
 const MODEL_RUNTIME_FIELDS = [
-  'model', 'availableModels', 'fastModel', 'declaredContextByModel', 'url', 'apiKey', 'maxTurns',
+  'model', 'modelListMode', 'availableModels', 'fastModel', 'declaredContextByModel', 'url', 'apiKey', 'maxTurns',
   'thinkingMode', 'thinkingBudgetTokens', 'contextWindowLimit', 'image',
 ];
 
@@ -838,6 +844,7 @@ function normalizePersistedDesktopSettings(parsed) {
   // Flat fields remain supported for incremental updates from the settings UI.
   for (const [field, value] of Object.entries({
     model: text.model,
+    modelListMode: text.modelListMode,
     availableModels: text.availableModels,
     fastModel: text.fastModel,
     declaredContextByModel: text.declaredContextByModel,
@@ -985,6 +992,9 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
   delete enterpriseAccount.refreshToken;
   delete enterpriseAccount.profileMode;
 
+  // The default model is always available, even when no manual list was saved.
+  const availableModels = normalizedSettings.availableModels.some(model => model !== normalizedSettings.model)
+    ? normalizedSettings.availableModels : undefined;
   const models = {
     ...existingModels,
     text: {
@@ -992,13 +1002,9 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
       baseUrl: normalizeMossBaseUrl(normalizedSettings.url),
       apiKey: normalizedSettings.apiKey || '',
       model: normalizedSettings.model,
-      // The default model is always available at runtime, so avoid adding a
-      // new field to older settings files that never configured a model list.
-      availableModels: normalizedSettings.availableModels.length
-        && !(normalizedSettings.availableModels.length === 1
-          && normalizedSettings.availableModels[0] === normalizedSettings.model)
-        ? normalizedSettings.availableModels
-        : undefined,
+      modelListMode: normalizedSettings.modelListMode === 'manual' || availableModels
+        ? normalizedSettings.modelListMode : undefined,
+      availableModels,
       fastModel: normalizedSettings.fastModel || '',
       declaredContextByModel: Object.keys(normalizedSettings.declaredContextByModel).length
         ? normalizedSettings.declaredContextByModel : undefined,
@@ -1036,6 +1042,7 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
   delete toSave.enterpriseAccountWorkspace;
   delete toSave.enterpriseAccountProfileMode;
   delete toSave.model;
+  delete toSave.modelListMode;
   delete toSave.fastModel;
   delete toSave.declaredContextByModel;
   delete toSave.maxTurns;

@@ -35,7 +35,7 @@ import { resolveAppTaskSession, appTaskHistoryEvent, appTasksPromptContext } fro
 import { createProjectId, normalizeOptionalProjectId, normalizeProjectId, normalizeProjectMemoryIndex, PROJECT_TASK_STATUSES } from './shared/project-normalization.mjs';
 import { normalizeProjectIcon } from '../../shared/project-icon.mjs';
 import { normalizeStringList } from './shared/string-list.mjs';
-import { fetchModelCatalog } from '../../shared/model-list.mjs';
+import { createModelCatalogStore } from './model-catalog-store.mjs';
 import { runInKeyedQueue } from './shared/keyed-queue.mjs';
 import { readJsonFile, readJsonFileAsync, writeTextFileAtomicAsync, writeJsonFileAtomicAsync } from './shared/json-files.mjs';
 import { normalizeSessionKind, normalizeOriginChannel, normalizeToolDisplayMode } from './shared/session-normalization.mjs';
@@ -857,6 +857,10 @@ const desktopSettingsStore = createDesktopSettingsStore({
   settingsPath: DESKTOP_SETTINGS_PATH,
   log: mossLog,
 });
+const modelCatalogStore = createModelCatalogStore({
+  storagePath: path.join(MOSS_HOME, 'model-catalogs.json'),
+  log: mossLog,
+});
 const webSearchCapabilityStore = createWebSearchCapabilityStore({
   storagePath: WEB_SEARCH_CAPABILITIES_PATH,
   log: mossLog,
@@ -1111,6 +1115,7 @@ function getDesktopSettingsPayload(extra = {}) {
     // it separate from persisted settings so a server-issued key is never
     // written back as a local model configuration.
     runtimeModel: {
+      managed: runtimeModel !== desktopSettings,
       model: runtimeModel.model,
       fastModel: runtimeModel.fastModel,
       availableModels: getRuntimeAvailableModels(runtimeModel),
@@ -1144,14 +1149,16 @@ function getRuntimeModelSettings() {
       ...hostManagedModel,
       availableModels: Array.isArray(hostManagedModel.availableModels)
         ? hostManagedModel.availableModels
-        : desktopSettings.availableModels,
+        : [],
     };
   }
   return desktopSettings;
 }
 
 function getRuntimeAvailableModels(settings = getRuntimeModelSettings()) {
-  const values = Array.isArray(settings.availableModels) ? settings.availableModels : [];
+  const catalog = settings === desktopSettings && settings.modelListMode === 'auto'
+    ? modelCatalogStore.get(settings) : undefined;
+  const values = catalog?.models ?? (Array.isArray(settings.availableModels) ? settings.availableModels : []);
   return [...new Set([
     ...(typeof settings.model === 'string' ? [settings.model] : []),
     ...values,
@@ -8736,7 +8743,17 @@ ipcMain.handle('agent:list-models', async (_event, payload = {}) => {
     return { models, contextWindows: {}, defaultModel: access.model || models[0] };
   }
   if (!runtimeSettings.url?.trim()) return { models: getRuntimeAvailableModels(runtimeSettings), contextWindows: {}, defaultModel: runtimeSettings.model || '' };
-  return fetchModelCatalog({ url: runtimeSettings.url, apiKey: runtimeSettings.apiKey });
+  const previousModels = getRuntimeAvailableModels(runtimeModel);
+  const catalog = await modelCatalogStore.refresh({ url: runtimeSettings.url, apiKey: runtimeSettings.apiKey }, {
+    force: payload.refresh !== false,
+  });
+  if (desktopSettings.modelListMode === 'auto' && getRuntimeModelSettings() === desktopSettings &&
+      modelCatalogStore.get(desktopSettings) === catalog &&
+      JSON.stringify(previousModels) !== JSON.stringify(getRuntimeAvailableModels())) {
+    desktopSettingsRevision += 1;
+    emitToRenderer('agent:settings-changed', getDesktopSettingsPayload());
+  }
+  return catalog;
 });
 ipcMain.handle('agent:get-runtime-stats', () => sessionRuntimePool.stats());
 ipcMain.handle('agent:update-settings', async (_event, payload = {}) => {

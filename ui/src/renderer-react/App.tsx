@@ -565,10 +565,15 @@ export default function App() {
   // Moss login. This prevents a stale runtimeModel snapshot from surviving a
   // logout or an expired account token in the renderer.
   const hasManagedModelAuth = Boolean(window.mossWeb || desktopSettings?.enterpriseAccountAccessToken);
-  const runtimeModel = hasManagedModelAuth
+  const isLocalRuntimeModel = desktopSettings?.runtimeModel?.managed === false;
+  const runtimeModel = hasManagedModelAuth || isLocalRuntimeModel
     ? (desktopSettings?.runtimeModel || desktopSettings)
     : desktopSettings;
-  const modelSettings = runtimeModel ? { model: runtimeModel.model, availableModels: runtimeModel.availableModels } : undefined;
+  const modelSettings = runtimeModel ? {
+    model: runtimeModel.model,
+    availableModels: runtimeModel.availableModels,
+    followModelCatalog: isLocalRuntimeModel && desktopSettings?.modelListMode === 'auto' && Boolean(runtimeModel.url?.trim()),
+  } : undefined;
   const [serverAccount, setServerAccount] = React.useState<{ userName: string; userEmail: string } | null>(null);
   const [serverLogoutState, setServerLogoutState] = React.useState<'idle' | 'loading'>('idle');
   const [serverLogoutError, setServerLogoutError] = React.useState('');

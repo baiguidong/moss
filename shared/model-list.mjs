@@ -15,9 +15,8 @@ export function getModelListUrl(value) {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error('API URL 必须使用 http 或 https。');
   }
-  url.pathname = url.pathname.replace(/\/+$/, '');
-  if (!/\/v1$/i.test(url.pathname)) url.pathname = `${url.pathname}/v1`;
-  url.pathname += '/models';
+  const pathname = url.pathname.replace(/\/+$/, '');
+  url.pathname = `${pathname}${/\/v1$/i.test(pathname) ? '' : '/v1'}/models`;
   return url.toString();
 }
 

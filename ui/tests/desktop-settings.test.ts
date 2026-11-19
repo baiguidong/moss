@@ -19,6 +19,22 @@ afterEach(() => {
 });
 
 describe('desktop settings', () => {
+  it('defaults to following the API and preserves explicitly configured model lists on upgrade', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-model-list-settings-'));
+    temporaryRoots.push(root);
+    const settingsPath = path.join(root, 'settings.json');
+    expect(normalizeDesktopSettings({ model: 'main' }).modelListMode).toBe('auto');
+    fs.writeFileSync(settingsPath, JSON.stringify({ models: { text: {
+      model: 'main', availableModels: ['main', 'other'],
+    } } }));
+    const store = createDesktopSettingsStore({ settingsPath });
+    expect(store.value.modelListMode).toBe('manual');
+    store.save({ modelListMode: 'auto' });
+    const restarted = createDesktopSettingsStore({ settingsPath });
+    expect(restarted.value.modelListMode).toBe('auto');
+    expect(restarted.value.availableModels).toEqual(['main', 'other']);
+  });
+
   it('migrates the default model’s legacy context window to a personal limit', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-context-settings-'));
     temporaryRoots.push(root);

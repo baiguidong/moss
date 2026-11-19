@@ -3,7 +3,7 @@ import { Activity, Download, Layers3, LayoutGrid, ListTree, MessageCircleQuestio
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { contextUsagePresentation, formatTokenCount, type ContextUsageInfo } from '@/lib/context-usage';
 import { PermissionModeSelector } from '@/components/permission-mode-selector';
-import type { DesktopSettings } from '../types';
+import type { DesktopSettings, SessionModelSettings } from '../types';
 import type { PermissionMode } from '../types';
 
 export type SessionUsageSummary = {
@@ -35,7 +35,7 @@ type Props = {
   contextUsage?: ContextUsageInfo | null;
   currentModel?: string;
   onModelChange?: (model: string) => Promise<void>;
-  modelSettings?: Pick<DesktopSettings, 'model' | 'availableModels'>;
+  modelSettings?: SessionModelSettings;
   sessionUsage?: SessionUsageSummary | null;
   outline?: SessionOutlineEntry[];
   onJumpToOutlineItem?: (messageId: string) => void;
@@ -52,6 +52,9 @@ export function ModelSelector({
   const configured = modelSettings?.availableModels || [];
   const defaultModel = modelSettings?.model || configured[0] || '';
   const options = [...new Set([...configured, currentModel || ''].filter(Boolean))];
+  const refreshCatalog = () => {
+    if (modelSettings?.followModelCatalog) void window.agentDesktop.listModels({ refresh: false }).catch(() => {});
+  };
   const handleChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
     if (!onModelChange || changing) return;
     setChanging(true);
@@ -64,6 +67,8 @@ export function ModelSelector({
       <select
         value={currentModel && options.includes(currentModel) ? currentModel : 'default'}
         onChange={(event) => { void handleChange(event); }}
+        onFocus={refreshCatalog}
+        onPointerDown={refreshCatalog}
         disabled={disabled || !onModelChange || changing}
         title="选择模型"
         aria-label="选择模型"

@@ -783,8 +783,10 @@ export type DesktopAgentDraft = {
   background?: boolean;
 };
 
+export type SessionModelSettings = Pick<DesktopSettings, 'model' | 'availableModels'> & { followModelCatalog?: boolean };
+
 export type DesktopSettings = {
-  runtimeModel?: Pick<DesktopSettings, 'model' | 'fastModel' | 'availableModels' | 'url' | 'apiKey'>;
+  runtimeModel?: Pick<DesktopSettings, 'model' | 'fastModel' | 'availableModels' | 'url' | 'apiKey'> & { managed?: boolean };
   managedPolicy?: Record<string, boolean>;
   appWidgets?: { enabled: boolean };
   desktopControl?: { version: number; enabled: boolean; apps: Array<{ bundleId: string; name: string }> };
@@ -796,6 +798,7 @@ export type DesktopSettings = {
   permissionMode: PermissionMode;
   bypassPermissions: boolean;
   model: string;
+  modelListMode?: 'auto' | 'manual';
   availableModels?: string[];
   fastModel: string;
   contextWindowLimit?: number;
@@ -1443,7 +1446,7 @@ declare global {
         ok: boolean; status: number | null; durationMs: number; message: string;
         thinking: string;
       }>;
-      listModels: (payload: Pick<DesktopSettings, 'url' | 'apiKey'>) => Promise<import('../../../shared/model-list.mjs').ModelCatalog>;
+      listModels: (payload?: Partial<Pick<DesktopSettings, 'url' | 'apiKey'>> & { refresh?: boolean }) => Promise<import('../../../shared/model-list.mjs').ModelCatalog>;
       updateSettings: (payload: Partial<Omit<DesktopSettings, 'webSearch'>> & {
         webSearch?: Partial<NonNullable<DesktopSettings['webSearch']>>;
       }) => Promise<DesktopSettings>;

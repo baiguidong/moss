@@ -1,5 +1,11 @@
 import { expect, test } from 'bun:test';
-import { fetchModelCatalog, fetchModelList } from './model-list.mjs';
+import { fetchModelCatalog, fetchModelList, getModelListUrl } from './model-list.mjs';
+
+test('builds the same catalog URL from a provider root and its v1 endpoint', () => {
+  for (const url of ['https://example.test', 'https://example.test/', 'https://example.test/v1/']) {
+    expect(getModelListUrl(url)).toBe('https://example.test/v1/models');
+  }
+});
 
 test('model catalog retains context windows without changing the name-only API', async () => {
   const fetchImpl = async () => new Response(JSON.stringify({ data: [

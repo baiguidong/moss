@@ -142,6 +142,7 @@ const CONTEXT_WINDOW_OPTIONS = [
   { label: '800k', limit: DECLARED_CONTEXT_WINDOW_CHOICES[2] },
   { label: '1M', limit: DECLARED_CONTEXT_WINDOW_CHOICES[3] },
 ];
+const MODEL_LIST_OPTION_CLASS_NAME = 'block rounded-md px-3 py-1.5 text-xs whitespace-nowrap text-muted-foreground peer-hover:text-foreground peer-checked:bg-background peer-checked:font-medium peer-checked:text-foreground peer-checked:shadow-sm peer-focus-visible:ring-2 peer-focus-visible:ring-ring';
 
 const DEFAULT_WEB_SEARCH_SETTINGS: NonNullable<DesktopSettings['webSearch']> = {
   mode: 'auto',
@@ -206,7 +207,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
     id: 'ai', title: '模型与搜索', icon: Sparkles,
     keywords: ['模型', '搜索', 'model', 'web search', 'ai', 'provider', 'api', 'key'],
     sections: [
-      { id: 'model', title: '模型', keywords: ['文本模型', '快速模型', '图片模型', 'model', 'fast', 'image', 'provider', 'api', 'key', 'anthropic', 'claude', 'url', '测试'] },
+      { id: 'model', title: '模型', keywords: ['文本模型', '快速模型', '图片模型', '模型列表', '自动跟随', '手动筛选', 'model', 'fast', 'image', 'provider', 'api', 'key', 'anthropic', 'claude', 'url', '测试'] },
       { id: 'conversation', title: '会话', keywords: ['会话', '上下文上限', '上下文窗口', 'context window', 'thinking', '思考模式', '思考预算'] },
       { id: 'web-search', title: '网页搜索', keywords: ['websearch', 'web search', '网页搜索', '搜索', 'tavily', 'brave', '原生搜索', 'endpoint'] },
     ],
@@ -850,6 +851,7 @@ export function SettingsView({
   const [availableModels, setAvailableModels] = React.useState<string[]>([]);
   const [modelListState, setModelListState] = React.useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [modelListError, setModelListError] = React.useState('');
+  const modelListRequest = React.useRef(0);
   const deferredSearchQuery = React.useDeferredValue(searchQuery.trim().toLowerCase());
   const [activeGroupId, setActiveGroupId] = React.useState<NavigationGroupId>(SECTION_GROUP_IDS[initialSectionValue]);
   const [activeSection, setActiveSection] = React.useState<SectionId>(initialSectionValue);
@@ -912,6 +914,16 @@ export function SettingsView({
   const visibleSectionKey = visibleSections.map((section) => section.id).join('|');
   const firstVisibleSectionId = visibleSections[0]?.id;
   const activeSectionVisible = visibleSections.some((section) => section.id === activeSection);
+  const modelSectionVisible = visibleSections.some(section => section.id === 'model');
+  const localModelUrl = settingsDraft?.url?.trim() || '';
+  const localModelApiKey = settingsDraft?.apiKey?.trim() || '';
+  const runtimeModel = settingsDraft?.runtimeModel;
+  const managedModel = !localModelUrl && runtimeModel?.managed && (isWebUI() || settingsDraft?.enterpriseAccountAccessToken)
+    ? runtimeModel : undefined;
+  const followsApiCatalog = settingsDraft?.modelListMode !== 'manual';
+  const runtimeCatalogModels = runtimeModel?.managed === false && followsApiCatalog &&
+    runtimeModel.url?.trim() === localModelUrl && (runtimeModel.apiKey?.trim() || '') === localModelApiKey
+    ? runtimeModel.availableModels : undefined;
   const imageDraft = settingsDraft?.image || DEFAULT_IMAGE_SETTINGS;
   const webSearchDraft = {
     ...DEFAULT_WEB_SEARCH_SETTINGS,
@@ -933,13 +945,15 @@ export function SettingsView({
   const modelOptions = React.useMemo(() => {
     const values = [
       ...availableModels,
+      ...(runtimeCatalogModels || []),
+      ...(managedModel?.availableModels || []),
       ...(settingsDraft?.availableModels || []),
       settingsDraft?.model || '',
       settingsDraft?.fastModel || '',
       imageDraft.model || '',
     ];
     return [...new Set(values.map(value => value.trim()).filter(Boolean))];
-  }, [availableModels, imageDraft.model, settingsDraft?.availableModels, settingsDraft?.fastModel, settingsDraft?.model]);
+  }, [availableModels, runtimeCatalogModels, managedModel?.availableModels, imageDraft.model, settingsDraft?.availableModels, settingsDraft?.fastModel, settingsDraft?.model]);
 
   const sessionModelOptions = React.useMemo(() => {
     const values = [
@@ -951,28 +965,39 @@ export function SettingsView({
     return [...new Set(values.map(value => value.trim()).filter(Boolean))];
   }, [availableModels, settingsDraft?.availableModels, settingsDraft?.fastModel, settingsDraft?.model]);
 
-  const fetchModels = React.useCallback(async () => {
-    if (!settingsDraft) return;
+  const fetchModels = React.useCallback(async (refresh: boolean) => {
+    if (!localModelUrl) return;
+    const request = ++modelListRequest.current;
     setModelListState('loading');
     setModelListError('');
     try {
       const catalog = await window.agentDesktop.listModels({
-        url: settingsDraft?.url || '',
-        apiKey: settingsDraft.apiKey || '',
+        url: localModelUrl,
+        apiKey: localModelApiKey,
+        refresh,
       });
-      setAvailableModels([...new Set([...(settingsDraft.availableModels || []), ...(catalog.models || [])])]);
+      if (request !== modelListRequest.current) return;
+      setAvailableModels(catalog.models || []);
       setModelListState('success');
     } catch (error) {
+      if (request !== modelListRequest.current) return;
       setModelListState('error');
       setModelListError(cleanIpcErrorMessage(error));
     }
-  }, [settingsDraft?.apiKey, settingsDraft?.url, settingsDraft?.availableModels]);
+  }, [localModelApiKey, localModelUrl]);
 
   React.useEffect(() => {
     setAvailableModels([]);
     setModelListState('idle');
     setModelListError('');
-  }, [settingsDraft?.apiKey, settingsDraft?.url]);
+    return () => { modelListRequest.current += 1; };
+  }, [localModelApiKey, localModelUrl]);
+
+  React.useEffect(() => {
+    if (!modelSectionVisible || !followsApiCatalog || !localModelUrl) return;
+    const timer = window.setTimeout(() => { void fetchModels(false); }, 400);
+    return () => window.clearTimeout(timer);
+  }, [fetchModels, followsApiCatalog, localModelUrl, modelSectionVisible]);
 
   React.useEffect(() => {
     if (initialAppSettingId) return;
@@ -1109,6 +1134,10 @@ export function SettingsView({
     else if (current.has(model)) current.delete(model);
     else current.add(model);
     updateSetting('availableModels', [...current]);
+  };
+
+  const selectConfiguredModels = (models: string[]) => {
+    updateSetting('availableModels', [...new Set([settingsDraft?.model || '', ...models].filter(Boolean))]);
   };
 
   const updateToolLoading = (name: string, mode: MossToolLoadingMode) => {
@@ -2226,16 +2255,35 @@ export function SettingsView({
                       </SettingsRow>
 
                       <SettingsRow
-                        title="模型列表"
-                        description="从当前 API 获取可用模型，下面的模型选项会同步更新。"
-                        controlClassName="sm:w-[380px]"
+                        title="模型列表来源"
+                        description={managedModel ? '可切换模型由服务器下发。' : '自动跟随 API 的可用模型，或手动选择会话模型。'}
+                        controlClassName="sm:w-auto"
                       >
+                        {managedModel ? (
+                          <span className="text-sm text-muted-foreground">跟随 Moss Server</span>
+                        ) : (
+                          <fieldset aria-label="模型列表来源" className="inline-flex flex-wrap gap-0.5 rounded-lg border border-border/70 bg-muted/35 p-0.5">
+                            <label className="relative">
+                              <input type="radio" name="model-list-mode" className="peer absolute inset-0 size-full cursor-pointer opacity-0"
+                                checked={followsApiCatalog} onChange={() => updateSetting('modelListMode', 'auto')} />
+                              <span className={MODEL_LIST_OPTION_CLASS_NAME}>自动跟随 API</span>
+                            </label>
+                            <label className="relative">
+                              <input type="radio" name="model-list-mode" className="peer absolute inset-0 size-full cursor-pointer opacity-0"
+                                checked={!followsApiCatalog} onChange={() => updateSetting('modelListMode', 'manual')} />
+                              <span className={MODEL_LIST_OPTION_CLASS_NAME}>手动筛选</span>
+                            </label>
+                          </fieldset>
+                        )}
+                      </SettingsRow>
+
+                      {!managedModel && <SettingsRow title="模型列表" controlClassName="sm:w-[380px]">
                         <div className="flex w-full flex-col items-start gap-2 sm:items-end">
                           <Button
                             variant="outline"
                             size="sm"
-                            disabled={modelListState === 'loading'}
-                            onClick={() => void fetchModels()}
+                            disabled={!localModelUrl || modelListState === 'loading'}
+                            onClick={() => void fetchModels(true)}
                           >
                             <RefreshCw className={cn('mr-2 size-4', modelListState === 'loading' && 'animate-spin')} />
                             {modelListState === 'loading' ? '获取中…' : '获取模型列表'}
@@ -2247,39 +2295,45 @@ export function SettingsView({
                             <span role="alert" className="text-xs text-destructive">{modelListError}</span>
                           ) : null}
                         </div>
-                      </SettingsRow>
+                      </SettingsRow>}
 
-                      <SettingsRow
+                      {!managedModel && !followsApiCatalog && <SettingsRow
                         title="允许切换的模型"
-                        description={<span>从上面获取到的模型列表中勾选允许在会话里切换的模型。当前默认模型：<strong className="font-mono text-foreground">{settingsDraft.model || '未设置'}</strong></span>}
+                        description="勾选可在会话中切换的模型。默认模型始终可用。"
                         stacked
                       >
                         <div className="w-full rounded-xl border border-border/60 bg-muted/15 p-3">
                           {sessionModelOptions.length ? (
-                            <div className="grid max-h-56 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
-                              {sessionModelOptions.map(model => {
-                                const checked = (settingsDraft.availableModels || []).includes(model);
-                                const isDefault = model === settingsDraft.model;
-                                return (
-                                  <label key={model} className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-muted/50">
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      disabled={isDefault}
-                                      onChange={() => toggleConfiguredModel(model)}
-                                      className="size-4 accent-primary"
-                                    />
-                                    <span className="min-w-0 flex-1 truncate font-mono text-xs" title={model}>{model}</span>
-                                    {isDefault ? <span className="shrink-0 text-[10px] text-muted-foreground">默认</span> : null}
-                                  </label>
-                                );
-                              })}
+                            <div className="space-y-2">
+                              <div className="flex flex-wrap items-center justify-end gap-2">
+                                <Button size="sm" variant="outline" onClick={() => selectConfiguredModels(sessionModelOptions)}>全选</Button>
+                                <Button size="sm" variant="outline" onClick={() => selectConfiguredModels(sessionModelOptions.filter(model => !settingsDraft.availableModels?.includes(model)))}>反选</Button>
+                              </div>
+                              <div className="grid max-h-56 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                                {sessionModelOptions.map(model => {
+                                  const checked = (settingsDraft.availableModels || []).includes(model);
+                                  const isDefault = model === settingsDraft.model;
+                                  return (
+                                    <label key={model} className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-muted/50">
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        disabled={isDefault}
+                                        onChange={() => toggleConfiguredModel(model)}
+                                        className="size-4 accent-primary"
+                                      />
+                                      <span className="min-w-0 flex-1 truncate font-mono text-xs" title={model}>{model}</span>
+                                      {isDefault ? <span className="shrink-0 text-[10px] text-muted-foreground">默认</span> : null}
+                                    </label>
+                                  );
+                                })}
+                              </div>
                             </div>
                           ) : (
                             <p className="text-xs text-muted-foreground">请先点击上面的“获取模型列表”。</p>
                           )}
                         </div>
-                      </SettingsRow>
+                      </SettingsRow>}
 
                       <SettingsRow
                         title="默认模型"
@@ -2287,8 +2341,9 @@ export function SettingsView({
                       >
                         <select
                           className={SELECT_CLASS_NAME}
-                          value={settingsDraft.model || ''}
+                          value={managedModel?.model || settingsDraft.model || ''}
                           aria-label="默认模型"
+                          disabled={Boolean(managedModel)}
                           onChange={(event) => updateSetting('model', event.target.value)}
                         >
                           <option value="">请选择模型</option>
@@ -2303,8 +2358,9 @@ export function SettingsView({
                       >
                         <select
                           className={SELECT_CLASS_NAME}
-                          value={settingsDraft.fastModel || ''}
+                          value={managedModel?.fastModel || settingsDraft.fastModel || ''}
                           aria-label="快速模型"
+                          disabled={Boolean(managedModel)}
                           onChange={(event) => updateSetting('fastModel', event.target.value)}
                         >
                           <option value="">留空，使用默认模型</option>

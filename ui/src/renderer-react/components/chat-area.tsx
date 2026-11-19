@@ -91,7 +91,7 @@ import type {
   AskUserQuestionAnnotations,
   AskUserQuestionRequest,
   BackgroundTaskInfo,
-  DesktopSettings,
+  SessionModelSettings,
   DesktopAgentDefinition,
   PermissionMode,
   SessionSummary,
@@ -545,7 +545,7 @@ export function ComposerPanel({
   onJumpToOutlineItem?: (messageId: string) => void;
   currentModel?: string;
   onModelChange?: (model: string) => Promise<void>;
-  modelSettings?: Pick<DesktopSettings, 'model' | 'availableModels'>;
+  modelSettings?: SessionModelSettings;
   sessionUsage?: SessionUsageSummary | null;
   sessionInfo?: React.ReactNode;
   className?: string;
@@ -1744,7 +1744,7 @@ function HomeLanding({
   permissionModeChanging?: boolean;
   currentModel?: string;
   onModelChange?: (model: string) => Promise<void>;
-  modelSettings?: Pick<DesktopSettings, 'model' | 'availableModels'>;
+  modelSettings?: SessionModelSettings;
   onSend: (files?: Array<{ name: string; path: string }>, skills?: SkillMentionItem[], agent?: DesktopAgentDefinition) => void;
   installedAssistants?: InstalledAssistant[];
   selectedAssistant?: InstalledAssistant | null;
@@ -2527,7 +2527,7 @@ export function ChatArea({
   onExport?: () => Promise<void>;
   currentModel?: string;
   onModelChange?: (model: string) => Promise<void>;
-  modelSettings?: Pick<DesktopSettings, 'model' | 'availableModels'>;
+  modelSettings?: SessionModelSettings;
   sessionUsage?: SessionUsageSummary | null;
   onRestoreInteraction?: (item: SessionInteraction) => void;
   interactions?: SessionInteraction[];

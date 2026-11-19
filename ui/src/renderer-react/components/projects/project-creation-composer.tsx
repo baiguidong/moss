@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { WorkspaceSelector } from '@/components/workspace-selector';
 import { ModelSelector } from '@/components/session-command-launcher';
-import type { DesktopSettings } from '@/types';
+import type { SessionModelSettings } from '@/types';
 
 export function ProjectCreationComposer({ value, onChange, busy, onSend, workspace, onWorkspaceChange, model, onModelChange, modelSettings, resourceSelection }: {
   value: string;
@@ -15,7 +15,7 @@ export function ProjectCreationComposer({ value, onChange, busy, onSend, workspa
   onWorkspaceChange?: (workspace: string | undefined) => void;
   model?: string | null;
   onModelChange?: (model: string) => Promise<void> | void;
-  modelSettings?: Pick<DesktopSettings, 'model' | 'availableModels'>;
+  modelSettings?: SessionModelSettings;
   resourceSelection?: React.ReactNode;
 }) {
   const textarea = React.useRef<HTMLTextAreaElement>(null);
