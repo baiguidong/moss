@@ -40,6 +40,7 @@ import { PanelResizeHandle } from '@/components/panel-resize-handle';
 import { useSessionPanelLayout, type SessionPanelLayout } from '@/lib/use-session-panel-layout';
 import { formatProjectMemoryForDisplay } from '../../../shared/project-memory.mjs';
 import type {
+  DesktopSettings,
   Project,
   ProjectAsset,
   ProjectEvent,
@@ -62,7 +63,7 @@ type ProjectWorkspaceProps = {
   onCreationWorkspaceChange?: (workspace: string | undefined) => void;
   creationModel?: string | null;
   onCreationModelChange?: (model: string) => Promise<void> | void;
-  creationModelSettings?: { url: string; apiKey: string; availableModels: string[] };
+  creationModelSettings?: Pick<DesktopSettings, 'model' | 'availableModels'>;
   creationResourceSelection?: React.ReactNode;
   creatingProjectSession: boolean;
   onCreateProjectConversation: (prompt: string) => Promise<void>;
@@ -295,7 +296,7 @@ function ProjectList({
   onCreationWorkspaceChange?: (workspace: string | undefined) => void;
   creationModel?: string | null;
   onCreationModelChange?: (model: string) => Promise<void> | void;
-  creationModelSettings?: { url: string; apiKey: string; availableModels: string[] };
+  creationModelSettings?: Pick<DesktopSettings, 'model' | 'availableModels'>;
   creationResourceSelection?: React.ReactNode;
   creatingProjectSession: boolean;
   onCreateProjectConversation: (prompt: string) => Promise<void>;

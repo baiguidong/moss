@@ -1108,13 +1108,13 @@ function getDesktopSettingsPayload(extra = {}) {
     ...desktopSettingsStore.getPayload(extra),
     settingsRevision: desktopSettingsRevision,
     ...(isWebHost && process.env.MOSS_WEB_OWNER_ID ? { enterpriseEnabled: true } : {}),
-    // The renderer uses this effective connection for model selection. Keep
+    // The renderer uses this effective configuration for model selection. Keep
     // it separate from persisted settings so a server-issued key is never
     // written back as a local model configuration.
     runtimeModel: {
       model: runtimeModel.model,
       fastModel: runtimeModel.fastModel,
-      availableModels: runtimeModel.availableModels,
+      availableModels: getRuntimeAvailableModels(runtimeModel),
       url: runtimeModel.url,
       apiKey: runtimeModel.apiKey,
     },
@@ -8704,13 +8704,12 @@ ipcMain.handle('agent:test-model', async (_event, payload = {}) => {
 });
 ipcMain.handle('agent:list-models', async (_event, payload = {}) => {
   const settings = normalizeDesktopSettings(payload, desktopSettings);
-  const runtimeSettings = settings.url?.trim() ? settings : getRuntimeModelSettings();
-  const managedRuntime = getRuntimeModelSettings();
+  const runtimeModel = getRuntimeModelSettings();
+  const runtimeSettings = settings.url ? settings : runtimeModel;
   const usingManagedModel = Boolean(
-    hostManagedModel && !hostAccessDenied && !hostControlPaused &&
-    managedRuntime.url?.trim() &&
-    runtimeSettings.url === managedRuntime.url &&
-    runtimeSettings.apiKey === managedRuntime.apiKey,
+    runtimeModel !== desktopSettings && runtimeModel.url?.trim() &&
+    runtimeSettings.url.trim() === runtimeModel.url.trim() &&
+    runtimeSettings.apiKey?.trim() === runtimeModel.apiKey?.trim(),
   );
   if (usingManagedModel) {
     const access = await requestAppAccount('/api/v1/model-access');
@@ -8720,7 +8719,7 @@ ipcMain.handle('agent:list-models', async (_event, payload = {}) => {
     if (!models.length) throw new Error('Moss Server 未返回可用模型，请检查服务端模型设置和 New API 渠道。');
     return { models, contextWindows: {}, defaultModel: access.model || models[0] };
   }
-  if (!runtimeSettings.url?.trim()) return { models: getRuntimeAvailableModels(runtimeSettings), defaultModel: runtimeSettings.model || '' };
+  if (!runtimeSettings.url?.trim()) return { models: getRuntimeAvailableModels(runtimeSettings), contextWindows: {}, defaultModel: runtimeSettings.model || '' };
   return fetchModelCatalog({ url: runtimeSettings.url, apiKey: runtimeSettings.apiKey });
 });
 ipcMain.handle('agent:get-runtime-stats', () => sessionRuntimePool.stats());

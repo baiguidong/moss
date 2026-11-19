@@ -15,7 +15,7 @@ export function ProjectCreationComposer({ value, onChange, busy, onSend, workspa
   onWorkspaceChange?: (workspace: string | undefined) => void;
   model?: string | null;
   onModelChange?: (model: string) => Promise<void> | void;
-  modelSettings?: Pick<DesktopSettings, 'url' | 'apiKey' | 'availableModels'>;
+  modelSettings?: Pick<DesktopSettings, 'model' | 'availableModels'>;
   resourceSelection?: React.ReactNode;
 }) {
   const textarea = React.useRef<HTMLTextAreaElement>(null);

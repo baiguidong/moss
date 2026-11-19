@@ -565,9 +565,10 @@ export default function App() {
   // Moss login. This prevents a stale runtimeModel snapshot from surviving a
   // logout or an expired account token in the renderer.
   const hasManagedModelAuth = Boolean(window.mossWeb || desktopSettings?.enterpriseAccountAccessToken);
-  const modelSettings = hasManagedModelAuth
+  const runtimeModel = hasManagedModelAuth
     ? (desktopSettings?.runtimeModel || desktopSettings)
     : desktopSettings;
+  const modelSettings = runtimeModel ? { model: runtimeModel.model, availableModels: runtimeModel.availableModels } : undefined;
   const [serverAccount, setServerAccount] = React.useState<{ userName: string; userEmail: string } | null>(null);
   const [serverLogoutState, setServerLogoutState] = React.useState<'idle' | 'loading'>('idle');
   const [serverLogoutError, setServerLogoutError] = React.useState('');
@@ -3309,7 +3310,7 @@ export default function App() {
                 permissionModeChanging={permissionModeSettingSessionId === activeSessionId}
                 currentModel={activeDetail?.model || modelSettings?.model}
                 onModelChange={activeDetail?.agentMode !== 'remote-direct' && !activeDetail?.isSubAgent ? handleSessionModelChange : undefined}
-                modelSettings={modelSettings ? { url: modelSettings.url, apiKey: modelSettings.apiKey, availableModels: modelSettings.availableModels } : undefined}
+                modelSettings={modelSettings}
                 sessionUsage={sessionUsage}
                 value={input}
                 loading={Boolean(activeDetail?.busy || pendingSendRequests.has(activeSessionId) || pendingFirstMessage?.sessionId === activeSessionId)}
@@ -3413,7 +3414,7 @@ export default function App() {
                 sessionTitle=""
                 currentModel={newSessionModel || modelSettings?.model}
                 onModelChange={draftProject ? undefined : handleSessionModelChange}
-                modelSettings={modelSettings ? { url: modelSettings.url, apiKey: modelSettings.apiKey, availableModels: modelSettings.availableModels } : undefined}
+                modelSettings={modelSettings}
                 sessionWorkspace={undefined}
                 homeWorkspace={appDraftWorkspace}
                 workspaceOptions={draftProject?.workspaces}
@@ -3495,7 +3496,7 @@ export default function App() {
               onCreationWorkspaceChange={setProjectCreationWorkspace}
               creationModel={projectCreationModel}
               onCreationModelChange={(model) => setProjectCreationModel(model && model !== 'default' ? model : null)}
-              creationModelSettings={modelSettings ? { url: modelSettings.url, apiKey: modelSettings.apiKey, availableModels: modelSettings.availableModels } : undefined}
+              creationModelSettings={modelSettings}
               creationResourceSelection={projectCreationResourceSelection}
               creatingProjectSession={creatingProjectSession}
               onCreateProjectConversation={handleCreateProjectConversation}

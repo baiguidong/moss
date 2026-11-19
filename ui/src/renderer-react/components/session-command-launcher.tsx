@@ -35,7 +35,7 @@ type Props = {
   contextUsage?: ContextUsageInfo | null;
   currentModel?: string;
   onModelChange?: (model: string) => Promise<void>;
-  modelSettings?: Pick<DesktopSettings, 'url' | 'apiKey' | 'availableModels'>;
+  modelSettings?: Pick<DesktopSettings, 'model' | 'availableModels'>;
   sessionUsage?: SessionUsageSummary | null;
   outline?: SessionOutlineEntry[];
   onJumpToOutlineItem?: (messageId: string) => void;
@@ -48,28 +48,10 @@ export function ModelSelector({
   modelSettings,
   disabled = false,
 }: Pick<Props, 'currentModel' | 'onModelChange' | 'modelSettings' | 'disabled'>) {
-  const [models, setModels] = React.useState<string[]>(modelSettings?.availableModels || []);
-  const [defaultModel, setDefaultModel] = React.useState(currentModel || '');
   const [changing, setChanging] = React.useState(false);
-  React.useEffect(() => {
-    let cancelled = false;
-    const configured = modelSettings?.availableModels || [];
-    setModels(configured);
-    setDefaultModel(currentModel || configured[0] || '');
-    void window.agentDesktop.listModels({ url: modelSettings?.url || '', apiKey: modelSettings?.apiKey || '' })
-      .then(catalog => {
-        if (!cancelled) {
-          // When the user has configured an allow-list, keep the session
-          // selector restricted to it. An empty local list may fall back to
-          // the server-managed catalog.
-          if (!configured.length) setModels(catalog.models || []);
-          setDefaultModel(currentModel || (catalog as typeof catalog & { defaultModel?: string }).defaultModel || configured[0] || catalog.models?.[0] || '');
-        }
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [modelSettings?.apiKey, modelSettings?.availableModels, modelSettings?.url]);
-  const options = [...new Set([...(models || []), currentModel || ''].filter(Boolean))];
+  const configured = modelSettings?.availableModels || [];
+  const defaultModel = modelSettings?.model || configured[0] || '';
+  const options = [...new Set([...configured, currentModel || ''].filter(Boolean))];
   const handleChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
     if (!onModelChange || changing) return;
     setChanging(true);
