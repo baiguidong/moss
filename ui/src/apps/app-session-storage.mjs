@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { isCrossAppInvocation } from '../../../packages/app-runtime/src/app-capabilities/index.mjs'
 
 const safe = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(value)
 const inside = (root, file) => { const rel = path.relative(root, file); return rel && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel) }
@@ -142,18 +143,27 @@ export function createAppSessionStorage({ getSession, getSessions = () => [], cr
     assertSession(sessionId) { record(sessionId) },
     async prepare({ appId, instanceId, actionName, input, options, manifest }) {
       if (manifest.backend?.storage !== 'session') return { input, options }
-      let invocation = options.invocation || {}, sessionId = invocation.sessionId
+      const invocation = options.invocation || {}
+      const background = isCrossAppInvocation(invocation)
+      const runtime = background ? getRuntime() : null
+      const binding = background ? JSON.stringify([
+        'cross-app', options.principal?.key, appId, instanceId, runtime?.getInstallation(appId)?.incarnationId,
+        invocation.callerAppId, invocation.callerInstanceId,
+        runtime?.getInstallation(invocation.callerAppId)?.incarnationId,
+        runtime?.instances.get(invocation.callerInstanceId)?.incarnationId,
+        runtime?.instances.get(instanceId)?.incarnationId,
+      ]) : `${appId}:${instanceId}:${options.sourceId || invocation.origin || 'ui'}`
+      let sessionId = background ? bindings.get(binding) : invocation.sessionId
       if (input?.uri) {
         const uri = new URL(input.uri), owner = uri.searchParams.get('session')
         if (owner) {
-          if (sessionId && sessionId !== owner) throw new Error('作品属于其他会话，请先显式导入文件')
+          if ((background || sessionId) && sessionId !== owner) throw new Error('作品属于其他会话，请先显式导入文件')
           sessionId = owner; uri.searchParams.delete('session'); input = { ...input, uri: uri.href }
         }
       }
-      const binding = `${appId}:${instanceId}:${options.sourceId || invocation.origin || 'ui'}`
       if (!sessionId && invocation.surface === 'app') sessionId = bindings.get(binding)
       if (!sessionId && invocation.surface === 'app' && mutations.has(actionName)) {
-        if (!pendingBindings.has(binding)) pendingBindings.set(binding, Promise.resolve().then(() => createSession(appId, manifest.displayName)).then(session => {
+        if (!pendingBindings.has(binding)) pendingBindings.set(binding, Promise.resolve().then(() => createSession(appId, manifest.displayName, { background })).then(session => {
           bindings.set(binding, session.id); return session.id
         }).finally(() => pendingBindings.delete(binding)))
         sessionId = await pendingBindings.get(binding)

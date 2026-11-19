@@ -79,6 +79,32 @@ test('read-only App inspection does not provision an unused session scope', asyn
   } finally { await fs.rm(root, { recursive: true, force: true }) }
 })
 
+test('background App calls reuse their own session scope without sharing it with the UI', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'session-background-scope-'))
+  const sessions = new Map(), backgrounds = []
+  const storage = createAppSessionStorage({ getSession: id => sessions.get(id), getRuntime: () => null,
+    createSession: async (_appId, _title, { background }) => {
+      const session = { id: 'scope-' + (sessions.size + 1), workspace: root }
+      sessions.set(session.id, session)
+      backgrounds.push(background)
+      return session
+    } })
+  const request = { appId: 'test.creator', instanceId: 'creator-default', actionName: 'files.import', input: {},
+    manifest: { backend: { storage: 'session' } } }
+  const first = { invocation: { surface: 'app', callerAppId: 'test.consumer', callerInstanceId: 'consumer-one' } }
+  const second = { invocation: { ...first.invocation, callerInstanceId: 'consumer-two' } }
+  try {
+    const imported = await storage.prepare({ ...request, options: first })
+    const inspected = await storage.prepare({ ...request, actionName: 'tasks.get', options: first })
+    expect(inspected.options.invocation.storage).toEqual(imported.options.invocation.storage)
+    const other = await storage.prepare({ ...request, options: second })
+    expect(other.options.invocation.storage.directory).not.toBe(imported.options.invocation.storage.directory)
+    const foreground = await storage.prepare({ ...request, options: { sourceId: 12, invocation: { surface: 'app', origin: 'ui' } } })
+    expect(foreground.options.invocation.storage.directory).not.toBe(imported.options.invocation.storage.directory)
+    expect(backgrounds).toEqual([true, true, false])
+  } finally { await fs.rm(root, { recursive: true, force: true }) }
+})
+
 test('creation skills grant only resource reads and expose no private data or CLI mutation path', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'session-skills-'))
   try {

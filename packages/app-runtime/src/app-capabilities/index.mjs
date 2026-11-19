@@ -11,6 +11,9 @@ import {
 import { defaultInstanceId, validateConfiguration } from '../state/index.mjs'
 
 export const APP_CAPABILITIES_PROTOCOL = 'moss.app-capabilities/v1'
+export function isCrossAppInvocation(invocation) {
+  return invocation?.surface === 'app' && Boolean(invocation.callerAppId && invocation.callerInstanceId)
+}
 const RESOURCE_REF_TTL_MS = 15 * 60_000
 const RESOURCE_CHUNK_LIMIT = 100_000
 const TOOL_REF_TTL_MS = 15 * 60_000
@@ -488,7 +491,7 @@ export class AppCapabilityBroker {
     let outcome = 'ok'
     try {
       input = toolInvokeInput(input)
-      if (context.surface !== 'ui' && context.invocation?.surface === 'app') {
+      if (context.surface !== 'ui' && isCrossAppInvocation(context.invocation)) {
         throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Nested cross-App calls are not supported')
       }
       binding = this.verify(input.toolRef, context, 'tool')
@@ -723,7 +726,7 @@ export class AppCapabilityBroker {
     let binding
     let outcome = 'ok'
     try {
-      if (context.surface !== 'ui' && context.invocation?.surface === 'app') throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Nested cross-App calls are not supported')
+      if (context.surface !== 'ui' && isCrossAppInvocation(context.invocation)) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Nested cross-App calls are not supported')
       binding = this.verify(input.providerRef, context)
       await this.consumer(context, binding.protocol)
       if (binding.providerAppId === context.appId) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'An App cannot invoke itself through the capability broker')
@@ -781,7 +784,7 @@ export class AppCapabilityBroker {
     let binding
     let outcome = 'ok'
     try {
-      if (context.surface !== 'ui' && context.invocation?.surface === 'app') throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Nested cross-App calls are not supported')
+      if (context.surface !== 'ui' && isCrossAppInvocation(context.invocation)) throw new AppServiceError(APP_ERROR_CODES.permissionDenied, 'Nested cross-App calls are not supported')
       binding = this.verify(input.resourceRef, context, 'resource')
       if (!Number.isFinite(binding.expiresAt) || binding.expiresAt < Date.now()) {
         throw unavailable('Result reference expired', 'expired')

@@ -209,6 +209,10 @@ test('declared consumers discover and call existing static and MCP tools through
       toolRef: staticTool.toolRef, arguments: { value: 'sample' },
     })).toMatchObject({ result: { callerAppId: consumerId, value: 'sample' } })
     expect(await runtime.invoke(consumerId, consumerInstance, 'consume.tool', {
+      toolRef: staticTool.toolRef, arguments: { value: 'from-app-ui' },
+    }, { invocation: { surface: 'app', origin: 'ui' } }))
+      .toMatchObject({ result: { callerAppId: consumerId, value: 'from-app-ui' } })
+    expect(await runtime.invoke(consumerId, consumerInstance, 'consume.tool', {
       toolRef: hostTool.toolRef, arguments: {},
     })).toMatchObject({ result: { hostApiVersion: '3.19.0' } })
     expect(await runtime.invoke(consumerId, consumerInstance, 'consume.tool', {

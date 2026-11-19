@@ -108,7 +108,11 @@ export function AppDetailsView({ app, installedApps, onBack, onTry, onOpenApp, o
             </button>)}
           </div>
         </section>}
-        <div data-app-introduction className="space-y-3"><p className="whitespace-pre-line text-sm leading-7">{app.overview?.description || app.description}</p>{isMcp && app.mcpPresentation?.usage && <p className="whitespace-pre-line text-sm leading-7">{app.mcpPresentation.usage}</p>}<p className="text-sm text-muted-foreground">{!enabled ? '启用后即可在主会话使用。' : scope === 'global' ? app.toolLoading === 'always' ? '全局常驻，工具直接可用。无需选择 App，在主会话描述需求即可。' : '全局按需，模型需要时查找并加载工具。无需手动选择 App。' : scopeFixed ? '当前按会话使用，试用时会为你选择此 App。' : '当前按会话使用，试用时会为你选择此 App。可在下方切换为全局按需或全局常驻。'}</p></div>
+        <div data-app-introduction className="space-y-3">
+          <p className="whitespace-pre-line text-sm leading-7">{app.overview?.description || app.description}</p>
+          {isMcp && app.mcpPresentation?.usage && <p className="whitespace-pre-line text-sm leading-7">{app.mcpPresentation.usage}</p>}
+          {(!uiEntry || !enabled || scope === 'global') && <p className="text-sm text-muted-foreground">{!enabled ? '启用后即可在主会话使用。' : scope === 'global' ? app.toolLoading === 'always' ? '全局常驻，工具直接可用。无需选择 App，在主会话描述需求即可。' : '全局按需，模型需要时查找并加载工具。无需手动选择 App。' : scopeFixed ? '当前按会话使用，试用时会为你选择此 App。' : '当前按会话使用，试用时会为你选择此 App。可在下方切换为全局按需或全局常驻。'}</p>}
+        </div>
         <AppDetailsSection title="基本信息">
           <dl className={APP_DETAILS_LIST_CLASS}>
             {isStandaloneApp && <div className={APP_DETAILS_ROW_CLASS}><dt className="text-muted-foreground">启用状态</dt><dd><label className="flex cursor-pointer items-center gap-2"><input type="checkbox" role="switch" aria-label="启用应用" checked={enabled} disabled={operationBusy || unavailable} onChange={event => void run(() => setAppEnabled(app, event.target.checked))} className="h-4 w-4 accent-primary" />{enabled ? '已启用' : '已停用'}</label></dd></div>}

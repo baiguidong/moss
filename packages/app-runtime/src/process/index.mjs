@@ -16,7 +16,7 @@ import {
   validateHostProtocol,
 } from '../../../app-sdk/src/index.mjs'
 import { redactAppValue } from '../logging/index.mjs'
-import { APP_CAPABILITIES_PROTOCOL } from '../app-capabilities/index.mjs'
+import { APP_CAPABILITIES_PROTOCOL, isCrossAppInvocation } from '../app-capabilities/index.mjs'
 import { AppProcessLeases } from './lease.mjs'
 import { processTreeExists, readProcessInfo, signalProcessTree, waitForProcessTreeGone } from './process-info.mjs'
 import { createAppWatchdog } from './watchdog.mjs'
@@ -830,7 +830,7 @@ export class AppProcessSupervisor {
         invocation: options.invocation || null,
         principal: options.principal || hosted.definition.owner || null,
       })
-      if (options.invocation?.surface === 'app') hosted.activeAppInvocations.add(requestId)
+      if (isCrossAppInvocation(options.invocation)) hosted.activeAppInvocations.add(requestId)
       options.signal?.addEventListener('abort', abortHandler, { once: true })
     })
     if (!hosted.pending.has(requestId)) return promise

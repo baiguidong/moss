@@ -607,10 +607,12 @@ const appSessionStorage = createAppSessionStorage({
   getSession: id => sessions.get(id) || subAgentSessions.get(id),
   getRuntime: () => appRuntime,
   getSessions: () => [...sessions.values(), ...subAgentSessions.values()],
-  createSession: async (appId, title) => {
+  createSession: async (appId, title, { background } = {}) => {
     const record = createSessionRecord({ title, agentMode: 'local', appIds: [appId] });
-    await prepareAssistantContextForSessionStart(record);
-    emitToRenderer('app:open-session', { sessionId: record.id });
+    if (!background) {
+      await prepareAssistantContextForSessionStart(record);
+      emitToRenderer('app:open-session', { sessionId: record.id });
+    }
     return record;
   },
 });
