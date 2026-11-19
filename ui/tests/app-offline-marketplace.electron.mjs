@@ -176,9 +176,12 @@ const btn = (win, label) =>
     },
     label,
   )
-async function confirmReviewedInstall(win) {
+async function confirmReviewedInstall(win, updatedVersion) {
   await until(async () => {
     if (approvals.some((prompt) => prompt.buttons?.some((text) => String(text).includes('安装')))) return true
+    // Updating without a capability change reuses the grants from the earlier install.
+    if (updatedVersion && await js(win, async (appId, version) => (await window.agentDesktop.listApps())
+      .some(app => app.id === appId && app.currentVersion === version && app.enabled), id, updatedVersion)) return true
     return js(win, () => {
       const dialog = document.querySelector('dialog.host-confirmation-dialog[open]')
       if (
@@ -362,7 +365,7 @@ async function run() {
       }
       if (mode === 'full') assert.ok(await choose('full'))
       await confirmChoice()
-      await confirmReviewedInstall(win)
+      await confirmReviewedInstall(win, mode === 'full' && previousZip ? release.version : undefined)
       await activated()
       if (mode === 'full') {
         assert.deepEqual(requests, [kit.fileName])
