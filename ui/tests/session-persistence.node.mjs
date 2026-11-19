@@ -70,6 +70,7 @@ test('reopens real SQLite records, manifests and read-only child sessions with m
   let service = f.open();
   const main = record('parent', {
     projectId: 'project', isCoordinatorMode: true, permissionMode: 'plan', effort: 'xhigh',
+    modelOverride: 'model-a',
     projectDefaults: { version: 1, instructions: 'frozen rules', skillIds: ['skill'], agentTeamsEnabled: false },
     appIds: ['builder', 'mcp', 'builder'],
     appServiceIds: ['["customer.app","sales"]', '["customer.app","sales"]'],
@@ -92,11 +93,13 @@ test('reopens real SQLite records, manifests and read-only child sessions with m
   assert.equal(manifest.layoutVersion, 3);
   assert.equal(manifest.toolDisplayMode, 'merged');
   assert.equal(manifest.effort, 'xhigh');
+  assert.equal(manifest.modelOverride, 'model-a');
   service = f.open();
+  f.setSettings({ permissionMode: 'default', model: 'model-b' });
   service.hydratePersistedSessions();
   const restored = service.sessions.get('parent');
   for (const key of ['title', 'workspace', 'createdAt', 'updatedAt', 'messageCount', 'underlyingSessionId',
-    'history', 'projectId', 'projectDefaults', 'isCoordinatorMode', 'permissionMode', 'effort', 'sessionKind', 'originChannel',
+    'history', 'projectId', 'projectDefaults', 'isCoordinatorMode', 'permissionMode', 'effort', 'modelOverride', 'sessionKind', 'originChannel',
     'sourceSessionId', 'cronTaskId', 'sessionRole', 'assistantName', 'workerSummariesJson',
     'projectTaskStatus', 'projectTaskPrompt', 'projectTaskError', 'projectTaskCompletedAt',
     'toolDisplayMode', 'rewindMessageId', 'rewindCreatedAt', 'channelAppId', 'channelInstanceId', 'channelRuntimePolicy']) {

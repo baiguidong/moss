@@ -144,6 +144,13 @@ export function createUsageLedger(db) {
     GROUP BY model
     ORDER BY model ASC
   `);
+  const selectLastSessionModel = db.prepare(`
+    SELECT model FROM usage_events
+    WHERE session_id = ? AND query_source = 'sdk' AND agent_id IS NULL
+      AND TRIM(model) NOT IN ('', 'unknown')
+    ORDER BY id DESC
+    LIMIT 1
+  `);
 
   return {
     setReporter(value) { reporter = value; },
@@ -170,6 +177,10 @@ export function createUsageLedger(db) {
       );
       if (result.changes === 1) reporter?.(eventId);
       return result.changes === 1;
+    },
+
+    getLastSessionModel(sessionId) {
+      return selectLastSessionModel.get(sessionId)?.model.trim() || null;
     },
 
     getSession(sessionId) {

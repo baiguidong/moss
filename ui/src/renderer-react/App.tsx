@@ -2142,12 +2142,14 @@ export default function App() {
     }
     const override = nextModel && nextModel !== 'default' ? nextModel : null;
     const detail = await window.agentDesktop.setSessionModel({ sessionId: activeSessionId, model: override });
-    activeDetailRef.current = detail;
-    setActiveDetail(detail);
+    if (activeSessionIdRef.current === detail.id) {
+      activeDetailRef.current = detail;
+      setActiveDetail(detail);
+      showPermissionNotice(`已切换模型：${detail.model}`, 'info', 3500);
+    }
     setSummaries(previous => previous.map(summary => summary.id === detail.id
       ? { ...summary, model: detail.model, modelOverride: detail.modelOverride, updatedAt: detail.updatedAt }
       : summary));
-    showPermissionNotice(override ? `已切换模型：${override}` : '已恢复默认模型', 'info', 3500);
   }, [activeSessionId, showPermissionNotice]);
 
   const handleCreateProjectConversation = React.useCallback(async (prompt: string) => {
@@ -3308,7 +3310,7 @@ export default function App() {
                 permissionMode={activeDetail?.permissionMode ?? desktopSettings?.permissionMode ?? 'default'}
                 onPermissionModeChange={handleSessionPermissionModeChange}
                 permissionModeChanging={permissionModeSettingSessionId === activeSessionId}
-                currentModel={activeDetail?.model || modelSettings?.model}
+                currentModel={activeDetail?.modelOverride || modelSettings?.model || activeDetail?.model}
                 onModelChange={activeDetail?.agentMode !== 'remote-direct' && !activeDetail?.isSubAgent ? handleSessionModelChange : undefined}
                 modelSettings={modelSettings}
                 sessionUsage={sessionUsage}

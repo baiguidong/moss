@@ -38,14 +38,22 @@ const server = createServer(async (req, res) => {
     res.end(JSON.stringify({ error: { type: 'invalid_request_error', message: 'Unsupported reasoning effort "none"' } }));
   } else {
     res.setHeader('Content-Type', 'text/event-stream');
-    res.end('event: message_stop\ndata: {"type":"message_stop"}\n\n');
+    const events = [
+      { type: 'message_start', message: { id: `msg_${requests.length}`, type: 'message', role: 'assistant', model: body.model, content: [], usage: { input_tokens: 5, output_tokens: 0 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'OK' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 1 } },
+      { type: 'message_stop' },
+    ];
+    res.end(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''));
   }
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 await fs.writeFile(path.join(root, 'settings.json'), JSON.stringify({
   models: { text: {
     model: 'fixture-model',
-    availableModels: ['fixture-model', 'fixture-secondary'],
+    availableModels: ['fixture-model', 'fixture-secondary', 'fixture-tertiary'],
     baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
     apiKey: 'fixture-key',
     thinking: { mode: 'auto' },
@@ -53,6 +61,7 @@ await fs.writeFile(path.join(root, 'settings.json'), JSON.stringify({
   autoMemory: { enabled: false },
   sessionMemory: { enabled: false },
   webSearch: { mode: 'disabled' },
+  managedRuntimes: { node: false, python: false, git: false },
 }));
 const watchdog = setTimeout(() => app.exit(1), 90_000);
 const waitFor = async (condition, label) => {
@@ -106,6 +115,53 @@ try {
   await new Promise(resolve => setTimeout(resolve, 200));
   await fs.writeFile('/tmp/moss-model-settings-test.png', (await window.webContents.capturePage()).toPNG());
   console.log('PASS real model UI: configured choices without startup discovery, manual catalog authorization and retry, model probe and HTTP 400. Screenshot /tmp/moss-model-settings-test.png');
+
+  const call = (method, payload) => js(`window.agentDesktop.${method}(${JSON.stringify(payload)})`);
+  const send = async (sessionId, prompt, expectedModel) => {
+    const before = requests.length;
+    const result = await call('send', { sessionId, prompt });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const request = requests.slice(before).find(body => JSON.stringify(body.messages?.at(-1) ?? '').includes(prompt));
+    assert.equal(request?.model, expectedModel);
+  };
+  await call('updateSettings', { thinkingMode: 'auto' });
+  const original = await call('createSession', { title: 'Model A session' });
+  const sessionId = original.summary.id;
+  assert.equal(original.detail.modelOverride, 'fixture-model');
+  await send(sessionId, 'Start the model persistence conversation.', 'fixture-model');
+  await call('updateSettings', { model: 'fixture-secondary' });
+
+  const next = await call('createSession', { title: 'Model B session' });
+  await send(next.summary.id, 'Start a new conversation after changing the default.', 'fixture-secondary');
+  assert.equal((await call('getSession', { sessionId })).model, 'fixture-model');
+  await send(sessionId, 'Continue the original conversation.', 'fixture-model');
+  const forked = await call('forkSession', { sessionId });
+  assert.equal(forked.detail.model, 'fixture-model');
+
+  assert.equal((await call('setSessionModel', { sessionId, model: null })).model, 'fixture-secondary');
+  await call('updateSettings', { model: 'fixture-model' });
+  await send(sessionId, 'Continue with the default model selected for this conversation.', 'fixture-secondary');
+
+  const openSession = async title => {
+    const selector = JSON.stringify(`[aria-label="打开“${title}”的会话设置"]`);
+    await waitFor(() => js(`Boolean(document.querySelector(${selector}))`), title);
+    await js(`document.querySelector(${selector}).closest('[role="button"]').click()`);
+  };
+  const modelSelect = `document.querySelector('select[aria-label="选择模型"]')`;
+  await openSession('Model A session');
+  await waitFor(() => js(`${modelSelect}?.value === 'fixture-secondary'`), 'original session model');
+  await js(`{
+    const select = ${modelSelect};
+    select.value = 'fixture-tertiary';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  }`);
+  await waitFor(async () => (await call('getSession', { sessionId })).model === 'fixture-tertiary', 'session model change saved');
+  await openSession('Model B session');
+  await waitFor(() => js(`${modelSelect}?.value === 'fixture-secondary'`), 'other session model unchanged');
+  await openSession('Model A session');
+  await waitFor(() => js(`${modelSelect}?.value === 'fixture-tertiary'`), 'changed model shown on reopen');
+  await send(sessionId, 'Continue after switching to the third model.', 'fixture-tertiary');
+  console.log('PASS session model selection survives reopening and default changes; new sessions and forks use the expected models.');
 } catch (error) {
   console.error(error.stack); process.exitCode = 1;
   if (window && !window.isDestroyed()) await fs.writeFile('/tmp/moss-model-settings-failure.png', (await window.webContents.capturePage()).toPNG());

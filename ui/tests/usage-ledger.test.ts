@@ -17,6 +17,21 @@ function runScenario(source: string) {
 }
 
 describe('usage ledger', () => {
+  test('recovers the latest main conversation model for a legacy session', () => {
+    const result = runScenario(`
+      const record = (eventId, model, querySource, agentId, sessionId = 'legacy') =>
+        ledger.record({ eventId, model, querySource, agentId, occurredAt: 1000, inputTokens: 1 }, { sessionId });
+      record('first', 'model-a', 'sdk');
+      record('latest', 'model-b', 'sdk');
+      record('worker', 'worker-model', 'sdk', 'worker');
+      record('compact', 'fast-model', 'compact');
+      record('unknown', 'unknown', 'sdk');
+      record('other', 'other-model', 'sdk', undefined, 'other');
+      console.log(JSON.stringify([ledger.getLastSessionModel('legacy'), ledger.getLastSessionModel('missing')]));
+    `);
+    expect(result).toEqual(['model-b', null]);
+  });
+
   test('isolates session usage, groups models, and does not charge inherited fork requests twice', () => {
     const result = runScenario(`
       const record = (eventId, sessionId, model, inputTokens, occurredAt) => ledger.record({

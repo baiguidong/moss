@@ -1176,6 +1176,17 @@ function assertSessionModelAllowed(model, settings = getRuntimeModelSettings()) 
   return value;
 }
 
+function getSessionRuntimeModelSettings(sessionRecord) {
+  const settings = getRuntimeModelSettings();
+  const model = assertSessionModelAllowed(resolveSessionModel(sessionRecord, settings), settings);
+  if (!sessionRecord.modelOverride) {
+    sessionRecord.modelOverride = model;
+    schedulePersistSession(sessionRecord, true);
+    emitSessionMeta(sessionRecord);
+  }
+  return { ...settings, model };
+}
+
 async function applySessionModelOverride(sessionRecord, model) {
   if (sessionRecord.isSubAgent || sessionRecord.resumeReadOnlyReason) {
     throw new Error('只读会话不能修改模型。');
@@ -1184,9 +1195,9 @@ async function applySessionModelOverride(sessionRecord, model) {
     throw new Error('会话正在执行任务，请等待完成后再切换模型。');
   }
   const requested = typeof model === 'string' ? model.trim() : '';
-  const nextOverride = !requested || requested.toLowerCase() === 'default'
-    ? null
-    : assertSessionModelAllowed(requested, getRuntimeModelSettings());
+  const settings = getRuntimeModelSettings();
+  const useDefault = !requested || requested.toLowerCase() === 'default';
+  const nextOverride = assertSessionModelAllowed(useDefault ? settings.model : requested, settings);
   if (sessionRecord.modelOverride === nextOverride) return getSessionDetailPayload(sessionRecord);
   sessionRecord.modelOverride = nextOverride;
   await disposeRuntime(sessionRecord);
@@ -2939,11 +2950,9 @@ function getRuntimeSessionAppSelection(sessionRecord) {
   };
 }
 
-async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystemPrompt = '') {
+async function buildClaudeSessionConfig(cwd, sessionRecord, runtimeSystemPrompt, modelSettings) {
   restoreTestController(sessionRecord);
   applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
-  const modelSettings = getRuntimeModelSettings();
-  const effectiveModel = assertSessionModelAllowed(resolveSessionModel(sessionRecord, modelSettings), modelSettings);
   const appScoped = isAppScopedSession(sessionRecord);
   if (appScoped) {
     if (isolateAppSession(sessionRecord)) schedulePersistSession(sessionRecord, true);
@@ -3011,7 +3020,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord = null, runtimeSystem
     executionEnvironment: 'desktop',
     desktopCronHostId,
     image: modelSettings.image ? { ...modelSettings.image } : undefined,
-    model: effectiveModel,
+    model: modelSettings.model,
     fastModel: modelSettings.fastModel || undefined,
     declaredContextWindows: getDeclaredModelContextWindows(modelSettings),
     customSystemPrompt: sessionRecord?.appTestRunId
@@ -3287,7 +3296,13 @@ function refreshDesktopSettings(payload = {}, { policyUpdate = false } = {}) {
 }
 
 hydratePersistedSessions();
-for (const record of sessions.values()) snapshotLegacyProjectDefaults(record);
+for (const record of sessions.values()) {
+  if (record.agentMode === 'local' && !record.modelOverride) {
+    // Older sessions only saved explicit overrides. Recover the model from their main conversation.
+    record.modelOverride = usageLedger.getLastSessionModel(record.id);
+  }
+  snapshotLegacyProjectDefaults(record);
+}
 
 const interruptedSessionRecoveryPromise = Promise.resolve();
 
@@ -5381,7 +5396,7 @@ function createSessionRecord({
     }
   }
   const agentMode = 'local';
-  const modelOverride = typeof model === 'string' && model.trim() ? model.trim() : null;
+  const modelOverride = resolveSessionModel({ modelOverride: model }) || null;
 
   const sessionRecord = {
     id,
@@ -6796,7 +6811,8 @@ async function createOrReuseRuntime(sessionRecord, runtimeSystemPrompt = '', exe
   await waitForManagedRuntimesBeforeLocalSession();
   await prepareAssistantContextForSessionStart(sessionRecord);
   const ClaudeSession = await getClaudeSessionCtor();
-  const sessionConfig = await buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt);
+  const modelSettings = getSessionRuntimeModelSettings(sessionRecord);
+  const sessionConfig = await buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt, modelSettings);
   if (sessionRecord.projectId && !sessionRecord.underlyingSessionId && !sessionRecord.messageCount
     && !sessionRecord.isSubAgent && !sessionRecord.appTestRunId) {
     const memory = await getProjectMemory(sessionRecord.projectId).catch(error => {
@@ -6868,9 +6884,10 @@ async function restoreSessionRuntime(sessionRecord, runtimeSystemPrompt = '') {
   await prepareAssistantContextForSessionStart(sessionRecord);
   const resumeClaudeSession = await getResumeClaudeSessionFn();
 
+  const modelSettings = getSessionRuntimeModelSettings(sessionRecord);
   try {
     const resumed = await resumeClaudeSession(targetSessionId, {
-      ...(await buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt)),
+      ...(await buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt, modelSettings)),
       coordinatorMode: desiredCoordinatorMode,
       sourceJsonlFile: getLocalSessionTranscriptPath(sessionRecord) || undefined,
       onPermissionRequest: async (toolName, input, request) => {
@@ -9780,7 +9797,7 @@ ipcMain.handle('agent:fork-session', async (_event, { sessionId } = {}) => {
       agentMode: 'local',
       sourceSessionId: sourceSession.id,
       permissionMode: sourceSession.permissionMode,
-      model: sourceSession.modelOverride,
+      model: resolveSessionModel(sourceSession),
     });
 
     try {
@@ -9834,11 +9851,12 @@ ipcMain.handle('agent:get-model-context', async (_event, { sessionId }) => {
   }
   const mod = await getClaudeRuntimeModule();
   const modelSettings = getRuntimeModelSettings();
+  const model = resolveSessionModel(sessionRecord, modelSettings);
   return mod.resolveDesktopModelContext({
-    model: resolveSessionModel(sessionRecord, modelSettings),
+    model,
     url: modelSettings.url,
     apiKey: modelSettings.apiKey,
-    declaredContextWindows: getDeclaredModelContextWindows(modelSettings),
+    declaredContextWindows: getDeclaredModelContextWindows({ ...modelSettings, model }),
   });
 });
 
