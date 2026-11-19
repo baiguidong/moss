@@ -30,6 +30,7 @@ export function getEffectiveContextWindowSize(model: string): number {
   const reservedTokensForSummary = Math.min(
     getMaxOutputTokensForModel(model),
     MAX_OUTPUT_TOKENS_FOR_SUMMARY,
+    Math.floor(context.contextWindow / 2),
   )
   return context.contextWindow - reservedTokensForSummary
 }
@@ -111,7 +112,7 @@ export function getAutoCompactThreshold(model: string): number {
   const effectiveContextWindow = getEffectiveContextWindowSize(model)
 
   const autocompactThreshold =
-    effectiveContextWindow - AUTOCOMPACT_BUFFER_TOKENS
+    effectiveContextWindow - Math.min(AUTOCOMPACT_BUFFER_TOKENS, Math.floor(effectiveContextWindow / 2))
 
   // Override for easier testing of autocompact
   const envPercent = process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE

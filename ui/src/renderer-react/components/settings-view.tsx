@@ -53,7 +53,6 @@ import type { DesktopSettings, ManagedRuntimeStatus, StoredApp } from '../types'
 import {
   DEFAULT_DECLARED_CONTEXT_WINDOW,
   DECLARED_CONTEXT_WINDOW_CHOICES,
-  normalizeDeclaredContextWindow,
 } from '../../../../shared/model-context-options.mjs';
 import { DEFAULT_RUNTIME_LIFECYCLE, type RuntimeLifecycleSettings } from '../../runtime-lifecycle-settings.mjs';
 import { AssistantMessage } from '@/components/chat/assistant-message';
@@ -62,7 +61,7 @@ import { getChatAppearanceStyle } from '@/components/chat/chat-appearance';
 
 type ThemeMode = 'dark' | 'light' | 'system';
 type NavigationGroupId = 'basic' | 'appearance' | 'ai' | 'agents' | 'tools' | 'memory' | 'storage' | 'advanced' | 'apps';
-type SectionId = 'basic-info' | 'model' | 'web-search' | 'agents' | 'tools' | 'appearance' | 'permission' | 'memory' | 'storage' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
+type SectionId = 'basic-info' | 'model' | 'conversation' | 'web-search' | 'agents' | 'tools' | 'appearance' | 'permission' | 'memory' | 'storage' | 'agent-execution' | 'tool-performance' | 'prompt' | 'service-address';
 
 type SettingsViewProps = {
   serverAuthentication?: ServerAuthentication;
@@ -144,10 +143,6 @@ const CONTEXT_WINDOW_OPTIONS = [
   { label: '1M', limit: DECLARED_CONTEXT_WINDOW_CHOICES[3] },
 ];
 
-export function contextWindowFromCatalog(size: number | undefined): number {
-  return normalizeDeclaredContextWindow(size);
-}
-
 const DEFAULT_WEB_SEARCH_SETTINGS: NonNullable<DesktopSettings['webSearch']> = {
   mode: 'auto',
   tavilyApiKey: '',
@@ -209,9 +204,10 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
   },
   {
     id: 'ai', title: '模型与搜索', icon: Sparkles,
-    keywords: ['模型', '搜索', 'model', 'web search', 'ai', 'provider', 'api', 'key', 'thinking', '思考'],
+    keywords: ['模型', '搜索', 'model', 'web search', 'ai', 'provider', 'api', 'key'],
     sections: [
-      { id: 'model', title: '模型', keywords: ['文本模型', '快速模型', '图片模型', 'model', 'fast', 'image', 'provider', 'api', 'key', 'anthropic', 'claude', 'url', 'thinking', '思考模式', '测试'] },
+      { id: 'model', title: '模型', keywords: ['文本模型', '快速模型', '图片模型', 'model', 'fast', 'image', 'provider', 'api', 'key', 'anthropic', 'claude', 'url', '测试'] },
+      { id: 'conversation', title: '会话', keywords: ['会话', '上下文上限', '上下文窗口', 'context window', 'thinking', '思考模式', '思考预算'] },
       { id: 'web-search', title: '网页搜索', keywords: ['websearch', 'web search', '网页搜索', '搜索', 'tavily', 'brave', '原生搜索', 'endpoint'] },
     ],
   },
@@ -585,30 +581,6 @@ function SettingsRow({
   );
 }
 
-function ModelContextWindowControl({
-  model,
-  declared,
-  onChange,
-}: {
-  model: string;
-  declared: number | null | undefined;
-  onChange: (model: string, limit: number) => void;
-}) {
-  const selected = CONTEXT_WINDOW_OPTIONS.some(option => option.limit === declared)
-    ? declared : DEFAULT_DECLARED_CONTEXT_WINDOW;
-  return (
-    <select
-      className={cn(SELECT_CLASS_NAME, 'w-24 shrink-0 px-2')}
-      value={selected}
-      aria-label={`${model} 上下文窗口`}
-      title="上下文窗口"
-      onChange={event => onChange(model, Number(event.target.value))}
-    >
-      {CONTEXT_WINDOW_OPTIONS.map(option => <option key={option.limit} value={option.limit}>{option.label}</option>)}
-    </select>
-  );
-}
-
 function Toggle({ checked, onCheckedChange, label, disabled = false }: ToggleProps) {
   return (
     <label className={cn(
@@ -876,7 +848,6 @@ export function SettingsView({
   const [webSearchAction, setWebSearchAction] = React.useState<'idle' | 'tavily' | 'brave' | 'probe'>('idle');
   const [webSearchError, setWebSearchError] = React.useState('');
   const [availableModels, setAvailableModels] = React.useState<string[]>([]);
-  const [availableModelContextWindows, setAvailableModelContextWindows] = React.useState<Record<string, number>>({});
   const [modelListState, setModelListState] = React.useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [modelListError, setModelListError] = React.useState('');
   const deferredSearchQuery = React.useDeferredValue(searchQuery.trim().toLowerCase());
@@ -902,6 +873,7 @@ export function SettingsView({
   const sectionRefs = React.useRef<Partial<Record<SectionId, HTMLElement | null>>>({
     'basic-info': null,
     model: null,
+    conversation: null,
     'web-search': null,
     agents: null,
     tools: null,
@@ -989,30 +961,15 @@ export function SettingsView({
         apiKey: settingsDraft.apiKey || '',
       });
       setAvailableModels([...new Set([...(settingsDraft.availableModels || []), ...(catalog.models || [])])]);
-      setAvailableModelContextWindows(catalog.contextWindows || {});
-      const declarations = { ...settingsDraft.declaredContextByModel };
-      let changed = false;
-      for (const model of new Set([settingsDraft.model, settingsDraft.fastModel].filter(Boolean))) {
-        if (Object.hasOwn(declarations, model)) continue;
-        const limit = contextWindowFromCatalog(catalog.contextWindows?.[model]);
-        declarations[model] = limit;
-        changed = true;
-      }
-      if (changed) {
-        setSettingsDraft(current => current ? { ...current, declaredContextByModel: declarations } : current);
-        void autoSaveSettings('declaredContextByModel', declarations);
-      }
       setModelListState('success');
     } catch (error) {
-      setAvailableModelContextWindows({});
       setModelListState('error');
       setModelListError(cleanIpcErrorMessage(error));
     }
-  }, [settingsDraft?.apiKey, settingsDraft?.url, settingsDraft?.model, settingsDraft?.fastModel, settingsDraft?.declaredContextByModel, setSettingsDraft, autoSaveSettings]);
+  }, [settingsDraft?.apiKey, settingsDraft?.url, settingsDraft?.availableModels]);
 
   React.useEffect(() => {
     setAvailableModels([]);
-    setAvailableModelContextWindows({});
     setModelListState('idle');
     setModelListError('');
   }, [settingsDraft?.apiKey, settingsDraft?.url]);
@@ -1152,29 +1109,6 @@ export function SettingsView({
     else if (current.has(model)) current.delete(model);
     else current.add(model);
     updateSetting('availableModels', [...current]);
-  };
-
-  const updateDeclaredContextWindow = (model: string, limit: number) => {
-    updateSetting('declaredContextByModel', {
-      ...settingsDraft?.declaredContextByModel,
-      [model]: limit,
-    });
-  };
-
-  const selectTextModel = (key: 'model' | 'fastModel', model: string) => {
-    const name = model.trim();
-    const declarations = settingsDraft?.declaredContextByModel || {};
-    const limit = contextWindowFromCatalog(availableModelContextWindows[name]);
-    if (!name || Object.hasOwn(declarations, name)) {
-      updateSetting(key, model);
-      return;
-    }
-    const next = { ...declarations, [name]: limit };
-    setSettingsDraft(current => current ? { ...current, [key]: model, declaredContextByModel: next } : current);
-    void (async () => {
-      await autoSaveSettings('declaredContextByModel', next);
-      await autoSaveSettings(key, model);
-    })();
   };
 
   const updateToolLoading = (name: string, mode: MossToolLoadingMode) => {
@@ -2351,18 +2285,15 @@ export function SettingsView({
                         title="默认模型"
                         controlClassName="sm:w-[280px]"
                       >
-                        <div className="flex min-w-0 items-center gap-2">
-                          <select
-                            className={cn(SELECT_CLASS_NAME, 'min-w-0 flex-1')}
-                            value={settingsDraft.model || ''}
-                            aria-label="默认模型"
-                            onChange={(event) => selectTextModel('model', event.target.value)}
-                          >
-                            <option value="">请选择模型</option>
-                            {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
-                          </select>
-                          {settingsDraft.model && <ModelContextWindowControl model={settingsDraft.model} declared={settingsDraft.declaredContextByModel?.[settingsDraft.model]} onChange={updateDeclaredContextWindow} />}
-                        </div>
+                        <select
+                          className={SELECT_CLASS_NAME}
+                          value={settingsDraft.model || ''}
+                          aria-label="默认模型"
+                          onChange={(event) => updateSetting('model', event.target.value)}
+                        >
+                          <option value="">请选择模型</option>
+                          {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
+                        </select>
                       </SettingsRow>
 
                       <SettingsRow
@@ -2370,18 +2301,15 @@ export function SettingsView({
                         description="用于检索、网页提取、摘要等轻量任务；留空时使用主模型。"
                         controlClassName="sm:w-[280px]"
                       >
-                        <div className="flex min-w-0 items-center gap-2">
-                          <select
-                            className={cn(SELECT_CLASS_NAME, 'min-w-0 flex-1')}
-                            value={settingsDraft.fastModel || ''}
-                            aria-label="快速模型"
-                            onChange={(event) => selectTextModel('fastModel', event.target.value)}
-                          >
-                            <option value="">留空，使用默认模型</option>
-                            {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
-                          </select>
-                          {settingsDraft.fastModel && <ModelContextWindowControl model={settingsDraft.fastModel} declared={settingsDraft.declaredContextByModel?.[settingsDraft.fastModel]} onChange={updateDeclaredContextWindow} />}
-                        </div>
+                        <select
+                          className={SELECT_CLASS_NAME}
+                          value={settingsDraft.fastModel || ''}
+                          aria-label="快速模型"
+                          onChange={(event) => updateSetting('fastModel', event.target.value)}
+                        >
+                          <option value="">留空，使用默认模型</option>
+                          {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
+                        </select>
                       </SettingsRow>
 
                       <SettingsRow
@@ -2398,12 +2326,34 @@ export function SettingsView({
                           {modelOptions.map(model => <option key={model} value={model}>{model}</option>)}
                         </select>
                       </SettingsRow>
+
+                      <SettingsRow
+                        title="测试模型"
+                        description="用当前模型和思考设置发送一条简短请求。"
+                        controlClassName="sm:w-[380px]"
+                      >
+                        <ModelConnectionTest settings={settingsDraft} />
+                      </SettingsRow>
+                    </SettingsGroup>
+                  </SettingsSection>
+                ) : null}
+
+                {visibleSections.some((section) => section.id === 'conversation') ? (
+                  <SettingsSection
+                    id="conversation"
+                    title="会话"
+                    sectionRef={(element) => {
+                      sectionRefs.current.conversation = element;
+                    }}
+                  >
+                    <SettingsGroup>
                       <SettingsRow
                         title="思考模式"
-                        description="模型默认不传 thinking；关闭思考需接口支持。"
+                        description="关闭思考需模型接口支持。"
                         controlClassName="sm:w-[220px]"
                       >
                         <select
+                          aria-label="思考模式"
                           className={SELECT_CLASS_NAME}
                           value={settingsDraft.thinkingMode || 'auto'}
                           onChange={(event) => {
@@ -2414,6 +2364,21 @@ export function SettingsView({
                           <option value="adaptive">自适应思考</option>
                           <option value="enabled">开启思考（指定预算）</option>
                           <option value="disabled">关闭思考</option>
+                        </select>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="上下文上限"
+                        description="适用于所有会话模型。模型容量较小时，按已知模型容量计算。"
+                        controlClassName="sm:w-[220px]"
+                      >
+                        <select
+                          aria-label="上下文上限"
+                          className={SELECT_CLASS_NAME}
+                          value={settingsDraft.contextWindowLimit ?? DEFAULT_DECLARED_CONTEXT_WINDOW}
+                          onChange={(event) => updateSetting('contextWindowLimit', Number(event.target.value))}
+                        >
+                          {CONTEXT_WINDOW_OPTIONS.map(option => <option key={option.limit} value={option.limit}>{option.label}</option>)}
                         </select>
                       </SettingsRow>
 
@@ -2437,16 +2402,7 @@ export function SettingsView({
                           />
                         </SettingsRow>
                       ) : null}
-
-                      <SettingsRow
-                        title="测试模型"
-                        description="用当前模型和思考设置发送一条简短请求。"
-                        controlClassName="sm:w-[380px]"
-                      >
-                        <ModelConnectionTest settings={settingsDraft} />
-                      </SettingsRow>
                     </SettingsGroup>
-
                   </SettingsSection>
                 ) : null}
 

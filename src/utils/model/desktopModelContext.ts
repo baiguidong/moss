@@ -7,6 +7,7 @@ export async function resolveDesktopModelContext(options: {
   model: string
   url?: string
   apiKey?: string
+  contextWindowLimit?: number
   declaredContextWindows?: Record<string, number>
 }) {
   const model = options.model.trim()
@@ -15,6 +16,7 @@ export async function resolveDesktopModelContext(options: {
     mossModel: model,
     mossBaseUrl: normalizeMossBaseUrl(options.url),
     mossAuthToken: options.apiKey?.trim() || undefined,
+    contextWindowLimit: options.contextWindowLimit,
     declaredContextWindows: options.declaredContextWindows,
   }, async () => {
     return {

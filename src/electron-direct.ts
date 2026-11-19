@@ -471,6 +471,7 @@ export interface ClaudeSessionOptions {
   model?: string
   /** 用于检索、提取和摘要等轻量任务的模型名。 */
   fastModel?: string
+  contextWindowLimit?: number
   declaredContextWindows?: Record<string, number>
   /** 覆盖默认 API base URL（仅应用于当前 embedded session） */
   url?: string
@@ -706,7 +707,7 @@ async function runDesktopPermissionRequestHooks(
 function buildSessionApiOverrides(
   opts: Pick<
     ClaudeSessionOptions,
-    'url' | 'apiKey' | 'model' | 'fastModel' | 'declaredContextWindows' | 'webSearch'
+    'url' | 'apiKey' | 'model' | 'fastModel' | 'contextWindowLimit' | 'declaredContextWindows' | 'webSearch'
   >,
 ): SessionApiOverrides | undefined {
   const mossBaseUrl = normalizeMossBaseUrl(
@@ -726,6 +727,7 @@ function buildSessionApiOverrides(
     !mossAuthToken &&
     !mossModel &&
     !mossFastModel &&
+    opts.contextWindowLimit === undefined &&
     !Object.keys(opts.declaredContextWindows ?? {}).length &&
     !opts.webSearch
   ) {
@@ -737,6 +739,7 @@ function buildSessionApiOverrides(
     ...(mossAuthToken ? { mossAuthToken } : {}),
     ...(mossModel ? { mossModel } : {}),
     ...(mossFastModel ? { mossFastModel } : {}),
+    ...(opts.contextWindowLimit !== undefined ? { contextWindowLimit: opts.contextWindowLimit } : {}),
     ...(Object.keys(opts.declaredContextWindows ?? {}).length
       ? { declaredContextWindows: opts.declaredContextWindows } : {}),
     ...(opts.webSearch ? { webSearch: opts.webSearch } : {}),
@@ -825,7 +828,14 @@ export class ClaudeSession {
   }
 
   getModelContext() {
-    return resolveDesktopModelContext(this.#opts)
+    const { model, url, apiKey } = this.#opts
+    return resolveDesktopModelContext({
+      model,
+      url,
+      apiKey,
+      contextWindowLimit: this.#sessionApiOverrides?.contextWindowLimit,
+      declaredContextWindows: this.#sessionApiOverrides?.declaredContextWindows,
+    })
   }
 
   constructor(opts: ClaudeSessionOptions = {}) {

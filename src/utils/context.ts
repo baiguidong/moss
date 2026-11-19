@@ -9,10 +9,13 @@ import { getSessionApiOverrides } from './sessionApiOverrides.js'
 export const MODEL_CONTEXT_WINDOW_DEFAULT = UNKNOWN_MODEL_CONTEXT_WINDOW
 
 export function getDeclaredModelContextWindow(model: string): number | undefined {
-  const name = model.replace(/\[1m\]$/i, '').trim()
   const declarations = getSessionApiOverrides()?.declaredContextWindows
-  if (!declarations || !Object.hasOwn(declarations, name)) return undefined
-  const limit = declarations[name]
+  if (!declarations) return undefined
+  const modelName = model.trim()
+  const declaredName = Object.hasOwn(declarations, modelName)
+    ? modelName : modelName.replace(/\[1m\]$/i, '').trim()
+  if (!Object.hasOwn(declarations, declaredName)) return undefined
+  const limit = declarations[declaredName]
   return Number.isSafeInteger(limit) && limit >= 1024 && limit <= 10_000_000
     ? limit : undefined
 }
@@ -69,6 +72,12 @@ export function resolveContextWindowForModel(
   model: string,
   _betas?: string[],
 ): { contextWindow: number; isDefault: boolean } {
+  const userLimit = getSessionApiOverrides()?.contextWindowLimit
+  if (typeof userLimit === 'number' && Number.isSafeInteger(userLimit) && userLimit > 0) {
+    const capability = getModelCapability(model) ?? getModelCapability(model.replace(/\[1m\]$/i, '').trim())
+    const contextWindow = Math.min(userLimit, capability?.context_window ?? userLimit, capability?.max_input_tokens ?? userLimit)
+    return { contextWindow, isDefault: false }
+  }
   const declaredWindow = getDeclaredModelContextWindow(model)
   return {
     contextWindow: declaredWindow ?? MODEL_CONTEXT_WINDOW_DEFAULT,

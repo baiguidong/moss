@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
-import { runWithSessionApiOverrides } from '../sessionApiOverrides.js'
+import { getSessionApiOverrides, runWithSessionApiOverrides } from '../sessionApiOverrides.js'
 import { getModelCapability, loadModelCapabilities } from './modelCapabilities.js'
 
 mock.module('color-diff-napi', () => ({
@@ -52,6 +52,12 @@ describe('model context declarations', () => {
       expect(getContextWindowForModel('claude-sonnet-4[1m]')).toBe(800_000)
       expect(calculateTokenWarningState(967_000, 'gpt-6.1-sol').isAboveAutoCompactThreshold).toBe(true)
     })
+    runWithSessionApiOverrides({
+      declaredContextWindows: { 'claude-sonnet-4': 500_000, 'claude-sonnet-4[1m]': 1_000_000 },
+    }, () => {
+      expect(getContextWindowForModel('claude-sonnet-4')).toBe(500_000)
+      expect(getContextWindowForModel('claude-sonnet-4[1m]')).toBe(1_000_000)
+    })
   })
 
   test('provider metadata does not change a saved context or the 200k fallback', async () => {
@@ -73,6 +79,35 @@ describe('model context declarations', () => {
       runWithSessionApiOverrides({ declaredContextWindows: { 'large-model': 500_000 } }, () => {
         expect(getContextWindowForModel('large-model')).toBe(500_000)
         expect(getAutoCompactThreshold('large-model')).toBe(467_000)
+      })
+    })
+  })
+
+  test('applies the personal budget across models and respects known model capacity', async () => {
+    await withCatalog(() => Response.json({ data: [
+      { id: 'main', context_window: 1_050_000, max_input_tokens: 922_000 },
+      { id: 'fast', max_input_tokens: 200_000 },
+      { id: 'short', context_window: 16_384 },
+    ] }), async url => {
+      const connection = getSessionApiOverrides()
+      await loadModelCapabilities('main')
+      await runWithSessionApiOverrides({
+        ...connection,
+        contextWindowLimit: 500_000,
+        declaredContextWindows: { main: 1_000_000, unknown: 800_000 },
+      }, async () => {
+        expect(getContextWindowForModel('main')).toBe(500_000)
+        expect(getContextWindowForModel('fast')).toBe(200_000)
+        expect(getContextWindowForModel('unknown')).toBe(500_000)
+        expect(getAutoCompactThreshold('main')).toBe(467_000)
+        expect(getAutoCompactThreshold('fast')).toBe(167_000)
+        expect(getAutoCompactThreshold('short')).toBe(4_096)
+        expect(await resolveDesktopModelContext({
+          model: 'fast', url, apiKey: connection?.mossAuthToken, contextWindowLimit: 500_000,
+        })).toEqual({ model: 'fast', contextWindow: 200_000, isDefault: false })
+      })
+      await runWithSessionApiOverrides({ ...connection, contextWindowLimit: 1_000_000 }, () => {
+        expect(getContextWindowForModel('main')).toBe(922_000)
       })
     })
   })

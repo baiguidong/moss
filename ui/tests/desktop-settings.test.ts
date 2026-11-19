@@ -6,7 +6,6 @@ import path from 'node:path';
 import {
   buildThinkingConfig,
   createDesktopSettingsStore,
-  getDeclaredModelContextWindows,
   normalizeDesktopSettings,
   normalizeMossBaseUrl,
 } from '../src/desktop-settings.mjs';
@@ -20,22 +19,23 @@ afterEach(() => {
 });
 
 describe('desktop settings', () => {
-  it('defaults selected models to 200k and persists separate context windows', () => {
+  it('migrates the default model’s legacy context window to a personal limit', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-context-settings-'));
     temporaryRoots.push(root);
     const settingsPath = path.join(root, 'settings.json');
+    expect(normalizeDesktopSettings({}).contextWindowLimit).toBe(200_000);
+    fs.writeFileSync(settingsPath, JSON.stringify({ models: { text: {
+      model: 'self-hosted',
+      fastModel: 'fast-model',
+      declaredContextByModel: { 'self-hosted': 1_000_000, 'fast-model': 500_000 },
+    } } }));
     const store = createDesktopSettingsStore({ settingsPath });
-    store.save({ model: 'self-hosted', fastModel: 'fast-model' });
-    expect(getDeclaredModelContextWindows(store.value)).toEqual({
-      'self-hosted': 200_000, 'fast-model': 200_000,
-    });
-    store.save({ declaredContextByModel: { 'self-hosted': 1_000_000, 'fast-model': 200_000 } });
-    expect(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).models.text.declaredContextByModel)
-      .toEqual({ 'self-hosted': 1_000_000, 'fast-model': 200_000 });
+    expect(store.value.contextWindowLimit).toBe(1_000_000);
+    store.save({ model: 'another-model' });
+    expect(store.value.contextWindowLimit).toBe(1_000_000);
+    store.save({ contextWindowLimit: 800_000 });
     const restarted = createDesktopSettingsStore({ settingsPath });
-    expect(getDeclaredModelContextWindows(restarted.value)).toEqual({ 'self-hosted': 1_000_000, 'fast-model': 200_000 });
-    restarted.save({ model: 'another-model' });
-    expect(getDeclaredModelContextWindows(restarted.value)).toEqual({ 'another-model': 200_000, 'fast-model': 200_000 });
+    expect(restarted.value.contextWindowLimit).toBe(800_000);
     expect(normalizeDesktopSettings({ declaredContextByModel: { legacy: 258_000, auto: null, medium: 510_000, high: 790_000, large: 1_050_000 } }).declaredContextByModel)
       .toEqual({ legacy: 200_000, auto: 200_000, medium: 500_000, high: 500_000, large: 1_000_000 });
   });

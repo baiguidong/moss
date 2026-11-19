@@ -2,14 +2,12 @@ import { expect, test } from 'bun:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { AppToolSettingsTable, SettingsView, ToolLoadingSettingsTable, contextWindowFromCatalog } from '../src/renderer-react/components/settings-view';
+import { AppToolSettingsTable, SettingsView, ToolLoadingSettingsTable } from '../src/renderer-react/components/settings-view';
 import { DEFAULT_MOSS_TOOL_LOADING } from '../src/tool-loading-settings.mjs';
 import { normalizeDesktopSettings } from '../src/desktop-settings.mjs';
 import type { DesktopSettings, StoredApp } from '../src/renderer-react/types';
 
-test('model context windows sit with each model and default to 200k', () => {
-  expect([undefined, 256_000, 500_000, 790_000, 1_050_000].map(contextWindowFromCatalog))
-    .toEqual([200_000, 200_000, 500_000, 500_000, 1_000_000]);
+test('conversation settings show a single context limit alongside thinking mode', () => {
   const render = (settingsDraft: DesktopSettings) => renderToStaticMarkup(<SettingsView
     settingsDraft={settingsDraft}
     setSettingsDraft={() => {}}
@@ -23,25 +21,18 @@ test('model context windows sit with each model and default to 200k', () => {
     onToolDisplayModeChange={() => {}}
     onAppearancePreview={() => {}}
     onAppearanceCommit={() => {}}
-    initialSection="model"
+    initialSection="conversation"
   />);
   const settings = normalizeDesktopSettings({
-    model: 'self-hosted', fastModel: 'fast-model',
-    declaredContextByModel: { 'fast-model': 1_000_000 },
+    enterpriseEnabled: true, contextWindowLimit: 800_000,
   }) as DesktopSettings;
   const html = render(settings);
-  expect(html).toContain('aria-label="self-hosted 上下文窗口"');
-  expect(html).toContain('aria-label="fast-model 上下文窗口"');
-  expect(html).not.toContain('>上下文窗口<');
-  expect(html).toMatch(/aria-label="self-hosted 上下文窗口"[^>]*><option value="200000" selected="">200k<\/option>/);
-  expect(html).toMatch(/aria-label="fast-model 上下文窗口"[^>]*><option value="200000">200k<\/option><option value="500000">500k<\/option><option value="800000">800k<\/option><option value="1000000" selected="">1M<\/option>/);
-  expect(html).not.toContain('模型上下文');
-  expect(html).not.toContain('默认 / 快速模型 ·');
-  expect(html).not.toContain('万 Token');
-  expect(render(normalizeDesktopSettings({ model: 'new-model' }) as DesktopSettings))
-    .toMatch(/aria-label="new-model 上下文窗口"[^>]*><option value="200000" selected="">200k<\/option>/);
-  expect(render(normalizeDesktopSettings({ model: 'mid-model', declaredContextByModel: { 'mid-model': 500_000 } }) as DesktopSettings))
-    .toMatch(/aria-label="mid-model 上下文窗口"[^>]*><option value="200000">200k<\/option><option value="500000" selected="">500k<\/option>/);
+  const conversation = html.match(/<section[^>]+id="conversation"[^>]*>(.*?)<\/section>/)?.[1];
+  expect(conversation).toContain('aria-label="思考模式"');
+  expect(conversation).toMatch(/aria-label="上下文上限"[^>]*><option value="200000">200k<\/option><option value="500000">500k<\/option><option value="800000" selected="">800k<\/option><option value="1000000">1M<\/option>/);
+  expect(html.match(/aria-label="上下文上限"/g)).toHaveLength(1);
+  expect(render(normalizeDesktopSettings({ model: 'self-hosted' }) as DesktopSettings))
+    .toMatch(/aria-label="上下文上限"[^>]*><option value="200000" selected="">200k<\/option>/);
 });
 
 test('tool loading settings renders grouped resident and deferred radio choices', () => {

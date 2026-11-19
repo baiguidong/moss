@@ -84,9 +84,13 @@ try {
   await js(`[...document.querySelectorAll('button')].find(el => el.textContent.trim() === '模型与搜索')?.click()`);
   await waitFor(() => js(`Boolean([...document.querySelectorAll('button')].find(el => el.textContent === '测试当前配置'))`), 'model settings');
   const sessionCount = await js(`window.agentDesktop.listSessions().then(value => JSON.stringify(value))`);
-  await js(`window.probeSelect = [...document.querySelectorAll('select')].find(el => [...el.options].some(o => o.value === 'adaptive')); void 0;`);
-  assert(await js(`window.probeSelect.closest('section').textContent.includes('默认模型')`), 'Thinking belongs in model settings');
-  assert(await js(`!window.probeSelect.closest('section').textContent.includes('文本模型')`), 'Model settings no longer show the redundant text-model heading');
+  await js(`window.probeSelect = document.querySelector('#conversation select[aria-label="思考模式"]'); void 0;`);
+  assert(await js(`Boolean(window.probeSelect)`), 'Thinking belongs in conversation settings');
+  const contextSelector = `document.querySelector('#conversation select[aria-label="上下文上限"]')`;
+  assert.deepEqual(await js(`Array.from(${contextSelector}.options, option => option.textContent)`), ['200k', '500k', '800k', '1M']);
+  assert.equal(await js(`${contextSelector}.value`), '200000');
+  await js(`${contextSelector}.value = '800000'; ${contextSelector}.dispatchEvent(new Event('change', { bubbles: true }));`);
+  await waitFor(() => js(`window.agentDesktop.getSettings().then(result => result.contextWindowLimit === 800000)`), 'saved context limit');
   const modelSelectLabels = await js(`Array.from(document.querySelectorAll('#model select'), element => element.getAttribute('aria-label'))`);
   for (const label of ['默认模型', '快速模型', '图片模型名称']) {
     assert.ok(modelSelectLabels.includes(label), `${label} selector is present`);
@@ -133,6 +137,8 @@ try {
 
   const next = await call('createSession', { title: 'Model B session' });
   await send(next.summary.id, 'Start a new conversation after changing the default.', 'fixture-secondary');
+  assert.equal((await call('getModelContext', { sessionId })).contextWindow, 800_000);
+  assert.equal((await call('getModelContext', { sessionId: next.summary.id })).contextWindow, 800_000);
   assert.equal((await call('getSession', { sessionId })).model, 'fixture-model');
   await send(sessionId, 'Continue the original conversation.', 'fixture-model');
   const forked = await call('forkSession', { sessionId });

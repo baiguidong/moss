@@ -40,6 +40,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   availableModels: [],
   fastModel: '',
   declaredContextByModel: {},
+  contextWindowLimit: DEFAULT_DECLARED_CONTEXT_WINDOW,
   maxTurns: 100,
   runtimeLifecycle: { ...DEFAULT_RUNTIME_LIFECYCLE },
   language: 'chinese',
@@ -196,17 +197,6 @@ function normalizeModelList(value) {
     .filter(model => typeof model === 'string')
     .map(model => model.trim())
     .filter(Boolean))];
-}
-
-export function getDeclaredModelContextWindows(settings) {
-  const models = [...new Set([settings?.model, settings?.fastModel]
-    .filter(model => typeof model === 'string' && model.trim())
-    .map(model => model.trim()))];
-  const declarations = settings?.declaredContextByModel;
-  return Object.fromEntries(models.flatMap(model => {
-    const choice = declarations && Object.hasOwn(declarations, model) ? declarations[model] : undefined;
-    return [[model, choice ?? DEFAULT_DECLARED_CONTEXT_WINDOW]];
-  }));
 }
 
 function isModelEndpointEnvKey(key) {
@@ -367,6 +357,11 @@ export function normalizeDesktopSettings(input, existing = {}) {
   result.declaredContextByModel = normalizeDeclaredContextByModel(
     source.declaredContextByModel ?? sourceText.declaredContextByModel ??
     result.declaredContextByModel ?? existingText.declaredContextByModel,
+  );
+  const legacyContextWindow = Object.hasOwn(result.declaredContextByModel, result.model)
+    ? result.declaredContextByModel[result.model] : undefined;
+  result.contextWindowLimit = normalizeDeclaredContextWindow(
+    source.contextWindowLimit ?? result.contextWindowLimit ?? legacyContextWindow,
   );
 
   if (source.appendSystemPrompt !== undefined) {
@@ -831,7 +826,7 @@ export function normalizeDesktopSettings(input, existing = {}) {
 
 const MODEL_RUNTIME_FIELDS = [
   'model', 'availableModels', 'fastModel', 'declaredContextByModel', 'url', 'apiKey', 'maxTurns',
-  'thinkingMode', 'thinkingBudgetTokens', 'image',
+  'thinkingMode', 'thinkingBudgetTokens', 'contextWindowLimit', 'image',
 ];
 
 function normalizePersistedDesktopSettings(parsed) {

@@ -798,7 +798,7 @@ export type DesktopSettings = {
   model: string;
   availableModels?: string[];
   fastModel: string;
-  declaredContextByModel?: Record<string, number | null>;
+  contextWindowLimit?: number;
   maxTurns: number;
   language: string;
   appendSystemPrompt: string;
