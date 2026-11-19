@@ -39,7 +39,7 @@ import { createServerLogger, type ServerLogger } from './serverLog.js'
 import { NewAPIService } from './newApi/service.js'
 import { ManagedResourcesService, type ManagedResourceKind } from './managedResources.js'
 import { listManagedHubCards } from './managedHubCards.js'
-import { downloadHubExpert, downloadHubSkill, getHubSkill, hubExpert, hubText, listHubExperts, listHubSkills } from './managedHub.js'
+import { categoryLabel, downloadHubExpert, downloadHubSkill, getHubSkill, hubExpert, hubText, listHubExperts, listHubSkillCategories, listHubSkills } from './managedHub.js'
 
 import { getSystemSettings, updateSystemSettings } from './systemSettings.js'
 import { fetchModelCatalog } from '../../shared/model-list.mjs'
@@ -1060,7 +1060,10 @@ export function startServer(
         let icon = typeof body.icon === 'string' ? body.icon : ''
         let category = typeof body.category === 'string' ? body.category : ''
         if (kind === 'skill') {
-          const detail = await getHubSkill(slug, typeof body.namespace === 'string' ? body.namespace : undefined)
+          const [detail, categories] = await Promise.all([
+            getHubSkill(slug, typeof body.namespace === 'string' ? body.namespace : undefined),
+            listHubSkillCategories(),
+          ])
           const skill = detail?.skill || detail || {}
           const latest = detail?.latestVersion || {}
           version = version || String(latest.version || skill.version || '1.0.0')
@@ -1068,7 +1071,7 @@ export function startServer(
           displayName = displayName || hubText(skill.displayName || skill.display_name) || name
           description = description || hubText(skill.description_zh || skill.summary_zh || skill.description || skill.summary)
           icon = icon || hubText(skill.iconUrl || skill.icon)
-          category = category || hubText(skill.category?.nameZh || skill.category)
+          category = categoryLabel(kind, category || skill.category, categories)
           metadata = { source: 'skillhub', sourceId: skill.id || slug, namespace: body.namespace || skill.namespace || null }
           packageBytes = await downloadHubSkill(slug, version, typeof body.namespace === 'string' ? body.namespace : undefined)
         } else {

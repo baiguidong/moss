@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, existsSync 
 import JSZip from 'jszip'
 import { managedPackageFiles } from '../../shared/managed-resource-package.mjs'
 import { emojiIcon, hubIcon, imageThumbnail, skillHubPresetIcon } from './managedResourceIcons.js'
+import { categoryLabel } from './managedHub.js'
 import { basename, join, resolve } from 'node:path'
 import { getMossServerHomeDir } from './lib/env.js'
 
@@ -79,6 +80,7 @@ export class ManagedResourcesService {
         policies?: Record<string, { mode: string; resourceIds: string[] }>
       }
       const resources = (parsed.resources || []).filter(item => item && isKind(item.kind))
+        .map(item => ({ ...item, category: categoryLabel(item.kind, item.category) }))
       if (parsed.grants) return { resources, grants: parsed.grants }
       // Convert saved draft policies to explicit IDs before applying any mutations.
       const grants: Store['grants'] = {}
@@ -110,7 +112,7 @@ export class ManagedResourcesService {
 
   private allowed(resource: ManagedResource, userId: string): boolean {
     const ids = this.store.grants[policyKey(resource.orgId, userId, resource.kind)]
-    return resource.enabled && ids?.includes(resource.id) === true
+    return resource.enabled && (ids ? ids.includes(resource.id) : resource.kind === 'expert')
   }
 
   private allowedWithDependencies(resource: ManagedResource, userId: string): boolean {
@@ -180,7 +182,8 @@ export class ManagedResourcesService {
       id, orgId, kind: input.kind, slug,
       name: safeText(input.name, slug),
       displayName: safeText(input.displayName || meta.display_name, safeText(input.name, slug)),
-      description: safeText(input.description || meta.description), icon: safeText(input.icon || meta.icon || meta.avatar || meta.emoji), category: safeText(input.category),
+      description: safeText(input.description || meta.description), icon: safeText(input.icon || meta.icon || meta.avatar || meta.emoji),
+      category: safeText(categoryLabel(input.kind, input.category || meta.category_name || meta.categoryName || meta.category || meta.category_id || meta.categoryId)),
       version, sha256, packageFile, enabled: existing?.enabled ?? true,
       dependencies: (input.dependencies || (Array.isArray(meta.dependencies) ? meta.dependencies : [])).map(safeId).filter(Boolean),
       metadata: input.metadata && typeof input.metadata === 'object' ? input.metadata : existing?.metadata || {},
@@ -188,7 +191,16 @@ export class ManagedResourcesService {
     }
     const index = this.store.resources.findIndex(item => item.id === id && item.orgId === orgId)
     if (index >= 0) this.store.resources[index] = resource
-    else this.store.resources.push(resource)
+    else {
+      this.store.resources.push(resource)
+      // A new expert is assigned even for users with overrides on older experts.
+      if (resource.kind === 'expert') {
+        for (const [key, ids] of Object.entries(this.store.grants)) {
+          const [org, , kind] = JSON.parse(key)
+          if (org === orgId && kind === 'expert') ids.push(id)
+        }
+      }
+    }
     try {
       this.persist()
     } finally {
@@ -242,7 +254,9 @@ export class ManagedResourcesService {
   }
 
   getAssignedIds(orgId: string, userId: string, kind: ManagedResourceKind): string[] {
-    return [...(this.store.grants[policyKey(orgId, userId, kind)] || [])]
+    const assigned = this.store.grants[policyKey(orgId, userId, kind)]
+    if (assigned) return [...assigned]
+    return kind === 'expert' ? this.store.resources.filter(item => item.orgId === orgId && item.kind === kind).map(item => item.id) : []
   }
 
   async setAssignedIds(orgId: string, userId: string, kind: ManagedResourceKind, ids: string[]): Promise<void> {

@@ -1010,23 +1010,6 @@ export default function UsersPage() {
           />
         </div>
 
-        <div className="flex flex-col gap-3 border-y py-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            <Database className="size-5 text-muted-foreground" />
-            <div>
-              <p className="text-sm font-medium">RAGFlow 个人知识库服务</p>
-              <p className="text-xs text-muted-foreground">
-                {ragflowStatus?.base_url || '服务地址未配置'} · 账号域名 {ragflowStatus?.user_domain || '-'}
-              </p>
-            </div>
-          </div>
-          <Badge variant={ragflowStatus?.enabled && ragflowStatus.reachable ? 'default' : 'secondary'}>
-            {ragflowStatus?.enabled
-              ? (ragflowStatus.reachable ? '服务正常' : '服务不可达')
-              : '未启用'}
-          </Badge>
-        </div>
-
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <TabsList>

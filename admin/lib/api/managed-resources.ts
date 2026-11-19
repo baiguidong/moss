@@ -22,8 +22,10 @@ export interface ManagedResource {
 export interface HubCard {
   slug: string
   name: string
+  subtitle: string
   description: string
   category: string
+  subCategories: string[]
   icon: string
   team: boolean
   version: string
@@ -34,9 +36,9 @@ export async function getManagedResources(kind: ManagedKind): Promise<{ resource
   return dcClient.get(`/api/v1/managed-resources/${kind}`)
 }
 
-export function getHubPage(kind: ManagedKind, keyword: string, page: number) {
-  const query = new URLSearchParams({ view: 'cards', keyword, page: String(page) })
-  return dcClient.get<{ items: HubCard[]; total: number; pageSize: number }>(`/api/v1/managed-resources/hub/${kind}?${query}`)
+export function getHubPage(kind: ManagedKind, keyword: string, page: number, category: string) {
+  const query = new URLSearchParams({ view: 'cards', keyword, page: String(page), category })
+  return dcClient.get<{ items: HubCard[]; categories: { id: string; name: string }[]; total: number; pageSize: number }>(`/api/v1/managed-resources/hub/${kind}?${query}`)
 }
 
 export async function installFromHub(kind: ManagedKind, payload: Record<string, unknown>) {

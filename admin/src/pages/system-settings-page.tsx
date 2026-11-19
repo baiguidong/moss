@@ -22,21 +22,19 @@ import {
   MessageSquare,
   Cpu,
   HardDrive,
-  Puzzle,
   TriangleAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
 type EditableSystemSettings = Pick<
   SystemSettings,
-  'openIM' | 'model' | 'availableModels' | 'fastModel' | 'image' | 'resourceControl'
+  'openIM' | 'model' | 'availableModels' | 'fastModel' | 'image'
 > & { webui: NonNullable<SystemSettings['webui']> }
 
 
 const sections = [
   { id: 'models', title: '模型', icon: Cpu },
   { id: 'openim', title: 'OpenIM', icon: MessageSquare },
-  { id: 'resources', title: '技能与专家管控', icon: Puzzle },
   { id: 'snapshots', title: 'WebUI 环境快照', icon: HardDrive },
 ] as const
 
@@ -48,7 +46,6 @@ function toEditableSettings(settings: SystemSettings): EditableSystemSettings {
     availableModels: [...settings.availableModels],
     fastModel: settings.fastModel,
     image: { ...settings.image },
-    resourceControl: { ...settings.resourceControl },
   }
 }
 
@@ -95,9 +92,6 @@ function buildSystemSettingsPatch(
   }
 
   if (JSON.stringify(draft.webui.snapshots) !== JSON.stringify(normalizeSnapshotPolicy(settings.webui?.snapshots))) patch.webui = draft.webui
-  if (draft.resourceControl.enforceServerManagedSkillsExperts !== settings.resourceControl.enforceServerManagedSkillsExperts) {
-    patch.resourceControl = { enforceServerManagedSkillsExperts: draft.resourceControl.enforceServerManagedSkillsExperts }
-  }
   return patch
 }
 
@@ -549,26 +543,6 @@ export default function SystemSettingsPage() {
                 </div>
               </SettingField>
 
-            </div>}
-
-            {section === 'resources' && <div>
-              <SettingField label="启用服务端技能/专家管控">
-                <div className="space-y-2">
-                  <div className="flex h-8 items-center">
-                    <Switch
-                      checked={draft.resourceControl.enforceServerManagedSkillsExperts}
-                      onCheckedChange={checked => setDraft(current => current ? {
-                        ...current,
-                        resourceControl: { ...current.resourceControl, enforceServerManagedSkillsExperts: checked },
-                      } : current)}
-                      aria-label="启用服务端技能/专家管控"
-                    />
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    开启后，客户端仅可使用服务端已安装并授权的技能和专家。安装、移除和授权统一在 Moss Server 管理。
-                  </p>
-                </div>
-              </SettingField>
             </div>}
 
             {section === 'snapshots' && <div className="max-w-xl space-y-3">

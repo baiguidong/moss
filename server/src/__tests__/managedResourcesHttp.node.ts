@@ -31,14 +31,22 @@ const base = `http://127.0.0.1:${await app.ready}`
 const api = '/api/v1/managed-resources'
 const packageBytes = await new JSZip().file('SKILL.md', '# Local only download').generateAsync({ type: 'nodebuffer' })
 const hub = createServer((req, res) => {
-  const path = req.url!.split('?')[0]
-  if (path === '/api/skills') return res.end(JSON.stringify({ data: { skills: [
-    { slug: 'hub-skill', description_zh: '画图', iconUrl: '🎨' },
-    { slug: 'no-art' }, { slug: 'broken-art', iconUrl: '/missing.png' },
-  ], total: 3 } }))
-  if (path === '/api/v1/skills/hub-skill') return res.end(JSON.stringify({ skill: { name: 'hub-skill', iconUrl: '🎨' } }))
+  const url = new URL(req.url!, 'http://localhost')
+  const path = url.pathname
+  if (path === '/api/v1/categories') return res.end(JSON.stringify({ items: [{ key: 'office-tools', name: '办公工具' }] }))
+  if (path === '/api/skills') {
+    const skills = [
+      { slug: 'hub-skill', category: 'office-tools', subCategories: [{ key: 'office-doc', name: '文档处理' }], description_zh: '画图', iconUrl: '🎨' },
+      { slug: 'no-art' }, { slug: 'broken-art', iconUrl: '/missing.png' },
+    ].filter(skill => !url.searchParams.has('category') || skill.category === url.searchParams.get('category'))
+    return res.end(JSON.stringify({ data: { skills, total: skills.length } }))
+  }
+  if (path === '/api/v1/skills/hub-skill') return res.end(JSON.stringify({ skill: { name: 'hub-skill', iconUrl: '🎨', category: 'office-tools' } }))
   if (path === '/api/v1/download') return res.end(packageBytes)
-  if (path === '/expert_center.json') return res.end(JSON.stringify({ experts: [{ id: 'helper', promptFile: 'helper.md', avatar: '🎙' }] }))
+  if (path === '/expert_center.json') return res.end(JSON.stringify({
+    categories: [{ id: '06-ContentCreative', name: { zh: '内容创作' } }, { id: 'custom', name: { zh: '自定义' } }],
+    experts: [{ id: 'helper', categoryId: '06-ContentCreative', promptFile: 'helper.md', avatar: '🎙' }, { id: 'other', categoryId: 'custom' }],
+  }))
   if (path === '/helper.md') return res.end('Expert from the Hub')
   res.writeHead(404).end()
 })
@@ -76,11 +84,19 @@ try {
   assert.equal(await client.refresh(), null)
   const skills = await change('/hub/skills?view=cards', 'GET')
   assert.equal(skills.items[0].description, '画图')
+  assert.equal(skills.items[0].category, '办公工具')
+  assert.deepEqual(skills.items[0].subCategories, ['文档处理'])
+  assert.deepEqual(skills.categories, [{ id: 'office-tools', name: '办公工具' }])
+  assert.equal((await change('/hub/skills?view=cards&category=office-tools', 'GET')).total, 1)
   assert.match(skills.items[0].icon, /^data:image\/svg\+xml;/)
   assert.match(skills.items[1].icon, /^data:image\/webp;/)
   assert.match(skills.items[2].icon, /^data:image\/webp;/)
   assert.notEqual(skills.items[1].icon, skills.items[2].icon)
   const experts = await change('/hub/experts?view=cards', 'GET')
+  assert.equal(experts.items[0].category, '内容创作')
+  const filtered = await change('/hub/experts?view=cards&category=custom&keyword=自定义', 'GET')
+  assert.deepEqual(filtered.items.map((r: any) => r.slug), ['other'])
+  assert.deepEqual(filtered.categories, experts.categories)
   assert.ok(experts.items[0].icon.startsWith('data:image/'))
   const skillIds = []
   const { resource: first } = await change('/skills/install-from-hub', 'POST', { slug: 'hub-skill' })
@@ -94,7 +110,8 @@ try {
   await mkdir(localCopy, { recursive: true })
   await writeFile(join(localCopy, 'SKILL.md'), 'Personal copy')
   updateSystemSettings({ resourceControl: { enforceServerManagedSkillsExperts: true } })
-  assert.deepEqual(await visible(), [])
+  assert.deepEqual((await visible()).map((r: any) => [r.id, r.categoryName]), [[expert.id, '内容创作']])
+  assert.equal((await change('/users/experts/assignments', 'POST', { user_ids: [a.user.id, b.user.id] })).assigned_counts[expert.id], 2)
   await change('/users/' + a.user.id + '/skills/policy', 'PUT', { resource_ids: skillIds.slice(0, 10) })
   await change('/users/' + a.user.id + '/experts/policy', 'PUT', { resource_ids: [expert.id] })
   await change('/users/' + b.user.id + '/skills/policy', 'PUT', { resource_ids: skillIds.slice(10) })
@@ -124,6 +141,7 @@ try {
   assert.equal(downloads, 11)
   for (const catalog of [resources, await visible()]) {
     assert.equal(catalog[0].icon, skills.items[0].icon)
+    assert.equal(catalog[0].category, '办公工具')
     assert.equal(catalog[10].avatar, experts.items[0].icon)
     assert.equal(catalog[1].icon, '')
   }
@@ -138,7 +156,7 @@ try {
   assert.equal((await visible()).some((item: any) => item.kind === 'expert'), false)
   assert.equal((await request('/expert/' + expert.id + '/download', 'GET', undefined, a)).status, 404)
   account = b
-  assert.deepEqual((await visible()).map((r: any) => r.id), skillIds.slice(10))
+  assert.deepEqual((await visible()).map((r: any) => r.id), [...skillIds.slice(10), expert.id])
   const updated = await new JSZip().file('SKILL.md', '# Revised').generateAsync({ type: 'nodebuffer' })
   const { resource: replacement } = await change('/skills/install', 'POST', { slug: 'skill-11', package_base64: updated.toString('base64') })
   assert.equal(replacement.id, skillIds[11])

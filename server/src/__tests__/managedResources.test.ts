@@ -69,6 +69,34 @@ test('saved draft policies become explicit grants and never include later instal
   }
 })
 
+test('existing experts default to installed and revocations survive later installs and restarts', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'moss-expert-defaults-'))
+  try {
+    const store = new ManagedResourcesService(root)
+    const bytes = await new JSZip().file('assistant.md', '# Expert').generateAsync({ type: 'uint8array' })
+    const input = { orgId: 'org', kind: 'expert', packageBytes: bytes } as const
+    const expert = await store.install({ ...input, slug: 'writer' })
+    await store.setAssignedIds('org', 'revoked', 'expert', [])
+    const index = join(root, 'managed-resources', 'index.json')
+    const legacy = JSON.parse(await readFile(index, 'utf8'))
+    legacy.resources[0].category = '06-ContentCreative'
+    await writeFile(index, JSON.stringify(legacy))
+    const migrated = new ManagedResourcesService(root)
+    expect(migrated.listForUser('org', 'new-user')[0]?.category).toBe('内容创作')
+    expect(migrated.getForUser('org', 'revoked', 'expert', expert.id)).toBeNull()
+    await migrated.install({ ...input, slug: 'writer' })
+    const next = await migrated.install({ ...input, slug: 'editor' })
+    await migrated.install({ ...input, orgId: 'other', slug: 'unrelated' })
+    const reloaded = new ManagedResourcesService(root)
+    expect(reloaded.getAssignedIds('org', 'revoked', 'expert')).toEqual([next.id])
+    expect(reloaded.getAssignedIds('org', 'new-user', 'expert')).toEqual([expert.id, next.id])
+    reloaded.updateAssignments('org', ['new-user'], 'expert', [], [expert.id])
+    expect(reloaded.assignmentCounts('org', ['revoked', 'new-user'], 'expert')).toEqual({ [next.id]: 2 })
+    await reloaded.setEnabled('org', 'expert', next.id, false)
+    expect(reloaded.listForUser('org', 'new-user')).toEqual([])
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
 test('the server and desktop enforce grants, downloads and revocation over HTTP', async () => {
   const outdir = await mkdtemp(join(tmpdir(), 'moss-managed-http-build-'))
   try {

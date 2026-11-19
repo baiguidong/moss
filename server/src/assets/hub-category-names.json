@@ -1,0 +1,34 @@
+{
+  "skill": {
+    "pay-skill": "Pay Skill",
+    "office-efficiency": "办公效率",
+    "content-creation": "内容创作",
+    "dev-programming": "开发编程",
+    "data-analysis": "数据分析",
+    "design-media": "设计多媒体",
+    "ai-agent": "AI Agent",
+    "knowledge-management": "知识管理",
+    "business-ops": "商业运营",
+    "education": "教育学习",
+    "professional": "行业专业",
+    "it-ops-security": "IT 运维与安全",
+    "life-service": "生活服务"
+  },
+  "expert": {
+    "13-TencentZone": "腾讯专区",
+    "01-ProductDesign": "产品设计",
+    "15-BackToSchool": "开学季",
+    "02-Engineering": "技术工程",
+    "08-FinanceInvestment": "金融投资",
+    "03-GameSpatial": "游戏空间",
+    "04-DataAI": "数据智能",
+    "05-MarketingGrowth": "营销增长",
+    "06-ContentCreative": "内容创作",
+    "07-SalesCommerce": "销售商务",
+    "09-OperationsHR": "运营人力",
+    "10-ProjectQuality": "项目质量",
+    "11-SecurityCompliance": "法务安全",
+    "12-IndustryConsultant": "行业顾问",
+    "14-GlobalDevelopment": "全球发展"
+  }
+}

@@ -3,12 +3,14 @@ import { Bot, Check, Minus, ChevronLeft, ChevronRight, Download, Hammer, Loader2
 import { toast } from 'sonner'
 import { DashboardLayout } from '@/components/dashboard-layout'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ResourceUserPicker } from './resource-user-picker'
 import { hasScope } from '@/lib/api/client'
 import { useAuth } from '@/lib/hooks/use-auth'
+import { getSystemSettings, updateSystemSettings } from '@/lib/api/settings'
 import {
   getAssignments, getHubPage, getManagedResources, getResourceUsers, installFromHub, removeManagedResource,
   saveAssignments, setManagedResourceEnabled, uploadManagedResource,
@@ -30,20 +32,25 @@ function ResourceIcon({ source, kind, team, compact }: { source: string; kind: M
   </span>
 }
 
-function CatalogCard({ kind, icon, name, slug, description, detail, actions, team }: {
-  kind: ManagedKind; icon: string; name: string; slug: string; description: string; detail?: ReactNode; actions: ReactNode; team?: boolean
+function CatalogCard({ kind, icon, name, slug, description, categories, installButton, controls, team, subtitle }: {
+  kind: ManagedKind; icon: string; name: string; slug: string; description: string; categories: string[]; installButton?: ReactNode; controls?: ReactNode; team?: boolean; subtitle?: string
 }) {
-  return <article className="flex min-w-0 flex-col gap-1.5 rounded-lg border bg-card p-3">
-    <div className="flex min-w-0 items-start gap-2.5">
-      <ResourceIcon source={icon} kind={kind} team={team} />
-      <div className="min-w-0 flex-1">
-        <h3 className="truncate text-sm font-semibold leading-5" title={name === slug ? name : `${name} · ${slug}`}>{name}</h3>
-        <p title={description || slug} className="line-clamp-2 break-words text-xs leading-4 text-muted-foreground">{description || (slug !== name ? slug : '')}</p>
+  return <article className="flex min-w-0 items-start gap-2.5 rounded-lg border bg-card p-2.5">
+    <ResourceIcon source={icon} kind={kind} team={team} />
+    <div className="min-w-0 flex-1">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-sm font-semibold leading-5" title={name === slug ? name : `${name} · ${slug}`}>{name}</h3>
+          {subtitle && <p className="truncate text-xs text-muted-foreground">{subtitle}</p>}
+        </div>
+        {installButton}
       </div>
-    </div>
-    <div className="mt-auto flex min-w-0 items-center justify-between gap-1.5">
-      <span className="min-w-0 truncate text-xs text-muted-foreground">{detail}</span>
-      <div className="flex shrink-0 items-center gap-1">{actions}</div>
+      {description && <p title={description} className="mt-1.5 line-clamp-2 break-words text-xs leading-[18px] text-muted-foreground">{description}</p>}
+      <div className="mt-1.5 flex flex-wrap items-center gap-1">
+        {Array.from(new Set(categories.filter(Boolean))).slice(0, 3).map(label =>
+          <Badge key={label} variant="outline" className="max-w-full whitespace-normal text-[11px]">{label}</Badge>)}
+        {controls && <div className="ml-auto flex items-center gap-1">{controls}</div>}
+      </div>
     </div>
   </article>
 }
@@ -137,11 +144,13 @@ function Grants({ kind, userIds, resources, saving, setSaving }: {
   </>
 }
 
-function Market({ kind, installed, busy, onInstall, revision, query, page, setPage }: {
+function Market({ kind, installed, busy, onInstall, revision, query, page, setPage, category, setCategory }: {
   kind: ManagedKind; installed: ManagedResource[]; busy: string; onInstall: (item: HubCard) => void; revision: number
   query: string; page: number; setPage: (page: number) => void
+  category: string; setCategory: (category: string) => void
 }) {
   const [items, setItems] = useState<HubCard[]>([])
+  const [categories, setCategories] = useState<{ id: string; name: string }[]>([])
   const [pages, setPages] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -149,22 +158,31 @@ function Market({ kind, installed, busy, onInstall, revision, query, page, setPa
     let active = true
     setLoading(true); setError('')
     const timer = window.setTimeout(() => {
-      getHubPage(kind, query.trim(), page).then(result => {
-        if (active) { setItems(result.items); setPages(Math.max(1, Math.ceil(result.total / result.pageSize))) }
+      getHubPage(kind, query.trim(), page, category).then(result => {
+        if (!active) return
+        setItems(result.items)
+        setCategories(result.categories)
+        setPages(Math.max(1, Math.ceil(result.total / result.pageSize)))
       }).catch(cause => { if (active) setError(cause.message) })
         .finally(() => { if (active) setLoading(false) })
     }, query ? 220 : 0)
     return () => { active = false; window.clearTimeout(timer) }
-  }, [kind, query, page, revision])
+  }, [kind, query, page, revision, category])
 
   return <>
+    {categories.length > 0 && <div role="group" aria-label={`${kindLabel(kind)}市场分类`} className="flex gap-1 overflow-x-auto pb-1">
+      {[{ id: '', name: '全部分类' }, ...categories].map(item =>
+        <Button key={item.id} size="sm" variant={category === item.id ? 'secondary' : 'ghost'} aria-pressed={category === item.id}
+          className="h-7 shrink-0 px-2.5 text-xs" onClick={() => { setCategory(item.id); setPage(1) }}>{item.name}</Button>)}
+    </div>}
     {loading ? <Message>正在加载市场…</Message> : error ? <Message error>{error}</Message> : !items.length ? <Message>没有匹配的{kindLabel(kind)}。</Message> : <>
       <div className={grid}>{items.map(item => {
         const exists = installed.some(resource => resource.slug === item.slug)
-        return <CatalogCard key={item.slug + '/' + item.namespace} {...item} kind={kind} detail={item.category || item.version}
-          actions={<Button size="sm" variant={exists ? 'ghost' : 'outline'} aria-label={`${exists ? '已安装' : '安装'} ${item.name}`}
+        return <CatalogCard key={item.slug + '/' + item.namespace} {...item} kind={kind}
+          categories={[item.category, ...item.subCategories]}
+          installButton={<Button size="icon-sm" variant={exists ? 'secondary' : 'outline'} title={exists ? '已安装' : '安装'} aria-label={`${exists ? '已安装' : '安装'} ${item.name}`}
             disabled={exists || !!busy} onClick={() => onInstall(item)}>
-            {busy === item.slug ? <Loader2 className="animate-spin" /> : exists ? <Check /> : <Download />}{exists ? '已安装' : '安装'}
+            {busy === item.slug ? <Loader2 className="animate-spin" /> : exists ? <Check /> : <Download />}
           </Button>} />
       })}</div>
       {pages > 1 && <div className="flex items-center justify-end gap-3">
@@ -188,6 +206,7 @@ function Library({ kind, section, setSection, currentUser, userIds, onSelectUser
   const [marketRevision, setMarketRevision] = useState(0)
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
+  const [category, setCategory] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [userError, setUserError] = useState('')
@@ -248,8 +267,8 @@ function Library({ kind, section, setSection, currentUser, userIds, onSelectUser
     <TabsContent value="installed" className="pt-3">
       {loading ? <Message>正在读取资源库…</Message> : error ? null : !resources.length ? <Message>尚未安装{label}。可上传 ZIP 或从市场安装。</Message> :
         <div className={grid}>{resources.map(item => <CatalogCard key={item.id} kind={kind} icon={item.icon} name={item.displayName} slug={item.slug}
-          description={item.description} detail={[item.version && `v${item.version}`,item.category].filter(Boolean).join(' · ')}
-          actions={<>
+          description={item.description} categories={[item.category]}
+          controls={<>
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground"><Switch aria-label={`启用 ${item.displayName}`} checked={item.enabled} disabled={!!busy}
               onCheckedChange={on => void change(item.id, () => setManagedResourceEnabled(kind, item.id, on))} />{item.enabled ? '已启用' : '已停用'}</label>
             <Button size="icon-sm" variant="ghost" disabled={!!busy} aria-label={`移除 ${item.displayName}`} title="从服务端移除"
@@ -263,10 +282,44 @@ function Library({ kind, section, setSection, currentUser, userIds, onSelectUser
           setSaving={value => setBusy(value ? 'grants' : '')} />}
     </TabsContent>
     <TabsContent value="market" className="space-y-2.5 pt-3">
-      <Market kind={kind} installed={resources} busy={busy || (loading || error ? 'loading' : '')} revision={marketRevision} query={query} page={page} setPage={setPage} onInstall={item => void change(item.slug, () =>
+      <Market kind={kind} installed={resources} busy={busy || (loading || error ? 'loading' : '')} revision={marketRevision} query={query} page={page} setPage={setPage} category={category} setCategory={setCategory} onInstall={item => void change(item.slug, () =>
         installFromHub(kind, { slug: item.slug, namespace: item.namespace || undefined, version: item.version || undefined }), `已安装「${item.name}」`)} />
     </TabsContent>
   </Tabs>
+}
+
+function ResourceControlSwitch() {
+  const [state, setState] = useState<boolean | 'loading' | 'error'>('loading')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (state !== 'loading') return
+    let active = true
+    getSystemSettings().then(settings => {
+      if (active) setState(settings.resourceControl.enforceServerManagedSkillsExperts)
+    }).catch(() => { if (active) setState('error') })
+    return () => { active = false }
+  }, [state])
+
+  async function save(checked: boolean) {
+    setSaving(true)
+    try {
+      const settings = await updateSystemSettings({ resourceControl: { enforceServerManagedSkillsExperts: checked } })
+      setState(settings.resourceControl.enforceServerManagedSkillsExperts)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '保存管控设置失败')
+      setState('loading')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return <div className="flex min-h-8 items-center gap-2 text-sm">
+    <label htmlFor="managed-resource-control" title="开启后，技能按用户授权，服务端安装的专家默认对本组织用户可用。">启用服务端技能/专家管控</label>
+    {state === 'loading' ? <span role="status" aria-label="正在读取管控设置"><Loader2 className="size-4 animate-spin text-muted-foreground" /></span>
+      : state === 'error' ? <Button size="sm" variant="ghost" onClick={() => setState('loading')}>读取失败，重试</Button>
+      : <Switch id="managed-resource-control" checked={state} disabled={saving} aria-busy={saving} onCheckedChange={save} />}
+  </div>
 }
 
 function ResourceTabs({ currentUser }: { currentUser: ResourceUser }) {
@@ -274,9 +327,12 @@ function ResourceTabs({ currentUser }: { currentUser: ResourceUser }) {
   const [section, setSection] = useState<Section>('installed')
   const [userIds, setUserIds] = useState([currentUser.id])
   return <Tabs value={kind} onValueChange={value => setKind(value as ManagedKind)} className="gap-0">
-    <TabsList aria-label="资源类型" className="h-8 self-start">
-      <TabsTrigger value="skills"><Hammer />技能</TabsTrigger><TabsTrigger value="experts"><Bot />专家</TabsTrigger>
-    </TabsList>
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+      <TabsList aria-label="资源类型" className="h-8">
+        <TabsTrigger value="skills"><Hammer />技能</TabsTrigger><TabsTrigger value="experts"><Bot />专家</TabsTrigger>
+      </TabsList>
+      <ResourceControlSwitch />
+    </div>
     {(['skills','experts'] as const).map(tab => <TabsContent key={tab} value={tab}>
       <Library kind={tab} section={section} setSection={setSection} currentUser={currentUser} userIds={userIds}
         onSelectUsers={ids => setUserIds(previous => ids.length === previous.length && ids.every((id, i) => id === previous[i]) ? previous : ids)} />

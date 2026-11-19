@@ -1,5 +1,7 @@
 import JSZip from 'jszip'
 import { gunzipSync } from 'node:zlib'
+import categoryNames from './assets/hub-category-names.json'
+import type { ManagedResourceKind } from './managedResources.js'
 
 const DEFAULT_SKILL_HUB = 'https://api.skillhub.cn'
 const DEFAULT_EXPERT_HUB = 'https://acc-1258344699.cos.accelerate.myqcloud.com/workbuddy/expert-marketplace'
@@ -23,6 +25,39 @@ function hubBase(value: string | undefined, fallback: string): string {
     return `${url.origin}${url.pathname.replace(/\/+$/, '')}`
   } catch {
     return fallback
+  }
+}
+
+export type HubCategory = { id: string; name: string }
+
+export function categoryId(value: any): string {
+  return hubText(value?.key || value?.id || value?.categoryId || value?.slug || value)
+}
+
+// Older installations saved only the public hub key. Resolve those offline too.
+export function categoryLabel(kind: ManagedResourceKind, value: any, categories: HubCategory[] = []): string {
+  const id = categoryId(value)
+  const defaults: Record<string, string> = categoryNames[kind]
+  return categories.find(item => item.id === id)?.name
+    || hubText(value?.displayName || value?.nameZh || value?.name || value?.title)
+    || (Object.hasOwn(defaults, id) ? defaults[id]! : id)
+}
+
+function hubCategories(kind: ManagedResourceKind, entries: any[]): HubCategory[] {
+  const names = new Map<string, string>()
+  for (const entry of entries) {
+    const id = categoryId(entry)
+    if (id && entry?.active !== false && !names.has(id)) names.set(id, categoryLabel(kind, entry))
+  }
+  return Array.from(names, ([id, name]) => ({ id, name }))
+}
+
+export async function listHubSkillCategories(): Promise<HubCategory[]> {
+  try {
+    const result = await getJson(`${skillHubBase()}/api/v1/categories`)
+    return hubCategories('skill', result.items || result.data || [])
+  } catch {
+    return Object.entries(categoryNames.skill).map(([id, name]) => ({ id, name }))
   }
 }
 
@@ -52,11 +87,12 @@ export function expertHubBase(): string {
   return hubBase(process.env.MOSS_EXPERT_HUB_BASE_URL, DEFAULT_EXPERT_HUB)
 }
 
-export async function listHubSkills(params: { keyword?: string; page?: number; pageSize?: number } = {}) {
+export async function listHubSkills(params: { keyword?: string; category?: string; page?: number; pageSize?: number } = {}) {
   const url = new URL(`${skillHubBase()}/api/skills`)
   url.searchParams.set('page', String(Math.max(1, params.page || 1)))
   url.searchParams.set('pageSize', String(Math.min(100, Math.max(1, params.pageSize || 20))))
   if (params.keyword) url.searchParams.set('keyword', params.keyword)
+  if (params.category) url.searchParams.set('category', params.category)
   return await getJson(url.toString())
 }
 
@@ -85,7 +121,7 @@ export async function listHubExperts() {
       if (name === 'expert_center.json') throw new Error('Expert Hub manifest unavailable')
     }
   }
-  const categories = manifests.flatMap(value => value.categories || value.categoryList || [])
+  const categories = manifests.flatMap(value => value.categories || value.categoryList || value.expertCategories || [])
   const experts = manifests.flatMap(value => value.experts || value.expertList || value.items || value.list || [])
   const seen = new Set<string>()
   return { categories, experts: experts.filter(item => { const id = String(item?.id || item?.name || ''); if (!id || seen.has(id)) return false; seen.add(id); return true }) }
@@ -161,5 +197,16 @@ export async function hubExpert(slug: string) {
   const bundle = await listHubExperts()
   const expert = bundle.experts.find(item => String(item?.id || item?.name || '') === slug)
   if (!expert) throw new Error('Expert not found')
-  return { ...expert, source_type: 'moss-server' }
+  return { ...expert, categoryName: expert.categoryName || categoryLabel('expert', expert.categoryId || expert.category, expertCategories(bundle)), source_type: 'moss-server' }
+}
+
+export function expertCategories(bundle: Awaited<ReturnType<typeof listHubExperts>>): HubCategory[] {
+  const counts = new Map<string, number>()
+  for (const expert of bundle.experts) {
+    const id = categoryId(expert.categoryId || expert.category)
+    if (id) counts.set(id, (counts.get(id) || 0) + 1)
+  }
+  return hubCategories('expert', [...bundle.categories, ...counts.keys()])
+    .filter(item => counts.has(item.id))
+    .sort((a, b) => counts.get(b.id)! - counts.get(a.id)! || a.name.localeCompare(b.name, 'zh-Hans-CN'))
 }
