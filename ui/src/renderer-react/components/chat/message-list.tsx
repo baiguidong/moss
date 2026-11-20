@@ -9,6 +9,7 @@ import { ArrowDownToLine, ArrowUpToLine } from "lucide-react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { cn } from "@/lib/utils";
 import { AssistantMessage } from "@/components/chat/assistant-message";
+import { AssistantOutputFiles, MAX_INLINE_OUTPUT_FILES } from "@/components/chat/assistant-output-files";
 import {
   ActivityGroup,
   type ActivityStep,
@@ -44,10 +45,13 @@ type RenderItem =
       toolCalls: ToolUseRenderMessage[];
       steps: ActivityStep[];
       mergeable: boolean;
+      outputFileGroup?: { messageId: string; files: AssistantOutputFile[] };
     }
   | {
       kind: "message";
       message: Exclude<TranscriptRenderMessage, ToolUseRenderMessage>;
+      outputFiles?: AssistantOutputFile[];
+      filesWithTools?: boolean;
     };
 
 function getRenderItemTurnId(item: RenderItem): string | undefined {
@@ -93,6 +97,7 @@ function buildSyntheticBashToolCall(
   const command = message.type === "bash" ? message.command : undefined;
   return {
     id: `${message.id}-bash-tool`,
+    turnId: message.turnId,
     timestamp: message.timestamp,
     type: "tool_use",
     role: "assistant",
@@ -105,13 +110,15 @@ function buildSyntheticBashToolCall(
   };
 }
 
-export function buildRenderModel(messages: TranscriptRenderMessage[]) {
+export function buildRenderModel(messages: TranscriptRenderMessage[], outputFilesByMessage?: ReadonlyMap<string, AssistantOutputFile[]>) {
   const renderItems: RenderItem[] = [];
   const resultMap = new Map<string, ToolResultRenderMessage>();
   const childToolCallsByParent = new Map<string, ToolUseRenderMessage[]>();
   const toolUseIds = new Set<string>();
   let latestCopyMessageId: string | undefined;
   let activeToolGroup: Extract<RenderItem, { kind: "tool_group" }> | null = null;
+  const lastToolGroupByTurn = new Map<string, Extract<RenderItem, { kind: "tool_group" }>>();
+  let currentTurnId = "initial";
 
   const beginToolGroup = (id: string, mergeable: boolean) => {
     const group: Extract<RenderItem, { kind: "tool_group" }> = {
@@ -133,6 +140,7 @@ export function buildRenderModel(messages: TranscriptRenderMessage[]) {
     }
     activeToolGroup!.toolCalls.push(toolCall);
     activeToolGroup!.steps.push({ kind: "tool", toolCall });
+    lastToolGroupByTurn.set(toolCall.turnId || currentTurnId, activeToolGroup!);
     if (!mergeable) activeToolGroup = null;
   };
 
@@ -152,6 +160,7 @@ export function buildRenderModel(messages: TranscriptRenderMessage[]) {
   for (const message of messages) {
     if (message.type === "user_text") {
       activeToolGroup = null;
+      currentTurnId = message.turnId || message.id;
       renderItems.push({ kind: "message", message });
       continue;
     }
@@ -213,16 +222,34 @@ export function buildRenderModel(messages: TranscriptRenderMessage[]) {
     if (message.type === "tool_result") continue;
 
     activeToolGroup = null;
-    if (message.type === "assistant_text" && message.content.trim()) {
-      latestCopyMessageId = message.id;
+    const item: RenderItem = { kind: "message", message };
+    if (message.type === "assistant_text") {
+      if (message.content.trim()) latestCopyMessageId = message.id;
+      const files = outputFilesByMessage?.get(message.id);
+      if (files?.length && !message.streaming) {
+        item.outputFiles = files;
+        const tools = lastToolGroupByTurn.get(message.turnId || currentTurnId);
+        if (files.length > MAX_INLINE_OUTPUT_FILES && tools) {
+          tools.outputFileGroup = { messageId: message.id, files };
+          item.filesWithTools = true;
+        }
+      }
     }
-    renderItems.push({
-      kind: "message",
-      message,
-    });
+    renderItems.push(item);
   }
 
   return { renderItems, resultMap, childToolCallsByParent, latestCopyMessageId };
+}
+
+function useMessageListModel(
+  messages: TranscriptRenderMessage[],
+  sessionId?: string,
+  agentMode?: "local" | "remote-direct",
+  workspace?: string,
+  loading?: boolean,
+) {
+  const outputFiles = useAssistantOutputFiles(messages, sessionId, agentMode, workspace, loading);
+  return React.useMemo(() => buildRenderModel(messages, outputFiles), [messages, outputFiles]);
 }
 
 export function isMergeableActivityTool(toolCall: ToolUseRenderMessage) {
@@ -317,7 +344,6 @@ function renderTranscriptItem(
   focusedToolUseId?: string,
   isLive = false,
   actions?: React.ReactNode,
-  outputFiles?: AssistantOutputFile[],
   sessionId?: string,
   workspace?: string,
   remote?: boolean,
@@ -325,8 +351,9 @@ function renderTranscriptItem(
   onInspectCompaction?: (record: CompactionRecord) => void,
 ) {
   if (item.kind === "tool_group") {
+    const fileGroup = item.outputFileGroup;
     return (
-      <div key={item.id} className="group min-w-0 w-full" style={{ marginBottom: "var(--chat-message-spacing, 10px)" }}>
+      <div key={item.id} className={cn("group min-w-0 w-full", fileGroup && "grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1.5")} style={{ marginBottom: "var(--chat-message-spacing, 10px)" }}>
         <ActivityGroup
           steps={item.steps}
           toolCalls={item.toolCalls}
@@ -336,6 +363,7 @@ function renderTranscriptItem(
           focusedToolUseId={focusedToolUseId}
           isLive={isLive}
         />
+        {fileGroup && <AssistantOutputFiles key={fileGroup.messageId} {...fileGroup} sessionId={sessionId} workspace={workspace} remote={remote} besideTools />}
       </div>
     );
   }
@@ -345,7 +373,7 @@ function renderTranscriptItem(
     return <UserMessage sessionId={sessionId} key={message.id} message={message} />;
   }
   if (message.type === "assistant_text") {
-    return <AssistantMessage key={message.id} message={message} actions={actions} outputFiles={outputFiles} sessionId={sessionId} workspace={workspace} remote={remote} showCopyButton={showCopyButton} />;
+    return <AssistantMessage key={message.id} message={message} actions={actions} outputFiles={item.outputFiles} showOutputFiles={!item.filesWithTools} sessionId={sessionId} workspace={workspace} remote={remote} showCopyButton={showCopyButton} />;
   }
   if (message.type === "thinking") {
     return <ThinkingBlock key={message.id} content={message.content} isActive={Boolean(message.streaming)} />;
@@ -602,10 +630,7 @@ export const VirtualMessageList = React.forwardRef<
   },
   ref,
 ) {
-  const { renderItems, resultMap, childToolCallsByParent, latestCopyMessageId } = React.useMemo(
-    () => buildRenderModel(messages),
-    [messages],
-  );
+  const { renderItems, resultMap, childToolCallsByParent, latestCopyMessageId } = useMessageListModel(messages, sessionId, agentMode, workspace, loading);
   const virtuosoRef = React.useRef<VirtuosoHandle | null>(null);
   const atBottomRef = React.useRef(true);
   const contentCharacters = React.useMemo(
@@ -660,8 +685,6 @@ export const VirtualMessageList = React.forwardRef<
     }
     return result;
   }, [renderItems]);
-
-  const outputFilesByMessage = useAssistantOutputFiles(messages, sessionId, agentMode, workspace, loading);
 
   const conversationNavigationItems = React.useMemo(() => buildConversationNavigationItems(
     renderItems.flatMap<ConversationNavigationSource>((item, renderIndex) => {
@@ -833,7 +856,6 @@ export const VirtualMessageList = React.forwardRef<
             focusedToolUseId,
             Boolean(loading && index === renderItems.length - 1),
             actions,
-            item.kind === "message" ? outputFilesByMessage.get(item.message.id) : undefined,
             sessionId,
             workspace,
             agentMode === 'remote-direct',
@@ -1007,11 +1029,7 @@ export function MessageList({
   sessionId?: string;
   agentMode?: 'local' | 'remote-direct';
 }) {
-  const { renderItems, resultMap, childToolCallsByParent, latestCopyMessageId } = React.useMemo(
-    () => buildRenderModel(messages),
-    [messages],
-  );
-  const outputFilesByMessage = useAssistantOutputFiles(messages, sessionId, agentMode, workspace, loading);
+  const { renderItems, resultMap, childToolCallsByParent, latestCopyMessageId } = useMessageListModel(messages, sessionId, agentMode, workspace, loading);
 
   React.useEffect(() => {
     const bottom = bottomRef?.current;
@@ -1030,7 +1048,7 @@ export function MessageList({
     <div className="mx-auto flex w-full max-w-[1180px] min-w-0 flex-col gap-1 px-3 py-3 sm:px-4 sm:py-4">
       {renderItems.length > 0 ? (
         renderItems.map((item) => renderTranscriptItem(item, resultMap, childToolCallsByParent, undefined, false, undefined,
-          item.kind === "message" ? outputFilesByMessage.get(item.message.id) : undefined, sessionId, workspace, agentMode === 'remote-direct', getRenderItemId(item) === latestCopyMessageId))
+          sessionId, workspace, agentMode === 'remote-direct', getRenderItemId(item) === latestCopyMessageId))
       ) : (
         emptyState || (
           <div className="rounded-[24px] border border-dashed border-border/70 bg-card/50 px-4 py-6 text-sm text-muted-foreground">

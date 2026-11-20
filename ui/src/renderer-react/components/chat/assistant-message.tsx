@@ -5,7 +5,7 @@ import { FilePreview } from "@/components/file-preview";
 import { MessageActionBar } from "@/components/chat/message-action-bar";
 import { MarkdownRenderer } from "@/components/markdown/markdown-renderer";
 import type { AssistantTextRenderMessage } from "@/lib/agent-transcript";
-import { AssistantOutputFileCard } from "@/components/chat/assistant-output-file-card";
+import { AssistantOutputFiles } from "@/components/chat/assistant-output-files";
 import type { AssistantOutputFile } from "@/lib/assistant-output-files";
 
 function shouldUseDocumentLayout(content: string, attachmentCount: number) {
@@ -29,6 +29,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   actions,
   showCopyButton = true,
   outputFiles = [],
+  showOutputFiles = true,
   sessionId,
   workspace,
   remote,
@@ -38,12 +39,14 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   actions?: React.ReactNode;
   showCopyButton?: boolean;
   outputFiles?: AssistantOutputFile[];
+  showOutputFiles?: boolean;
   sessionId?: string;
   workspace?: string;
   remote?: boolean;
 }) {
   const attachments = (message.attachments || []).filter((attachment) => !outputFiles.some((file) => file.path === attachment.path || file.sourcePaths.includes(attachment.path)));
   const hasText = message.content.trim().length > 0;
+  if (!showOutputFiles && !hasText && !attachments.length && !beforeContent && !actions) return null;
   const documentLayout = shouldUseDocumentLayout(message.content, attachments.length + outputFiles.length);
   const copyAction = showCopyButton && hasText ? (
     <MessageActionBar
@@ -115,10 +118,8 @@ export const AssistantMessage = React.memo(function AssistantMessage({
           </div>
         )}
 
-        {!message.streaming && outputFiles.length > 0 && (
-          <div className="flex w-full flex-col gap-2" aria-label="文件">
-            {outputFiles.map((file) => <AssistantOutputFileCard key={file.path} file={file} sessionId={sessionId} workspace={workspace} remote={remote} />)}
-          </div>
+        {showOutputFiles && !message.streaming && outputFiles.length > 0 && (
+          <AssistantOutputFiles files={outputFiles} messageId={message.id} sessionId={sessionId} workspace={workspace} remote={remote} />
         )}
 
         {actions || copyAction ? (

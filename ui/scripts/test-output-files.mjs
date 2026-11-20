@@ -16,9 +16,23 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useAssistantOutputFiles } from '/src/renderer-react/components/chat/use-assistant-output-files.ts';
+import { VirtualMessageList } from '/src/renderer-react/components/chat/message-list.tsx';
+import { ToolDisplaySettingsProvider } from '/src/renderer-react/components/chat/tool-display-settings.ts';
+import '/src/renderer-react/globals.css';
 
 const pending = [];
-window.agentDesktop = { preview: { resolveFiles: (payload) => new Promise((resolve, reject) => pending.push({ payload, resolve, reject })) } };
+let observedPaths = ['/tmp/report.md'];
+let observedTurnId = 'user';
+window.agentDesktop = {
+  fs: { getFileMetadata: async () => ({ size: 8 }) },
+  getTurnChanges: async () => ({
+    turns: [{ userMessageId: observedTurnId, coverage: 'complete',
+      stats: { filesChanged: observedPaths.length, additions: 0, deletions: 0 },
+      files: observedPaths.map(filePath => ({ filePath, verified: true, status: 'added' })) }],
+    rewind: { supported: false },
+  }),
+  preview: { resolveFiles: (payload) => new Promise((resolve, reject) => pending.push({ payload, resolve, reject })) },
+};
 const timestamp = new Date(0);
 const messages = [
   { id: 'user', type: 'user_text', role: 'user', timestamp, content: 'write' },
@@ -41,7 +55,7 @@ const assert = (condition, message) => { if (!condition) throw new Error(message
 const tick = () => new Promise(resolve => setTimeout(resolve, 10));
 async function until(check) {
   for (let i = 0; i < 150; i++) { if (check()) return; await tick(); }
-  throw new Error('Timed out waiting for React');
+  throw new Error('Timed out waiting for ' + check);
 }
 function finish(request, sessionId) {
   request.resolve([{ inputPath: '/tmp/report.md', file: { path: '/confirmed/' + sessionId + '/report.md', name: 'report.md', size: 8 } }]);
@@ -86,6 +100,47 @@ window.runOutputChecks = async () => {
   await tick();
   assert(paths().length === 0, 'failed validation showed files');
   checks.push('failed IPC validation leaves no clickable cards');
+
+  observedPaths = Array.from({ length: 12 }, (_, i) => '/tmp/file-' + i + '.csv');
+  let previewPath;
+  window.agentDesktop.preview = {
+    resolveFiles: async ({ paths }) => paths.map(path => ({ inputPath: path, file: { path, name: path.split('/').at(-1), size: 8 } })),
+    readFile: async ({ filePath }) => { previewPath = filePath; return { path: filePath, content: '' }; },
+    open: async () => {},
+  };
+  function showChat(history) {
+    const messages = React.createElement(VirtualMessageList, { sessionId: 'files', messages: history });
+    const pane = React.createElement('div', { style: { height: 400, width: 420 } }, messages);
+    flushSync(() => root.render(React.createElement(ToolDisplaySettingsProvider, { toolDisplayMode: 'merged' }, pane)));
+  }
+  const trigger = () => document.querySelector('button[title="展开文件列表"]');
+  const reply = { ...messages.at(-1), attachments: [{ kind: 'file', path: observedPaths[0] }] };
+  showChat([messages[0], messages[1], { ...messages[1], id: 'tool2', toolUseId: 'write2' }, reply]);
+  await until(trigger);
+  const toggle = trigger();
+  const tools = document.querySelector('[data-activity-group] button');
+  const list = document.getElementById(toggle.getAttribute('aria-controls'));
+  assert(toggle.textContent.includes('12 个文件') && list.hidden, 'long output list did not start folded');
+  assert(Math.abs(toggle.getBoundingClientRect().top - tools.getBoundingClientRect().top) < 2, 'files and tools are on different lines');
+  assert(!document.querySelector('[data-file-attachment]'), 'reply repeated a grouped file as an attachment');
+  toggle.click();
+  await until(() => !list.hidden && list.clientHeight > 0);
+  assert(tools.getAttribute('aria-expanded') === 'false', 'opening files also expanded the tools');
+  assert(list.scrollHeight > list.clientHeight && getComputedStyle(list).overflowY === 'auto', 'file list is not independently scrollable');
+  list.scrollTop = list.scrollHeight;
+  const preview = list.querySelector('button[aria-label="Moss 预览 file-11.csv"]');
+  assert(list.scrollTop > 0 && preview.getBoundingClientRect().bottom <= list.getBoundingClientRect().bottom, 'final card did not scroll into view');
+  preview.click();
+  await until(() => previewPath === observedPaths.at(-1));
+  toggle.click();
+  await until(() => list.hidden);
+  checks.push('many files share the tool row and can expand, scroll, preview the last file, and collapse independently');
+
+  observedTurnId = 'next-user';
+  showChat([...messages, { ...messages[0], id: observedTurnId }, { ...reply, id: 'next-reply' }]);
+  await until(() => document.querySelector('[data-message-shell="assistant"] button[title="展开文件列表"]'));
+  assert(document.querySelectorAll('button[title="展开文件列表"]').length === 1, 'a previous turn kept the file group');
+  checks.push('turns without tools keep the file group in their own reply');
   flushSync(() => root.unmount());
   return checks;
 };
@@ -119,6 +174,7 @@ const path = require('node:path');
 app.setPath('userData', path.join(process.env.OUTPUT_FILES_TEMP, 'profile'));
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false, webPreferences: { contextIsolation: true, nodeIntegration: false } });
+  win.webContents.on('console-message', event => { if (event.level === 'error') console.error(event.message); });
   try {
     await win.loadURL(process.env.OUTPUT_FILES_URL);
     let ready = false;
