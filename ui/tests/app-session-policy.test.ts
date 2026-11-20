@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { isolateAppSession, normalizeAppScopedPolicy } from '../src/apps/app-session-policy.mjs'
+import { appSessionResponseStylePrompt, isolateAppSession, normalizeAppScopedPolicy } from '../src/apps/app-session-policy.mjs'
 
 test('any App can opt into an isolated context while retaining its explicit tool selection and persona', () => {
   const record = {
@@ -31,4 +31,18 @@ test('ordinary desktop and App sessions retain their existing context without op
 
 test('missing tool selection fails closed instead of inheriting every plugin', () => {
   expect(normalizeAppScopedPolicy(null).resources).toEqual({ tools: [], skills: [], connectors: [] })
+})
+
+test('only App-scoped sessions include their configured style in the system prompt', () => {
+  const style = '用中文回答。\n遇到“你好”时简短一些。'
+  const record = { channelAppId: 'example.studio', channelRuntimePolicy: {
+    contextScope: 'app', session: { responseStyle: style },
+  } }
+  expect(appSessionResponseStylePrompt(record)).toContain(JSON.stringify(style))
+  expect(appSessionResponseStylePrompt({ ...record, channelAppId: undefined })).toBe('')
+  record.channelRuntimePolicy.contextScope = 'default'
+  expect(appSessionResponseStylePrompt(record)).toBe('')
+  record.channelRuntimePolicy.contextScope = 'app'
+  record.channelRuntimePolicy.session.responseStyle = ''
+  expect(appSessionResponseStylePrompt(record)).toBe('')
 })

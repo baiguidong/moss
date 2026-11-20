@@ -68,6 +68,22 @@ describe('Agent Channel store', () => {
     expect(result.other).toBe('human_only')
   })
 
+  it('preserves a reply style across binding changes and clears it for the same conversation', () => {
+    const result = runStoreScenario(`
+      const store = createAgentChannelStore(db);
+      const scope = { appId: 'example.studio', instanceId: 'one', externalConversationId: 'avatar' };
+      store.updateBinding({ ...scope, patch: { contextScope: 'app', session: { responseStyle: ' 用中文回答 ' } } });
+      store.updateBinding({ ...scope, patch: { session: { mode: 'fixed' } } });
+      const current = store.resolveBinding({ ...scope, externalMemberId: 'user' });
+      const other = store.resolveBinding({ ...scope, externalConversationId: 'another-avatar' });
+      store.updateBinding({ ...scope, patch: { session: { responseStyle: '' } } });
+      console.log(JSON.stringify({ current, other, cleared: store.resolveBinding(scope) }));
+    `)
+    expect(result.current.session).toMatchObject({ mode: 'fixed', responseStyle: '用中文回答' })
+    expect(result.other.session.responseStyle).toBeUndefined()
+    expect(result.cleared.session).toMatchObject({ mode: 'fixed', responseStyle: '' })
+  })
+
   it('preserves an unrestricted resource selection on a conversation policy', () => {
     const result = runStoreScenario(`
       const store = createAgentChannelStore(db);

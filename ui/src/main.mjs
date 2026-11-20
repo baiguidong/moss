@@ -12,7 +12,7 @@ import { parseAppServiceKey } from '../../packages/app-sdk/src/tool-services.mjs
 import { setConnectorAppLifecycle, saveConnectorCredentials, provisionConnectorCredentials, refreshConnectorCliStatus, isConnectorAppActivationCurrent } from './connector-hub-ipc.mjs';
 import { createRestoreState } from './web/restore-state.mjs';
 import { resolveAppSkills } from './apps/app-skills.mjs';
-import { isAppScopedSession, normalizeAppScopedPolicy, isolateAppSession } from './apps/app-session-policy.mjs';
+import { appSessionResponseStylePrompt, isAppScopedSession, normalizeAppScopedPolicy, isolateAppSession } from './apps/app-session-policy.mjs';
 import { createAppSessionStorage } from './apps/app-session-storage.mjs';
 import { registerAppUiRequests } from './apps/app-ui-requests.mjs';
 import { defaultInstanceId as appDefaultInstanceId } from '../../packages/app-runtime/src/state/index.mjs';
@@ -3015,6 +3015,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord, runtimeSystemPrompt,
     projectContextPrompt.appendSystemPrompt,
     connectorSystemPrompt,
     runtimeSystemPrompt,
+    appSessionResponseStylePrompt(sessionRecord),
     appSkills.prompt,
   ]
     .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))

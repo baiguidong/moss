@@ -36,6 +36,8 @@ await backend.agent.request('binding.update', {
 
 App 只能收窄用户实际可用资源，不能请求 `bypassPermissions`。Core 在每次执行前重新计算 Agent、Tool、Skill 和 Connector 的授权上限。
 
+从 Host API 3.24.0 起，使用 `contextScope: 'app'` 的 App 可以通过 `patch.session.responseStyle` 为当前会话设置回复语气和语言。偏好最多 1,000 个字符，传空字符串可清除。Moss 将偏好加入会话的系统提示词。App 只需在偏好变更时更新绑定，每轮 `turn.start.text` 直接传用户原话。
+
 ## Turn
 
 ```js

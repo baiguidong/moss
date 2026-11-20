@@ -143,7 +143,12 @@ export interface AgentBindingPolicy {
   agentId: string | null
   permissionMode: AgentPermissionMode
   resources: AgentBindingResources
-  session: { mode: AgentSessionMode; rotateAfterTurns: number }
+  session: {
+    mode: AgentSessionMode
+    rotateAfterTurns: number
+    /** Reply style for an App-scoped session. An empty string clears the preference. */
+    responseStyle?: string
+  }
   proactive: { enabled: boolean; maxConsecutiveReplies: number; cooldownMs: number }
 }
 

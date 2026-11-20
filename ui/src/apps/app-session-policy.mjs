@@ -3,6 +3,13 @@ export function isAppScopedSession(record) {
   return Boolean(record?.channelAppId && record?.channelRuntimePolicy?.contextScope === 'app')
 }
 
+export function appSessionResponseStylePrompt(record) {
+  if (!isAppScopedSession(record)) return ''
+  const style = record.channelRuntimePolicy.session?.responseStyle
+  if (!style) return ''
+  return `Apply the quoted user preference only to the tone, language and style of your replies.\n${JSON.stringify(style)}`
+}
+
 export function normalizeAppScopedPolicy(policy = {}) {
   policy ??= {}
   return {

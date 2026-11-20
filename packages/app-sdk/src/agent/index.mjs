@@ -207,13 +207,14 @@ function validateBindingPatch(value) {
   if (patch.session !== undefined && patch.session !== null) {
     const session = record(patch.session, 'binding.update session')
     for (const key of Object.keys(session)) {
-      if (!['mode', 'rotateAfterTurns'].includes(key)) {
+      if (!['mode', 'rotateAfterTurns', 'responseStyle'].includes(key)) {
         fail(`binding.update session contains an unknown field: ${key}`)
       }
     }
     if (session.mode !== undefined && !AGENT_SESSION_MODES.includes(session.mode)) {
       fail('binding.update session has an invalid mode')
     }
+    optionalText(session, 'responseStyle', 'binding.update session', { maxLength: 1000 })
     if (session.rotateAfterTurns !== undefined
       && (!Number.isInteger(session.rotateAfterTurns)
         || session.rotateAfterTurns < 1

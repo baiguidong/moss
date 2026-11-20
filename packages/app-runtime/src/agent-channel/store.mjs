@@ -117,6 +117,11 @@ function normalizeBindingPatch(value, { member = false } = {}) {
         if (!SESSION_MODES.has(value.session.mode)) throw new Error('Invalid Agent Channel session mode.');
         result.session.mode = value.session.mode;
       }
+      if (Object.hasOwn(value.session, 'responseStyle')) {
+        const style = value.session.responseStyle;
+        if (typeof style !== 'string' || style.length > 1000) throw new Error('Invalid Agent Channel responseStyle.');
+        result.session.responseStyle = style.trim();
+      }
       if (Object.hasOwn(value.session, 'rotateAfterTurns')) {
         result.session.rotateAfterTurns = boundedInteger(
           value.session.rotateAfterTurns,
@@ -234,7 +239,7 @@ function mergePolicy(defaults, conversation, member) {
     next.resources = isMember
       ? narrowResources(base.resources, source.resources)
       : mergeResources(base.resources, source.resources);
-    next.session = mergeNested(base.session, source.session, ['mode', 'rotateAfterTurns']);
+    next.session = mergeNested(base.session, source.session, ['mode', 'rotateAfterTurns', 'responseStyle']);
     next.proactive = isMember
       ? narrowProactive(base.proactive, source.proactive)
       : mergeNested(base.proactive, source.proactive, ['enabled', 'maxConsecutiveReplies', 'cooldownMs']);

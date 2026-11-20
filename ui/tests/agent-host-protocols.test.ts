@@ -51,6 +51,16 @@ describe('Account and Agent Host protocols', () => {
       .toThrow(/cannot override Runtime identity/)
   })
 
+  it('accepts a bounded response style on the session binding', () => {
+    const update = (responseStyle: unknown) => validateAgentHostInput('binding.update', {
+      externalConversationId: 'chat', patch: { session: { responseStyle } },
+    })
+    expect(update('亲切、简洁')).toMatchObject({ patch: { session: { responseStyle: '亲切、简洁' } } })
+    expect(() => update('')).not.toThrow()
+    expect(() => update(123)).toThrow(/responseStyle/)
+    expect(() => update('a'.repeat(1001))).toThrow(/responseStyle/)
+  })
+
   it('validates directory user lifecycle events', () => {
     expect(validateAccountBackendEventData('directory.user-changed', {
       user: { id: 'user-1', name: 'User', status: 'disabled' },
