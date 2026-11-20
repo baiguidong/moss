@@ -29,7 +29,6 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   actions,
   showCopyButton = true,
   outputFiles = [],
-  showOutputFiles = true,
   sessionId,
   workspace,
   remote,
@@ -39,14 +38,13 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   actions?: React.ReactNode;
   showCopyButton?: boolean;
   outputFiles?: AssistantOutputFile[];
-  showOutputFiles?: boolean;
   sessionId?: string;
   workspace?: string;
   remote?: boolean;
 }) {
   const attachments = (message.attachments || []).filter((attachment) => !outputFiles.some((file) => file.path === attachment.path || file.sourcePaths.includes(attachment.path)));
   const hasText = message.content.trim().length > 0;
-  if (!showOutputFiles && !hasText && !attachments.length && !beforeContent && !actions) return null;
+  const filesOnly = outputFiles.length > 0 && !hasText && attachments.length === 0 && !beforeContent;
   const documentLayout = shouldUseDocumentLayout(message.content, attachments.length + outputFiles.length);
   const copyAction = showCopyButton && hasText ? (
     <MessageActionBar
@@ -60,14 +58,19 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   return (
     <div
       className="assistant-message group flex items-start justify-start gap-2"
-      style={{ marginBottom: "var(--chat-message-spacing, 10px)" }}
+      style={{
+        marginBottom: "var(--chat-message-spacing, 10px)",
+        paddingInlineStart: filesOnly ? "var(--assistant-content-inset, 36px)" : undefined,
+      }}
     >
-      <img
-        src="./build/icon.png"
-        alt="Moss"
-        className="assistant-message-avatar h-7 w-7 shrink-0 self-start rounded-sm object-contain"
-        draggable={false}
-      />
+      {!filesOnly && (
+        <img
+          src="./build/icon.png"
+          alt="Moss"
+          className="assistant-message-avatar h-7 w-7 shrink-0 self-start rounded-sm object-contain"
+          draggable={false}
+        />
+      )}
       <div
         data-message-shell="assistant"
         data-layout={documentLayout ? "document" : "bubble"}
@@ -118,7 +121,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
           </div>
         )}
 
-        {showOutputFiles && !message.streaming && outputFiles.length > 0 && (
+        {!message.streaming && outputFiles.length > 0 && (
           <AssistantOutputFiles files={outputFiles} messageId={message.id} sessionId={sessionId} workspace={workspace} remote={remote} />
         )}
 

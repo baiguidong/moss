@@ -115,16 +115,27 @@ window.runOutputChecks = async () => {
   }
   const trigger = () => document.querySelector('button[title="展开文件列表"]');
   const reply = { ...messages.at(-1), attachments: [{ kind: 'file', path: observedPaths[0] }] };
-  showChat([messages[0], messages[1], { ...messages[1], id: 'tool2', toolUseId: 'write2' }, reply]);
+  showChat([messages[0], messages[1], { ...messages[1], id: 'tool2', toolUseId: 'write2' }, reply]
+    .map(message => ({ ...message, turnId: 'user' })));
   await until(trigger);
   const toggle = trigger();
   const tools = document.querySelector('[data-activity-group] button');
+  const fileGroup = toggle.closest('[aria-label="文件列表"]');
   const list = document.getElementById(toggle.getAttribute('aria-controls'));
-  assert(toggle.textContent.includes('12 个文件') && list.hidden, 'long output list did not start folded');
-  assert(Math.abs(toggle.getBoundingClientRect().top - tools.getBoundingClientRect().top) < 2, 'files and tools are on different lines');
+  const cardSelector = 'section[aria-label^="文件："]';
+  const firstCards = [...fileGroup.querySelectorAll(cardSelector)];
+  assert(firstCards.length === 3 && firstCards.every((card, index) => card.getAttribute('aria-label') === '文件：file-' + index + '.csv'), 'the first three cards were not directly visible in order');
+  assert(toggle.textContent.includes('展开剩余 9 个文件') && list.hidden, 'incorrect count of folded files');
+  assert(toggle.previousElementSibling.contains(firstCards[2]), 'disclosure is not directly below the third file card');
+  const body = document.querySelector('[data-message-body="assistant"]');
+  assert(body.nextElementSibling === fileGroup && toggle.nextElementSibling === list, 'file group moved away from its original position below the reply');
+  assert(fileGroup.nextElementSibling?.classList.contains('assistant-message-actions'), 'files moved below the reply actions');
+  const changes = [...document.querySelectorAll('button')].find(button => button.textContent.includes('本轮改动'));
+  assert(changes && (list.compareDocumentPosition(changes) & Node.DOCUMENT_POSITION_FOLLOWING), 'files moved into or below the turn changes');
   assert(!document.querySelector('[data-file-attachment]'), 'reply repeated a grouped file as an attachment');
   toggle.click();
   await until(() => !list.hidden && list.clientHeight > 0);
+  assert(list.querySelectorAll(cardSelector).length === 9 && list.querySelector(cardSelector).getAttribute('aria-label') === '文件：file-3.csv', 'expanded list did not start with the fourth file');
   assert(tools.getAttribute('aria-expanded') === 'false', 'opening files also expanded the tools');
   assert(list.scrollHeight > list.clientHeight && getComputedStyle(list).overflowY === 'auto', 'file list is not independently scrollable');
   list.scrollTop = list.scrollHeight;
@@ -134,13 +145,23 @@ window.runOutputChecks = async () => {
   await until(() => previewPath === observedPaths.at(-1));
   toggle.click();
   await until(() => list.hidden);
-  checks.push('many files share the tool row and can expand, scroll, preview the last file, and collapse independently');
+  assert(firstCards.every(card => card.isConnected) && fileGroup.querySelectorAll(cardSelector).length === 3, 'closing the extra files also removed the first three');
+  checks.push('three cards stay in place while the remaining nine expand, scroll, preview and collapse independently');
 
+  observedPaths = observedPaths.slice(0, 4);
   observedTurnId = 'next-user';
-  showChat([...messages, { ...messages[0], id: observedTurnId }, { ...reply, id: 'next-reply' }]);
-  await until(() => document.querySelector('[data-message-shell="assistant"] button[title="展开文件列表"]'));
-  assert(document.querySelectorAll('button[title="展开文件列表"]').length === 1, 'a previous turn kept the file group');
-  checks.push('turns without tools keep the file group in their own reply');
+  showChat([...messages, { ...messages[0], id: observedTurnId }, { ...reply, id: 'next-reply', content: '' }]);
+  await until(() => trigger()?.textContent.includes('展开剩余 1 个文件'));
+  assert(!trigger().closest('.assistant-message').querySelector('img[alt="Moss"]'), 'a file-only group added a Moss avatar');
+  assert(document.querySelectorAll('button[title="展开文件列表"]').length === 1, 'another turn repeated the file group');
+  checks.push('a fourth file folds below the first three without an extra avatar');
+
+  observedPaths = observedPaths.slice(0, 3);
+  observedTurnId = 'three-files';
+  showChat([{ ...messages[0], id: observedTurnId }, { ...reply, id: 'three-reply' }]);
+  await until(() => document.querySelectorAll('section[aria-label^="文件："]').length === 3);
+  assert(!trigger(), 'three files were folded');
+  checks.push('three files remain directly visible in the reply');
   flushSync(() => root.unmount());
   return checks;
 };
