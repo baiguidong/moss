@@ -1736,7 +1736,7 @@ function HomeLanding({
   onChoicesChange?: (choices: ComposerChoices) => void;
   workspace?: string;
   workspaceOptions?: string[];
-  onWorkspaceChange: (workspace: string | undefined) => void;
+  onWorkspaceChange?: (workspace: string | undefined) => void;
   onChange: (value: string) => void;
   onComposerIntentChange: (intent: ComposerIntent) => void;
   permissionMode: PermissionMode;
@@ -2587,7 +2587,6 @@ export function ChatArea({
   React.useEffect(() => setSideOpen(false), [sessionId]);
   React.useEffect(() => setCommandNotice(null), [sessionId]);
   const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
-  const [workspace, setWorkspace] = React.useState<string | undefined>();
   const virtualListRef = React.useRef<VirtualMessageListHandle | null>(null);
   const appWorkbench = useAppConversationWorkbench(sessionId, backgroundTasks || []);
   const [agentTeamsOpen, setAgentTeamsOpen] = React.useState(false);
@@ -2735,22 +2734,15 @@ export function ChatArea({
   }, [childSessions.length]);
 
   React.useEffect(() => {
-    if (hasActiveSession) {
-      setAttachments([]);
-      setWorkspace(undefined);
-    }
+    if (hasActiveSession) setAttachments([]);
   }, [hasActiveSession]);
-
-  React.useEffect(() => {
-    if (!hasActiveSession) setWorkspace(homeWorkspace);
-  }, [hasActiveSession, homeWorkspace]);
 
   const handleHomeLandingSend = (
     files: Array<{ name: string; path: string }> | undefined,
     skills?: SkillMentionItem[],
     agent?: DesktopAgentDefinition,
   ) => {
-    onSend(files, workspace, skills, agent);
+    onSend(files, homeWorkspace, skills, agent);
   };
 
   if (!hasActiveSession) {
@@ -2780,12 +2772,9 @@ export function ChatArea({
           onAttachmentsChange={onComposerAttachmentsChange ?? setAttachments}
           choices={composerChoices}
           onChoicesChange={onComposerChoicesChange}
-          workspace={workspace}
+          workspace={homeWorkspace}
           workspaceOptions={workspaceOptions}
-          onWorkspaceChange={(nextWorkspace) => {
-            setWorkspace(nextWorkspace);
-            onHomeWorkspaceChange?.(nextWorkspace);
-          }}
+          onWorkspaceChange={onHomeWorkspaceChange}
           onChange={onChange}
           onComposerIntentChange={onComposerIntentChange}
           permissionMode={permissionMode}

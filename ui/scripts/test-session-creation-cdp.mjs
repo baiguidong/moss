@@ -163,6 +163,23 @@ try {
   const session = created.summary
   await page.reload(); await page.getByText('会话存储 CDP 验证', { exact: true }).first().click()
   mark('Isolated production Electron main/preload/renderer, source-built Apps and real native tool bridge')
+  await page.evaluate(workspace => window.agentDesktop.touchWorkspace({ path: workspace }), session.workspace)
+  const newChat = page.getByRole('button', { name: '新会话', exact: true })
+  const workspacePicker = page.getByRole('button', { name: '选择工作空间', exact: true })
+  await newChat.click()
+  await workspacePicker.click()
+  await page.getByRole('menuitem').and(page.getByTitle(session.workspace, { exact: true })).click()
+  await newChat.click()
+  await workspacePicker.waitFor()
+  const title = '独立工作区回归验证'
+  await page.locator('textarea:visible').fill(title)
+  await page.getByRole('button', { name: '发送', exact: true }).click()
+  const fresh = await until(() => page.evaluate(async title => (await window.agentDesktop.listSessions()).find(session => session.title === title), title), 'fresh chat creation')
+  assert.equal(fresh.workspace, path.join(home, 'sessions', fresh.id, 'workspace'))
+  assert.deepEqual(await fs.readdir(fresh.workspace), [])
+  mark('Starting a fresh chat drops the previous folder selection and creates an empty workspace owned by the new session')
+  await page.getByText('检查完成。', { exact: true }).first().waitFor()
+  await page.getByText(session.title, { exact: true }).first().click()
   const originals = []
   for (const definition of definitions) {
     const task = await create(session, definition); originals.push(task)

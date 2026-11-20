@@ -457,7 +457,9 @@ export default function App() {
   const [appsLoaded, setAppsLoaded] = React.useState(false);
   const [appHubTab, setAppHubTab] = React.useState<'marketplace' | 'installed'>('marketplace');
   const [appSelection, setAppSelection] = React.useState<AppComposerResource | null>(null);
-  const [appDraftWorkspace, setAppDraftWorkspace] = React.useState<string>();
+  // An untouched home can recover its draft folder. A fresh chat explicitly uses the default.
+  const [homeWorkspaceChoice, setHomeWorkspaceChoice] = React.useState<string | null>();
+  const appDraftWorkspace = homeWorkspaceChoice ?? undefined;
   const [embeddedAppName, setEmbeddedAppName] = React.useState('');
   const [appInfoName, setAppInfoName] = React.useState('');
   const [appInfoSettings, setAppInfoSettings] = React.useState(false);
@@ -898,6 +900,7 @@ export default function App() {
     }
     if (options?.resetInput) {
       setInput('');
+      setHomeWorkspaceChoice(null);
       composerDraftsRef.current['home'] = { text: '', files: [] };
     }
     return true;
@@ -1887,7 +1890,7 @@ export default function App() {
       setNewSessionAgentMode('local');
       setNewSessionPermissionMode(current.permissionMode || desktopSettingsRef.current?.permissionMode || 'default');
       setComposerIntent(current.mode || 'boss');
-      setAppDraftWorkspace(current.defaultWorkspace || current.workspaces?.[0] || current.workspace);
+      setHomeWorkspaceChoice(current.defaultWorkspace || current.workspaces?.[0] || current.workspace || null);
       // Connector selections now come from Apps; preserve legacy project data in storage only.
       setDraftAppIds(current.appIds || []); setDraftAppServiceIds(current.appServiceIds || []);
       setSelectedAssistant(assistant || null);
@@ -2882,7 +2885,7 @@ export default function App() {
     if (!navigateToHome({ preserveIntent: true, preserveAgentMode: true })) return;
     setComposerAttachments([]);
     setSelectedAssistant(null);
-    setAppDraftWorkspace(payload.workspace);
+    setHomeWorkspaceChoice(payload.workspace ?? null);
     setAppSelection(selection);
     setInput(payload.prompt);
   }); }), [navigateToHome, openSession, enqueueAppSelection, addAppResourceOwner]);
@@ -3139,14 +3142,15 @@ export default function App() {
         value={{ text: input, files: composerAttachments, appSelection, choices: composerChoices, intent: composerIntent,
           workspace: activeSessionId ? activeDetail?.workspace : appDraftWorkspace, queued: queuedMessages[activeSessionId || 'home'] }}
         restore={draft => {
-          if (activeSessionId && draft.workspace !== undefined && draft.workspace !== activeDetail?.workspace) {
-            updateQueue(activeSessionId, items => [...items, ...recoverQueuedMessages(draft.queued),
+          const workspace = activeSessionId ? activeDetail?.workspace : appDraftWorkspace;
+          if ((activeSessionId || homeWorkspaceChoice !== undefined) && draft.workspace !== undefined && draft.workspace !== workspace) {
+            updateQueue(activeSessionId || 'home', items => [...items, ...recoverQueuedMessages(draft.queued),
               ...(composerIsEmpty(draft) ? [] : [{ ...messageFromDraft(draft, crypto.randomUUID()), notice: '工作区已变化，请切回原工作区后编辑。' }])]);
             return;
           }
           setInput(draft.text); setComposerAttachments(draft.files); setAppSelection(draft.appSelection || null);
           setComposerChoices(draft.choices ?? { skills: [], agent: null });
-          if (!activeSessionId) setAppDraftWorkspace(draft.workspace);
+          if (!activeSessionId && homeWorkspaceChoice === undefined) setHomeWorkspaceChoice(draft.workspace);
           if (draft.intent) handleComposerIntentChange(draft.intent);
           if (draft.queued?.length) updateQueue(activeSessionId || 'home', items => {
             const ids = new Set(items.map(item => item.id));
@@ -3440,7 +3444,7 @@ export default function App() {
                 onReturnToProject={draftProject
                   ? () => { setActiveProjectId(draftProject.id); setActiveView('projects'); }
                   : undefined}
-                onHomeWorkspaceChange={setAppDraftWorkspace}
+                onHomeWorkspaceChange={workspace => setHomeWorkspaceChoice(workspace ?? null)}
                 pendingPlanApproval={null}
                 planDecisionBusy={false}
                 leftCollapsed={effectiveLeftCollapsed}
