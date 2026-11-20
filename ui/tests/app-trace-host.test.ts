@@ -97,6 +97,29 @@ test('startup enables capture without rewriting existing session snapshots or ex
   expect(historyReads).toBe(0)
 })
 
+test('stream deltas reuse the trace snapshot until messages, usage, metadata or capture output change', async () => {
+  const f = await fixture(); f.install(); await f.host.refresh()
+  let writes = 0
+  const getCore = f.host.getCore
+  f.host.getCore = async () => ({ ...await getCore(), writeTraceSessionSnapshot: async () => { writes++ } })
+  const session = { id: 'stream', title: 'Initial', history: [{ type: 'assistant', message: { content: 'hello', usage: { output_tokens: 1 } } }] as any[] }
+  await f.host.recordSession(session, 1)
+  session.history.push({ type: 'stream_event' })
+  await f.host.recordSession(session, 1)
+  expect(writes).toBe(1)
+  session.history[0].message.usage.output_tokens = 7
+  await f.host.recordSession(session, 0)
+  session.history.push({ type: 'assistant', content: 'done' })
+  await f.host.recordSession(session, 2)
+  session.title = 'Renamed'
+  await f.host.recordSession(session, 3)
+  expect(writes).toBe(4)
+  f.installation.enabled = false; await f.host.refresh()
+  f.installation.enabled = true; await f.host.refresh()
+  await f.host.recordSession(session, 3)
+  expect(writes).toBe(5)
+})
+
 test('coalesces pending snapshots and serializes active session writes without dropping wire records', async () => {
   const f = await fixture(); f.install(); await f.host.refresh()
   let release!: () => void

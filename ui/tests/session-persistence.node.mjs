@@ -87,7 +87,7 @@ test('reopens real SQLite records, manifests and read-only child sessions with m
   });
   service.sessions.set('source', { title: 'Source title' });
   service.persistSessionRecord(main);
-  service.persistSessionRecord(record('child', { parentSessionId: 'parent', sessionRole: 'worker', isSubAgent: true }), true);
+  service.persistSessionRecord(record('child', { parentSessionId: 'parent', sessionRole: 'worker', workerName: 'reviewer', isSubAgent: true }), true);
   const manifest = JSON.parse(readFileSync(path.join(f.sessionPaths.getLocalSessionDir('parent'), 'session.json'), 'utf8'));
   assert.equal(manifest.sourceSessionTitle, 'Source title');
   assert.equal(manifest.layoutVersion, 3);
@@ -116,6 +116,7 @@ test('reopens real SQLite records, manifests and read-only child sessions with m
   assert.equal(restored.pendingPlanApproval.plan, 'Review me');
   assert.equal(service.sessions.has('child'), false);
   assert.equal(service.subAgentSessions.get('child').parentSessionId, 'parent');
+  assert.equal(service.subAgentSessions.get('child').workerName, 'reviewer');
   assert.match(service.subAgentSessions.get('child').resumeReadOnlyReason, /只读/);
   assert.deepEqual(service.warnings, []);
 });
@@ -261,4 +262,108 @@ test('unopened metadata edits preserve history, approval, source signatures and 
   const search = createSessionSearchIndex(service.db);
   assert.equal(search.search('conversation', { sessionIds: ['metadata'] }).length, 1);
   assert.equal(search.search('Changed title', { sessionIds: ['metadata'] }).length, 1);
+});
+
+test('appends to a legacy long history without rewriting or serializing its committed prefix', async t => {
+  const f = fixture(t);
+  let service = f.open();
+  const events = Array.from({ length: 150 }, (_, index) => ({ type: 'user', uuid: String(index), prompt: '地图 🗺️ "\n' + index }));
+  service.persistSessionRecord(record('large'));
+  service.db.prepare('UPDATE sessions SET history_json = ? WHERE id = ?').run(JSON.stringify(events), 'large');
+  service.hydratePersistedSessions();
+  const session = service.sessions.get('large');
+  assert.deepEqual(session.history, events);
+  session.busy = true;
+  service.persistSessionRecord(session);
+  const traced = [];
+  f.setTraceHost({ async recordSession(_record, unchangedPrefixLength) { traced.push(unchangedPrefixLength); } });
+  service.db.exec(`CREATE TEMP TABLE changed (idx INTEGER);
+    CREATE TEMP TRIGGER record_chunk_update AFTER UPDATE ON session_history_chunks BEGIN
+      INSERT INTO changed VALUES (NEW.chunk_index); END`);
+  let reads = 0;
+  Object.defineProperty(session.history[0], 'toJSON', { value() { reads++; return events[0]; } });
+  for (let index = 0; index < 2; index++) {
+    const previous = session.history.length;
+    session.history.push({ type: 'stream_event', index });
+    service.schedulePersistSession(session, false, previous);
+  }
+  await delay(250);
+  assert.equal(reads, 0);
+  assert.deepEqual(traced, [150]);
+  assert.deepEqual(service.db.prepare('SELECT idx FROM changed').all().map(row => row.idx), [2]);
+  const expected = [...events, { type: 'stream_event', index: 0 }, { type: 'stream_event', index: 1 }];
+  assert.equal(service.statements.loadSessionHistoryStmt.get('large').history_json, JSON.stringify(expected));
+  session.history[5] = expected[5] = { type: 'assistant', message: { usage: { output_tokens: 54 } } };
+  const finalDelta = { type: 'stream_event', event: { type: 'message_delta' } };
+  session.history.push(finalDelta);
+  expected.push(finalDelta);
+  service.persistSessionRecord(session, false, 5);
+  assert.deepEqual(traced, [150, 5]);
+  service = f.open();
+  service.hydratePersistedSessions();
+  const reopened = service.sessions.get('large');
+  reopened.title = 'Renamed';
+  service.persistSessionRecord(reopened);
+  assert.equal(reopened.historyLoaded, false);
+  assert.deepEqual(reopened.history, expected);
+  reopened.history = reopened.history.slice(0, 4);
+  service.persistSessionRecord(reopened);
+  assert.deepEqual(JSON.parse(service.statements.loadSessionHistoryStmt.get('large').history_json), expected.slice(0, 4));
+  assert.equal(service.db.prepare('SELECT count(*) AS n FROM session_history_chunks').get().n, 0);
+});
+
+test('coalesces earlier edits with stream appends and atomically retries a failed save', async t => {
+  const f = fixture(t);
+  const service = f.open();
+  const events = Array.from({ length: 130 }, (_, index) => ({ type: 'user', uuid: String(index), prompt: String(index) }));
+  const session = record('retry', { history: events, busy: true });
+  service.persistSessionRecord(session);
+  const original = service.statements.loadSessionHistoryStmt.get('retry').history_json;
+  const originalRevision = session.historyRevision;
+  session.history[1].prompt = 'updated';
+  service.schedulePersistSession(session);
+  session.history.push({ type: 'stream_event' });
+  service.schedulePersistSession(session, false, 130);
+  service.db.exec(`CREATE TEMP TRIGGER fail_save BEFORE UPDATE ON session_projections BEGIN SELECT RAISE(ABORT, 'test failure'); END`);
+  await delay(250);
+  assert.equal(service.statements.loadSessionHistoryStmt.get('retry').history_json, original);
+  assert.equal(session.historyRevision, originalRevision);
+  assert.match(service.warnings.at(-1)[3].error, /test failure/);
+  service.db.exec('DROP TRIGGER fail_save');
+  session.history.push({ type: 'result' });
+  service.schedulePersistSession(session, false, 131);
+  await delay(250);
+  assert.equal(service.statements.loadSessionHistoryStmt.get('retry').history_json, JSON.stringify(session.history));
+  assert.notEqual(session.historyRevision, originalRevision);
+  service.deletePersistedSession(session.id);
+  assert.equal(service.db.prepare('SELECT count(*) AS n FROM session_history_chunks').get().n, 0);
+});
+
+test('overlapping session records cannot combine chunks from different committed histories', t => {
+  const service = fixture(t).open();
+  const original = record('overlap', { busy: true, history: Array.from({ length: 131 }, (_, index) => ({ index })) });
+  service.persistSessionRecord(original);
+  const replacement = { ...original, history: structuredClone(original.history) };
+  replacement.history[0].index = -1;
+  service.persistSessionRecord(replacement);
+  original.history.push({ index: 131 });
+  service.persistSessionRecord(original, false, 131);
+  assert.equal(service.statements.loadSessionHistoryStmt.get('overlap').history_json, JSON.stringify(original.history));
+});
+
+test('cold opening an unchanged chunked history only saves the updated metadata', t => {
+  const f = fixture(t);
+  let service = f.open();
+  const events = Array.from({ length: 150 }, (_, index) => ({ type: 'user', prompt: 'message ' + index }));
+  service.persistSessionRecord(record('cold', { history: events }));
+  service = f.open();
+  service.hydratePersistedSessions();
+  const session = service.sessions.get('cold');
+  session.history = structuredClone(events);
+  session.updatedAt++;
+  service.db.exec(`CREATE TEMP TRIGGER unexpected_chunk BEFORE INSERT ON session_history_chunks
+    BEGIN SELECT RAISE(ABORT, 'redundant cold-open chunk write'); END`);
+  service.persistSessionRecord(session);
+  assert.equal(service.statements.loadSessionsStmt.all()[0].updated_at, session.updatedAt);
+  assert.deepEqual(JSON.parse(service.statements.loadSessionHistoryStmt.get('cold').history_json), events);
 });

@@ -125,13 +125,14 @@ it('uses the snapshot fallback when JSONL is absent and restores snapshot metada
 });
 
 it('applies a pending rewind as an explicit history replacement', async () => {
-  const { paths, service, record, published } = await fixture();
+  const { paths, service, record, published, persisted } = await fixture();
   record.underlyingSessionId = 'engine';
   record.history = [user('question'), assistant('first reply'), user('rewind this', 'u2'), assistant('second reply')];
   record.rewindMessageId = 'u2';
   await writeFile(paths.sessionTranscriptPath('session', 'engine'), jsonl(record.history));
   expect(await service.loadSessionHistoryFromSource(record)).toEqual([user('question'), assistant('first reply')]);
   expect(published).toEqual([{ replaceHistory: true }]);
+  expect(persisted).toEqual([['session', undefined]]);
 });
 
 it('defers transcript replacement during active background work, then invalidates the stale runtime', async () => {

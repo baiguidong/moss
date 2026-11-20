@@ -17,7 +17,9 @@ describe('final assistant usage reconciliation', () => {
   test('updates every split block without duplicating the request or mutating previous state', () => {
     const before = [start('request-a'), assistant('request-a'),
       { type: 'user', message: { content: 'tool result' } }, assistant('request-a')];
-    const history = appendSessionRuntimeEvent(before, delta());
+    const replaced: number[] = [];
+    const history = appendSessionRuntimeEvent(before, delta(), (index: number) => replaced.push(index));
+    expect(replaced).toEqual([1, 3]);
     const blocks = history.filter(event => event.type === 'assistant');
     expect(blocks).toHaveLength(2);
     for (const block of blocks) expect(block.message).toMatchObject({ usage, stop_reason: 'tool_use' });

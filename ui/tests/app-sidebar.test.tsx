@@ -9,6 +9,9 @@ function renderSidebar({
   enterpriseEnabled = false,
   agentMailEnabled = false,
   sessions = [],
+  sessionListState,
+  openingSessionId,
+  restoringApps,
   apps = [],
   activeView = 'chat',
   collapsed = false,
@@ -20,6 +23,9 @@ function renderSidebar({
   enterpriseEnabled?: boolean;
   agentMailEnabled?: boolean;
   sessions?: any[];
+  sessionListState?: 'loading' | 'ready' | 'error';
+  openingSessionId?: string | null;
+  restoringApps?: boolean;
   apps?: any[];
   activeView?: 'chat' | 'overview' | 'common' | 'skills' | 'experts' | 'apps';
   pendingCount?: number;
@@ -31,6 +37,9 @@ function renderSidebar({
   return renderToStaticMarkup(
     <AppSidebar
       sessions={sessions}
+      sessionListState={sessionListState}
+      openingSessionId={openingSessionId}
+      restoringApps={restoringApps}
       apps={apps}
       activeSessionId={activeSessionId}
       activeView={activeView}
@@ -54,6 +63,21 @@ function renderSidebar({
     />,
   );
 }
+
+test('shows startup and session-opening progress while keeping history available', () => {
+  const loading = renderSidebar({ sessionListState: 'loading' });
+  expect(loading).toContain('正在加载会话列表');
+  expect(loading).not.toContain('还没有历史会话');
+  expect(renderSidebar({ sessionListState: 'error' })).not.toContain('还没有历史会话');
+  expect(renderSidebar()).toContain('还没有历史会话');
+  const sessions = [{ id: 'a', title: '地图分析', preview: '', time: '', workspaceLabel: '', busy: false }];
+  for (const collapsed of [false, true]) {
+    expect(renderSidebar({ sessions, collapsed, restoringApps: true })).toContain('正在恢复后台应用');
+    const opening = renderSidebar({ sessions, collapsed, restoringApps: true, openingSessionId: 'a' });
+    expect(opening).toContain('正在打开「地图分析」');
+    expect(opening).not.toContain('正在恢复后台应用');
+  }
+});
 
 describe('app sidebar more menu', () => {
   test('shows a server account entry after connection', () => {

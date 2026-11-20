@@ -9,26 +9,68 @@ const app = ast.statements.find((node) => ts.isFunctionDeclaration(node) && node
 const statements = app.body!.statements;
 const compile = (code: string) => ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 
-test('reopening the active session does not clear its loaded root directory', async () => {
-  const statement = statements.find((node) => ts.isVariableStatement(node)
-    && node.declarationList.declarations.some((declaration) => declaration.name.getText(ast) === 'openSession'))!;
+function sessionNavigation(getSession: (payload: { sessionId: string }) => Promise<unknown>,
+  getAppAuthoringContext?: (sessionId: string) => Promise<unknown>) {
+  const callbacks = statements.filter((node) => ts.isVariableStatement(node)
+    && node.declarationList.declarations.some(declaration => ['openSession', 'setActiveView'].includes(declaration.name.getText(ast))));
   const active = { current: { id: 'same', workspace: '/workspace', history: [] } };
   const sessionId = { current: 'same' };
-  let clears = 0;
-  const open = runInNewContext(compile(`${statement.getText(ast)}\nopenSession;`), {
+  const state = { clears: 0, pending: null as string | null, view: 'chat', errors: [] as string[] };
+  const { openSession: open, setActiveView: navigate } = runInNewContext(compile(callbacks.map(node => node.getText(ast)).join('\n') + '\n({ openSession, setActiveView });'), {
     React: { useCallback: (callback: unknown) => callback },
     confirmAppViewLeave: () => true,
     openSessionRequestIdRef: { current: 0 },
-    window: { agentDesktop: { getSession: async ({ sessionId }: { sessionId: string }) => ({ ...active.current, id: sessionId }) } },
+    window: { agentDesktop: { getSession, getAppAuthoringContext } },
     activeDetailRef: active, activeSessionIdRef: sessionId,
-    setActiveView() {}, setActiveSessionId() {}, setComposerIntent() {}, setActiveDetail() {},
+    setActiveViewRaw(view: string) { state.view = view; },
+    setOpeningSessionId(id: string | null) { state.pending = id; },
+    setActiveSessionId() {}, setComposerIntent() {}, setActiveDetail() {},
+    cleanIpcErrorMessage: String, showPermissionNotice(message: string) { state.errors.push(message); },
+    composerDraftsRef: { current: {} },
     reconcileComposerIntent: () => 'chat', composerIntentStatesRef: { current: new Map() },
-    clearSessionWorkspaceState: () => { clears++; },
+    clearSessionWorkspaceState: () => { state.clears++; },
   });
+  return { open, navigate, sessionId, state };
+}
+
+test('reopening the active session does not clear its loaded root directory', async () => {
+  const { open, state } = sessionNavigation(async ({ sessionId }) => ({ id: sessionId, workspace: '/workspace', history: [] }));
   expect(await open('same')).toBe(true);
-  expect(clears).toBe(0);
+  expect(state.clears).toBe(0);
   expect(await open('different')).toBe(true);
-  expect(clears).toBe(1);
+  expect(state.clears).toBe(1);
+});
+
+test('shows the latest pending session and ignores stale successes and errors after navigation', async () => {
+  const a = Promise.withResolvers<unknown>(), b = Promise.withResolvers<unknown>();
+  const { open, navigate, state, sessionId } = sessionNavigation(({ sessionId }) => sessionId === 'a' ? a.promise : b.promise);
+  const first = open('a');
+  expect(state.pending).toBe('a');
+  const second = open('b');
+  a.resolve({ id: 'a' });
+  expect(await first).toBe(false);
+  expect(state.pending).toBe('b');
+  navigate('settings');
+  expect(state.pending).toBeNull();
+  b.reject(new Error('late error'));
+  expect(await second).toBe(false);
+  expect(state.view).toBe('settings');
+  expect(sessionId.current).toBe('same');
+  expect(state.errors).toEqual([]);
+});
+
+test('opens history when optional App context fails and reports history failures', async () => {
+  const { open, state, sessionId } = sessionNavigation(async ({ sessionId }) => {
+    if (sessionId === 'missing') throw new Error('missing');
+    return { id: sessionId };
+  }, async () => { throw new Error('context unavailable'); });
+  expect(await open('b')).toBe(true);
+  expect(sessionId.current).toBe('b');
+  expect(state.errors).toEqual([]);
+  expect(await open('missing')).toBe(false);
+  expect(sessionId.current).toBe('b');
+  expect(state.errors[0]).toContain('missing');
+  expect(state.pending).toBeNull();
 });
 
 test('continuous file events refresh promptly and queue one follow-up during a slow listing', async () => {

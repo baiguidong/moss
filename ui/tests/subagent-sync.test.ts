@@ -77,6 +77,16 @@ test('metadata arriving after the transcript updates worker identity and resourc
   expect(f.copies).toHaveLength(1);
 });
 
+test('opening the parent leaves unchanged child histories unloaded', async () => {
+  const f = await fixture();
+  await f.sync();
+  Object.defineProperty(f.children.get('subagent-a0'), 'history', {
+    get() { throw new Error('Unnecessary read of persisted child history'); },
+  });
+  await f.sync();
+  expect(f.histories).toHaveLength(1);
+});
+
 test('parent configuration changes update child metadata without resending a long transcript', async () => {
   const f = await fixture();
   await f.write(0, Array.from({ length: 10000 }, (_, i) => `Entry ${i}: ${'x'.repeat(100)}`));

@@ -47,7 +47,13 @@ for (const mode of ['desktop', 'web']) {
         setTimeout: fn => fn(),
       };
       runInNewContext(refreshSource + (mode === 'desktop' ? desktopSource : webSource), context);
-      if (mode === 'desktop') context.ready({ sender: context.mainWindow.webContents });
+      if (mode === 'desktop') {
+        assert.equal(context.ready({ sender: {} }), undefined);
+        const firstReady = context.ready({ sender: context.mainWindow.webContents });
+        assert.ok(firstReady);
+        assert.equal(firstReady, context.appRuntimeRestorePromise);
+        assert.equal(context.ready({ sender: context.mainWindow.webContents }), firstReady);
+      }
       const pending = context.appRuntimeRestorePromise;
       if (phase === 'none') {
         await pending;
@@ -63,3 +69,16 @@ for (const mode of ['desktop', 'web']) {
     });
   }
 }
+
+test('catalog changes refresh running sessions and skip idle histories', async () => {
+  const start = source.indexOf('function refreshActiveSessionModelResources()');
+  const refresh = source.slice(start, source.indexOf('\n}', start) + 2);
+  const records = [{ id: 'idle' }, { id: 'running', runtime: {} }, { id: 'busy', busy: true },
+    { id: 'preparing', preparingPrompt: true }, { id: 'deleted', deleted: true, busy: true }];
+  const refreshed = [];
+  runInNewContext(refresh + '\nrefreshActiveSessionModelResources();', {
+    sessions: new Map(records.map(record => [record.id, record])),
+    refreshSessionModelResources: async record => { refreshed.push(record.id); },
+  });
+  assert.deepEqual(refreshed, ['running', 'busy', 'preparing']);
+});

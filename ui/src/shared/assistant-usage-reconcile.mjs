@@ -3,7 +3,7 @@ function sameScope(left, right) {
     && Boolean(left?.isSidechain) === Boolean(right?.isSidechain);
 }
 
-export function appendSessionRuntimeEvent(history, event) {
+export function appendSessionRuntimeEvent(history, event, onReplace) {
   const current = Array.isArray(history) ? history : [];
   if (event?.type !== 'stream_event' || event.event?.type !== 'message_delta' || !event.event.usage) {
     return [...current, event];
@@ -25,10 +25,11 @@ export function appendSessionRuntimeEvent(history, event) {
   if (!responseId) return [...current, event];
   const usage = event.event.usage;
   const stopReason = event.event.delta?.stop_reason;
-  return [...current.map(prior => {
+  return [...current.map((prior, index) => {
     if (prior?.type !== 'assistant' || prior.message?.id !== responseId || !sameScope(prior, event)) {
       return prior;
     }
+    onReplace?.(index);
     return { ...prior, message: { ...prior.message, usage: { ...usage },
       stop_reason: stopReason ?? prior.message.stop_reason ?? null } };
   }), event];

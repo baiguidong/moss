@@ -69,7 +69,7 @@ export function createMossCronScheduler({
   ipcMain,
   mossHome,
   sessions,
-  sessionDb,
+  loadSessionHistoryStmt,
   getMainWindow,
   normalizePreviewText,
   createSessionRecord,
@@ -132,9 +132,9 @@ export function createMossCronScheduler({
       if (record.agentMode === 'remote-direct' || record.sessionKind === 'cron') continue;
       if (task.ownerSessionId && record.id !== task.ownerSessionId) continue;
       let history = record.history || [];
-      if (sessionDb) {
+      if (loadSessionHistoryStmt) {
         try {
-          const row = sessionDb.prepare('SELECT history_json FROM sessions WHERE id = ?').get(record.id);
+          const row = loadSessionHistoryStmt.get(record.id);
           if (row?.history_json) history = [...JSON.parse(row.history_json), ...history];
         } catch {}
       }

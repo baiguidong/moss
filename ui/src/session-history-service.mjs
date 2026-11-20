@@ -107,7 +107,8 @@ export function createSessionHistoryService({
       const filtered = applyPendingConversationRewind(record, history);
       syncSessionRecordHistory(record, filtered.history, { allowReplacement: true });
       record.updatedAt = Math.max(record.updatedAt || 0, modifiedAt);
-      schedulePersistSession(record, true);
+      // The JSONL is already durable. Deliver the history before updating its SQLite cache.
+      schedulePersistSession(record);
       emitSessionMeta(record);
       emitSessionHistory(record, { replaceHistory: true });
     },

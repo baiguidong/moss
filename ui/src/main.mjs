@@ -2202,8 +2202,10 @@ async function refreshSessionModelResources(sessionRecord) {
   return snapshot;
 }
 
-function refreshAllSessionModelResources() {
+function refreshActiveSessionModelResources() {
   for (const sessionRecord of sessions.values()) {
+    // Idle histories load their catalog when the plugin panel or a model needs it.
+    if (sessionRecord.deleted || !(sessionRecord.runtime || sessionRecord.busy || sessionRecord.preparingPrompt)) continue;
     void refreshSessionModelResources(sessionRecord).catch(error => {
       mossLog('warn', 'session', 'Unable to refresh model resource snapshot', {
         sessionId: sessionRecord.id,
@@ -2770,10 +2772,13 @@ function getStoredConnectorId(appId) {
   catch { return null; }
 }
 
-function getSessionConnectorIds(sessionRecord) {
+function getSessionConnectorIds(sessionRecord, storedApps) {
+  const appConnectorIds = sessionRecord?.appIds?.length
+    ? selectedConnectorIds(sessionRecord.appIds, storedApps ?? listAllStoredApps())
+    : [];
   return mergeProjectConnectorIds(
     getProjectConnectorIds(sessionRecord),
-    [...(sessionRecord?.connectorIds || []), ...selectedConnectorIds(sessionRecord?.appIds, listAllStoredApps())],
+    [...(sessionRecord?.connectorIds || []), ...appConnectorIds],
   );
 }
 
@@ -3513,7 +3518,7 @@ function createDefaultWorkspacePath(sessionId) {
   return DESKTOP_DATA_PATHS.sessionWorkspaceDir(normalizeSessionDirName(sessionId));
 }
 
-function getSessionSummary(sessionRecord) {
+function getSessionSummary(sessionRecord, storedApps) {
   const workspace = sessionRecord.agentMode === 'remote-direct'
     ? sessionRecord.remoteWorkspace || sessionRecord.workspace
     : sessionRecord.workspace;
@@ -3560,7 +3565,7 @@ function getSessionSummary(sessionRecord) {
     completedAt: isProjectTaskRoot ? sessionRecord.projectTaskCompletedAt || null : null,
     projectConclusion: finalizerResult?.conclusion || '',
     projectMemoryVersion: finalizerResult?.memoryVersion || 0,
-    connectorIds: getSessionConnectorIds(sessionRecord),
+    connectorIds: getSessionConnectorIds(sessionRecord, storedApps),
     appIds: normalizeStringList(sessionRecord.appIds),
     appServiceIds: normalizeStringList(sessionRecord.appServiceIds),
     appToolsPending: Boolean(sessionRecord.pendingMcpRuntimeReload),
@@ -3646,11 +3651,15 @@ function isCompactBoundaryMessage(message) {
 }
 
 function appendRuntimeMessageToSession(sessionRecord, message) {
-  sessionRecord.history = appendSessionRuntimeEvent(sessionRecord.history, message);
+  const previous = sessionRecord.history;
+  let unchangedPrefixLength = previous.length;
+  sessionRecord.history = appendSessionRuntimeEvent(previous, message, index => {
+    unchangedPrefixLength = Math.min(unchangedPrefixLength, index);
+  });
   sessionRecord.messageCount = countSessionMessages(sessionRecord.history);
   sessionRecord.updatedAt = Date.now();
   sessionRecord.preview = deriveSessionPreview(sessionRecord.history);
-  schedulePersistSession(sessionRecord);
+  schedulePersistSession(sessionRecord, false, unchangedPrefixLength);
 }
 
 function buildVisibleUserEvent(prompt, attachments = [], resources = []) {
@@ -3911,7 +3920,10 @@ async function runSessionPromptObserved({
       controllerSignal?.throwIfAborted();
       if (visibleUserEvent) {
         // A retry is a new engine prompt; never reuse an already persisted UUID.
-        if (submittedVisibleUserIds.has(visibleUserEvent.uuid)) visibleUserEvent.uuid = randomUUID();
+        if (submittedVisibleUserIds.has(visibleUserEvent.uuid)) {
+          visibleUserEvent.uuid = randomUUID();
+          schedulePersistSession(sessionRecord);
+        }
         submittedVisibleUserIds.add(visibleUserEvent.uuid);
         await bindVisibleUser(visibleUserEvent);
       }
@@ -3934,7 +3946,10 @@ async function runSessionPromptObserved({
             typeof message.uuid === 'string' &&
             message.uuid.trim()
           ) {
-            visibleUserEvent.uuid = message.uuid.trim();
+            if (visibleUserEvent.uuid !== message.uuid.trim()) {
+              visibleUserEvent.uuid = message.uuid.trim();
+              schedulePersistSession(sessionRecord);
+            }
             await bindVisibleUser(visibleUserEvent);
           }
           skippedInitialReplayUser = true;
@@ -4776,8 +4791,8 @@ async function emitAppsChanged(payload = {}) {
   });
     // Runtime status transitions can arrive several times while an App is
     // stopping. They do not change the installed resource catalog, so avoid
-    // rebuilding every session snapshot during that short lifecycle window.
-    if (nextPayload.action !== 'runtime') refreshAllSessionModelResources();
+    // rebuilding session snapshots during that short lifecycle window.
+    if (nextPayload.action !== 'runtime') refreshActiveSessionModelResources();
     if (appAuthoring?.initialized && appRuntime) {
       for (const installation of appRuntime.installations.list()) {
         void appRuntime.publishHostEvent(installation.appId, appDefaultInstanceId(installation.appId), 'moss.apps/v1', 'authoring.changed', { revision: Date.now() }).catch(() => {});
@@ -5870,7 +5885,8 @@ async function syncSubAgentSessionsForParentNow(parentSession) {
     const transcriptChanged = existing?.sourceTranscriptSignature !== sourceTranscriptSignature;
     const sourceResourceManifestSignature = JSON.stringify([inheritedResourceManifest || null, meta?.projectResources || null]);
     let parsed = {
-      history: Array.isArray(existing?.history) ? existing.history : [],
+      // An unchanged mirrored transcript has already passed the team-sidechain filter.
+      history: [],
       failed: existing?.sourceTranscriptFailed === true,
       terminalStatus: ['completed', 'failed'].includes(existing?.sourceTranscriptTerminalStatus)
         ? existing.sourceTranscriptTerminalStatus
@@ -5927,6 +5943,7 @@ async function syncSubAgentSessionsForParentNow(parentSession) {
       ([field, value]) => JSON.stringify(existing?.[field]) !== JSON.stringify(value),
     );
     if (!hasChanged) continue;
+    if (!transcriptChanged) parsed.history = existing.history;
     const workspaceDirectories = getProjectSessionWorkspaceDirectories(parentSession.projectId);
     await Promise.all([
       fsp.mkdir(workspace, { recursive: true }),
@@ -7394,7 +7411,7 @@ const {
   ipcMain,
   mossHome: MOSS_HOME,
   sessions,
-  sessionDb,
+  loadSessionHistoryStmt: sessionStatements.loadSessionHistoryStmt,
   getMainWindow: () => mainWindow,
   normalizePreviewText,
   createSessionRecord,
@@ -7557,7 +7574,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     onChanged: resetLocalRuntimesForMcpReload,
     onCatalogChanged: () => {
       emitToRenderer('app:changed', { action: 'mcp-tools', timestamp: Date.now() });
-      refreshAllSessionModelResources();
+      refreshActiveSessionModelResources();
     },
     reservedName: (name) => Boolean(findConnectorMcpServer(name)),
     inspect: async (name, config, signal) => {
@@ -8483,7 +8500,8 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     // starting background Apps. App state is already available to IPC.
     let backgroundStarted = false;
     ipcMain.handle('host:renderer-ready', event => {
-      if (event.sender !== mainWindow?.webContents || backgroundStarted) return;
+      if (event.sender !== mainWindow?.webContents) return;
+      if (backgroundStarted) return appRuntimeRestorePromise;
       backgroundStarted = true;
       if (restoreSignal.aborted) return;
       appRuntimeRestorePromise = (async () => {
@@ -8522,13 +8540,15 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           registrationMs: registeredAt - reconciledAt,
           servicesMs: Date.now() - registeredAt,
         });
-      })().catch(error => mossLog('error', 'app-runtime', 'Unable to finish App startup restoration', {
-        error: error?.message || String(error),
-      })).finally(() => {
+      })().catch(error => {
+        mossLog('error', 'app-runtime', 'Unable to finish App startup restoration', { error: error?.message || String(error) });
+        throw error;
+      }).finally(() => {
         appRuntimeRestorePending = false;
         appRuntimeRestorePromise = null;
         if (!restoreSignal.aborted) void emitAppsChanged({ action: 'restored' });
       });
+      return appRuntimeRestorePromise;
     });
   }
   if (isWebHost && !webRestoreState.get().automationsPaused) void recoverInterruptedProjectCoordinatorTasks().catch((error) => {
@@ -9551,9 +9571,10 @@ async function synchronizeRemoteSessionsBestEffort() {
 }
 
 function listVisibleSessionSummaries() {
-  return [...sessions.values(), ...subAgentSessions.values()]
-    .filter(record => !record.deleted && !sessionArchives.archivedAt(record) && record.agentMode !== 'remote-direct')
-    .map(getSessionSummary)
+  const visible = [...sessions.values(), ...subAgentSessions.values()]
+    .filter(record => !record.deleted && !sessionArchives.archivedAt(record) && record.agentMode !== 'remote-direct');
+  const storedApps = visible.some(record => record.appIds?.length) ? listAllStoredApps() : [];
+  return visible.map(record => getSessionSummary(record, storedApps))
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
@@ -9912,7 +9933,6 @@ ipcMain.handle('agent:get-session', async (_event, { sessionId }) => {
   if (!sessionRecord.workspaceWatcher) {
     void startWorkspaceWatcher(sessionRecord);
   }
-  await refreshSessionModelResources(sessionRecord);
   return {
     ...getSessionSummary(sessionRecord),
     history,

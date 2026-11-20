@@ -254,7 +254,29 @@ export function prepareSessionStatements(sessionDb) {
   })();
   const deleteSessionStmt = sessionDb.prepare('DELETE FROM sessions WHERE id = ?');
   sessionDb.exec(`CREATE TABLE IF NOT EXISTS session_projections (session_id TEXT PRIMARY KEY, projection_json TEXT NOT NULL)`);
-  const loadSessionHistoryStmt = sessionDb.prepare('SELECT history_json FROM sessions WHERE id = ?');
+  sessionDb.exec(`
+    CREATE TABLE IF NOT EXISTS session_history_chunks (
+      session_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, events_json TEXT NOT NULL,
+      PRIMARY KEY (session_id, chunk_index)
+    ) WITHOUT ROWID;
+    CREATE TRIGGER IF NOT EXISTS delete_session_history_chunks AFTER DELETE ON sessions BEGIN
+      DELETE FROM session_history_chunks WHERE session_id = OLD.id;
+    END
+  `);
+  // Chunks contain comma-separated JSON events. A single read sees one committed
+  // snapshot, including legacy sessions whose history is still entirely inline.
+  const loadSessionHistoryStmt = sessionDb.prepare(`
+    SELECT coalesce((
+      SELECT '[' || group_concat(events_json, ',') || ']' FROM (
+        SELECT events_json FROM session_history_chunks WHERE session_id = sessions.id ORDER BY chunk_index
+      )
+    ), history_json) AS history_json FROM sessions WHERE id = ?
+  `);
+  const putChunk = sessionDb.prepare(`
+    INSERT INTO session_history_chunks VALUES (?, ?, ?) ON CONFLICT(session_id, chunk_index)
+    DO UPDATE SET events_json = excluded.events_json WHERE events_json != excluded.events_json
+  `);
+  const trimChunks = sessionDb.prepare('DELETE FROM session_history_chunks WHERE session_id = ? AND chunk_index >= ?');
   const loadSessionProjectionsStmt = sessionDb.prepare('SELECT session_id, projection_json FROM session_projections');
   const persistSessionProjectionStmt = sessionDb.prepare(`INSERT INTO session_projections VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET projection_json = excluded.projection_json WHERE projection_json != excluded.projection_json`);
   const deleteSessionProjectionStmt = sessionDb.prepare('DELETE FROM session_projections WHERE session_id = ?');
@@ -353,5 +375,35 @@ export function prepareSessionStatements(sessionDb) {
     ORDER BY created_at ASC
   `);
 
-  return { persistSessionStmt, deleteSessionStmt, loadSessionsStmt, loadSubAgentSessionsStmt, loadSessionHistoryStmt, loadSessionProjectionsStmt, persistSessionProjectionStmt, deleteSessionProjectionStmt };
+  const storedRevision = sessionDb.prepare("SELECT json_extract(projection_json, '$.historyRevision') AS revision FROM session_projections WHERE session_id = ?");
+  function saveSession(row, projection, history, expectedRevision) {
+    sessionDb.exec('SAVEPOINT save_session');
+    try {
+      persistSessionStmt.run(...row);
+      // An older in-memory record can outlive a replacement record for the same
+      // session. Reuse chunks only against the revision that supplied them.
+      const currentRevision = (history || expectedRevision !== undefined)
+        ? storedRevision.get(row[0])?.revision : undefined;
+      if (expectedRevision !== undefined && currentRevision !== expectedRevision) {
+        sessionDb.exec('ROLLBACK TO save_session');
+        sessionDb.exec('RELEASE save_session');
+        return false;
+      }
+      // A cold open has no in-memory chunk hashes. The committed revision still
+      // identifies the complete history, including its inline/chunked representation.
+      if (history && currentRevision !== history.revision) {
+        for (const { index, events } of history.writes) putChunk.run(row[0], index, events);
+        trimChunks.run(row[0], history.hashes.length);
+      }
+      persistSessionProjectionStmt.run(row[0], JSON.stringify(projection));
+      sessionDb.exec('RELEASE save_session');
+      return true;
+    } catch (error) {
+      sessionDb.exec('ROLLBACK TO save_session');
+      sessionDb.exec('RELEASE save_session');
+      throw error;
+    }
+  }
+
+  return { saveSession, deleteSessionStmt, loadSessionsStmt, loadSubAgentSessionsStmt, loadSessionHistoryStmt, loadSessionProjectionsStmt, deleteSessionProjectionStmt };
 }

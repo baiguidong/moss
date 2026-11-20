@@ -15,6 +15,7 @@ export class AppTraceHost {
     this.output = null
     this.closed = false
     this.pendingSessions = new Map()
+    this.lastSnapshots = new WeakMap()
     this.snapshotTask = null
   }
   active(instanceId) {
@@ -53,10 +54,21 @@ export class AppTraceHost {
     await core.configureTraceOutput(this.traceScope, { directory, isEnabled: () => this.active(instance.id) })
     this.output = { directory, instanceId: instance.id }
   }
-  async recordSession(record) {
+  async recordSession(record, unchangedPrefixLength = 0) {
     if (!this.output || !this.active(this.output.instanceId) || !record || record.agentMode === 'remote-direct' || record.deleted) return
     const sessionId = record.underlyingSessionId || record.sessionId || record.id
     if (!sessionId || !/^[a-zA-Z0-9._-]{1,160}$/.test(sessionId)) return
+    const key = JSON.stringify([sessionId, record.id, record.title, record.workspace, record.parentSessionId])
+    const previous = this.lastSnapshots.get(record)
+    const history = record.history || []
+    // Trace omits stream events. Final usage reconciliation can also change a
+    // previously captured assistant message, shortening the unchanged prefix.
+    if (previous?.output === this.output && previous.key === key && unchangedPrefixLength >= previous.length
+      && history.length >= previous.length && history.slice(previous.length).every(event => event?.type === 'stream_event')) {
+      previous.length = history.length
+      return this.snapshotTask
+    }
+    this.lastSnapshots.set(record, { output: this.output, key, length: history.length })
     this.pendingSessions.set(sessionId, { record, output: this.output })
     if (!this.snapshotTask) {
       this.snapshotTask = Promise.resolve().then(async () => {
@@ -73,7 +85,7 @@ export class AppTraceHost {
                   workDir: pending.record.workspace || null, parentSessionId: pending.record.parentSessionId || null },
                 messages: core.toTraceMessages([], pending.record.history || []),
               })
-            } catch (error) { this.log(error) }
+            } catch (error) { this.lastSnapshots.delete(pending.record); this.log(error) }
           }
         } finally { this.snapshotTask = null }
       })

@@ -11,11 +11,14 @@ import { normalizeStringList } from './shared/string-list.mjs';
 import { normalizeSessionKind, normalizeOriginChannel, normalizeToolDisplayMode, normalizeSessionEffort } from './shared/session-normalization.mjs';
 import { deriveSessionPreview, derivePendingPlanApproval } from './shared/session-history-display.mjs';
 
+const HISTORY_CHUNK_SIZE = 64;
+const hash = value => createHash('sha256').update(value).digest('hex');
+
 /** Metadata/history caches; Main owns the database and session records.
  * Settings and Trace Host are read lazily because they can change after startup.
  */
 export function createSessionPersistence({
-  statements: { persistSessionStmt, deleteSessionStmt, loadSessionsStmt, loadSubAgentSessionsStmt, loadSessionHistoryStmt, loadSessionProjectionsStmt, persistSessionProjectionStmt, deleteSessionProjectionStmt },
+  statements: { saveSession, deleteSessionStmt, loadSessionsStmt, loadSubAgentSessionsStmt, loadSessionHistoryStmt, loadSessionProjectionsStmt, deleteSessionProjectionStmt },
   sessions,
   subAgentSessions,
   DESKTOP_DATA_PATHS,
@@ -28,20 +31,40 @@ export function createSessionPersistence({
   mossLog,
 }) {
   const savedRows = new WeakMap();
+  const savedChunks = new WeakMap();
+  const pendingHistoryStarts = new WeakMap();
 
-  function savedSignature(record, row) {
-    return createHash('sha256').update(JSON.stringify([row, projectionFor(record, row), Boolean(record.busy)])).digest('hex');
+  function prepareHistory(record, unchangedPrefixLength, saved = []) {
+    if (record.historyLoaded === false) return null;
+    const events = record.history;
+    if (events.length <= HISTORY_CHUNK_SIZE) {
+      const inline = JSON.stringify(events);
+      return { inline, revision: hash(inline), hashes: [], writes: [] };
+    }
+    // Only complete, previously committed chunks can belong to the unchanged prefix.
+    const reusable = Math.min(unchangedPrefixLength, record.historyLength || 0, events.length);
+    const hashes = saved.slice(0, Math.floor(reusable / HISTORY_CHUNK_SIZE));
+    const writes = [];
+    for (let start = hashes.length * HISTORY_CHUNK_SIZE; start < events.length; start += HISTORY_CHUNK_SIZE) {
+      const index = hashes.length;
+      const json = JSON.stringify(events.slice(start, start + HISTORY_CHUNK_SIZE));
+      const digest = hash(json);
+      hashes.push(digest);
+      if (digest !== saved[index]) writes.push({ index, events: json.slice(1, -1) });
+    }
+    return { inline: '[]', revision: hash(hashes.join('')), hashes, writes };
   }
 
-  function projectionFor(record, row) {
+  function projectionFor(record, history) {
     return {
       pendingPlanApproval: record.pendingPlanApproval || null,
       sourceTranscriptSignature: record.sourceTranscriptSignature || null,
       sourceResourceManifestSignature: record.sourceResourceManifestSignature || null,
       sourceTranscriptFailed: record.sourceTranscriptFailed === true,
       sourceTranscriptTerminalStatus: record.sourceTranscriptTerminalStatus || null,
+      ...(record.isSubAgent ? { workerName: record.workerName || null } : {}),
       historyLength: record.historyLoaded === false ? record.historyLength || 0 : record.history.length,
-      historyRevision: record.historyLoaded === false ? record.historyRevision || null : createHash('sha256').update(row[12]).digest('hex'),
+      historyRevision: history?.revision ?? record.historyRevision ?? null,
     };
   }
 
@@ -83,7 +106,7 @@ export function createSessionPersistence({
       sessionRecord.isCoordinatorMode ? 1 : 0,
       sessionRecord.remoteWorkspace || null,
       sessionRecord.underlyingSessionId,
-      sessionRecord.historyLoaded === false ? '[]' : serializeSessionHistory(sessionRecord.history),
+      '[]', // Filled after comparing the metadata and history revision.
       isSubAgent ? 1 : 0,
       sessionRecord.workerSummariesJson || null,
       sessionRecord.assistantName || null,
@@ -119,10 +142,6 @@ export function createSessionPersistence({
       sessionRecord.modelOverride || null,
       sessionRecord.historyLoaded === false ? 0 : 1,
     ];
-  }
-
-  function serializeSessionHistory(history) {
-    return JSON.stringify(Array.isArray(history) ? history : []);
   }
 
   function parsePersistedSessionHistory(value) {
@@ -241,22 +260,38 @@ export function createSessionPersistence({
     }
   }
 
-  function persistSessionRecord(sessionRecord, isSubAgent = false) {
+  function savedSignature(row, projection, busy) {
+    return hash(JSON.stringify([row, projection, Boolean(busy)]));
+  }
+
+  function persistSessionRecord(sessionRecord, isSubAgent = false, unchangedPrefixLength = 0) {
     if (sessionRecord?.deleted) return;
     if (sessionRecord.historyLoaded !== false) sessionRecord.pendingPlanApproval = derivePendingPlanApproval(sessionRecord.history);
     if (sessionRecord.agentMode === 'remote-direct' && sessionRecord.historyLoaded !== false) applyRemoteSessionHistoryTitle(sessionRecord);
+    const saved = savedChunks.get(sessionRecord);
+    // If preparing or committing fails, the next save must check every chunk.
+    savedChunks.delete(sessionRecord);
+    const history = prepareHistory(sessionRecord, unchangedPrefixLength, saved);
     const row = toPersistedSessionRow(sessionRecord, isSubAgent);
-    const projection = projectionFor(sessionRecord, row);
-    const signature = savedSignature(sessionRecord, row);
-    if (savedRows.get(sessionRecord) === signature) return;
-    persistSessionStmt.run(...row);
-    persistSessionProjectionStmt?.run(sessionRecord.id, JSON.stringify(projection));
+    const projection = projectionFor(sessionRecord, history);
+    const signature = savedSignature(row, projection, sessionRecord.busy);
+    if (savedRows.get(sessionRecord) === signature) {
+      if (history) savedChunks.set(sessionRecord, history.hashes);
+      return;
+    }
+    if (history) row[12] = history.inline;
+    const expectedRevision = saved?.length ? sessionRecord.historyRevision : undefined;
+    if (!saveSession(row, projection, history, expectedRevision)) {
+      savedRows.delete(sessionRecord);
+      return persistSessionRecord(sessionRecord, isSubAgent);
+    }
+    if (history) savedChunks.set(sessionRecord, history.hashes);
     sessionRecord.historyLength = projection.historyLength;
     sessionRecord.historyRevision = projection.historyRevision;
     if (!sessionRecord.busy && sessionRecord.historyLoaded !== false) syncSessionSearchIndexBestEffort(sessionRecord);
     if (sessionRecord.historyLoaded === false) sessionSearchIndex.syncTitle?.(sessionRecord);
     persistSessionManifest(sessionRecord, isSubAgent);
-    if (sessionRecord.historyLoaded !== false) void getTraceHost()?.recordSession(sessionRecord).catch(error => mossLog('warn', 'trace', error.message));
+    if (history) void getTraceHost()?.recordSession(sessionRecord, unchangedPrefixLength).catch(error => mossLog('warn', 'trace', error.message));
     savedRows.set(sessionRecord, signature);
   }
 
@@ -265,19 +300,28 @@ export function createSessionPersistence({
       clearTimeout(sessionRecord.persistTimer);
       sessionRecord.persistTimer = null;
     }
+    pendingHistoryStarts.delete(sessionRecord);
     persistSessionRecord(sessionRecord, sessionRecord.isSubAgent);
   }
 
-  function schedulePersistSession(sessionRecord, immediate = false) {
+  function schedulePersistSession(sessionRecord, immediate = false, unchangedPrefixLength = 0) {
     if (sessionRecord?.deleted) return;
     if (immediate) {
       flushPendingSessionPersist(sessionRecord);
       return;
     }
+    const previousStart = pendingHistoryStarts.get(sessionRecord) ?? unchangedPrefixLength;
+    pendingHistoryStarts.set(sessionRecord, Math.min(previousStart, unchangedPrefixLength));
     if (sessionRecord.persistTimer) return;
     sessionRecord.persistTimer = setTimeout(() => {
       sessionRecord.persistTimer = null;
-      persistSessionRecord(sessionRecord, sessionRecord.isSubAgent);
+      const start = pendingHistoryStarts.get(sessionRecord);
+      pendingHistoryStarts.delete(sessionRecord);
+      try {
+        persistSessionRecord(sessionRecord, sessionRecord.isSubAgent, start);
+      } catch (error) {
+        mossLog('error', 'session', 'Failed to persist session', { sessionId: sessionRecord.id, error: error.message });
+      }
     }, 200);
   }
 
@@ -411,7 +455,7 @@ export function createSessionPersistence({
       sessions.set(sessionRecord.id, sessionRecord);
       Object.assign(sessionRecord, projections.get(sessionRecord.id) || {});
       if (loadSessionHistoryStmt) installLazyHistory(sessionRecord);
-      savedRows.set(sessionRecord, savedSignature(sessionRecord, toPersistedSessionRow(sessionRecord)));
+      savedRows.set(sessionRecord, savedSignature(toPersistedSessionRow(sessionRecord), projectionFor(sessionRecord, null), false));
     }
 
     // Load sub-agent sessions
@@ -449,6 +493,7 @@ export function createSessionPersistence({
         runtime: null,
         pendingMcpRuntimeReload: false,
         resumeReadOnlyReason: '子会话记录为只读，请返回主会话继续协调。',
+        workerName: null,
         workspaceWatcher: null,
         workspaceWatcherSyncTimer: null,
         persistTimer: null,
@@ -492,7 +537,7 @@ export function createSessionPersistence({
       subAgentSessions.set(sessionRecord.id, sessionRecord);
       Object.assign(sessionRecord, projections.get(sessionRecord.id) || {});
       if (loadSessionHistoryStmt) installLazyHistory(sessionRecord);
-      savedRows.set(sessionRecord, savedSignature(sessionRecord, toPersistedSessionRow(sessionRecord, true)));
+      savedRows.set(sessionRecord, savedSignature(toPersistedSessionRow(sessionRecord, true), projectionFor(sessionRecord, null), false));
     }
   }
 

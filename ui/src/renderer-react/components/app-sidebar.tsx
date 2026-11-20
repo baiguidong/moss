@@ -14,6 +14,7 @@ import {
   PenSquare,
   Pin,
   LogIn,
+  LoaderCircle,
   Search,
   Settings,
   SunMedium,
@@ -126,6 +127,9 @@ const SIDEBAR_MORE_VIEW_CONFIG: Record<SidebarMoreView, { label: string; icon: t
 
 interface AppSidebarProps {
   sessions: SidebarSession[];
+  sessionListState?: 'loading' | 'ready' | 'error';
+  openingSessionId?: string | null;
+  restoringApps?: boolean;
   projects?: Project[];
   apps: StoredApp[];
   activeSessionId: string | null;
@@ -316,6 +320,9 @@ function ThemeButton({
 
 export function AppSidebar({
   sessions,
+  sessionListState = 'ready',
+  openingSessionId,
+  restoringApps,
   projects = [],
   apps,
   activeSessionId,
@@ -372,6 +379,10 @@ export function AppSidebar({
 
   const historySessions = sessions.filter((session) => !session.isSubAgent);
   const activeHistorySessionId = getSidebarActiveSessionId(sessions, activeSessionId);
+  const openingTitle = openingSessionId && sessions.find(session => session.id === openingSessionId)?.title;
+  const status = openingSessionId ? (openingTitle ? `正在打开「${openingTitle}」…` : '正在打开会话…')
+    : sessionListState === 'loading' ? '正在加载会话列表…'
+    : restoringApps ? '正在恢复后台应用…' : '';
   const filteredSessions = filterSidebarSessionsByQuery(historySessions, searchQuery).filter((session) => (
     session.sessionKind !== 'agent-mail' || (enterpriseEnabled && agentMailEnabled)
   ));
@@ -577,6 +588,12 @@ export function AppSidebar({
         </div>
       </div>
 
+      {status && (
+        <div role="status" title={status} className={cn("flex items-center gap-2 px-4 py-1.5 text-xs text-muted-foreground", collapsed && "justify-center")}>
+          <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 shrink-0 motion-safe:animate-spin" />
+          <span className={collapsed ? "sr-only" : "truncate"}>{status}</span>
+        </div>
+      )}
       {collapsed ? (
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col items-center gap-1.5 p-2">
@@ -729,11 +746,11 @@ export function AppSidebar({
                   );
                 })}
                 </>
-              ) : (
+              ) : sessionListState === 'ready' ? (
                 <div className="rounded-xl border border-dashed border-sidebar-border px-4 py-4 text-sm text-sidebar-foreground/55">
                   还没有历史会话
                 </div>
-              )}
+              ) : null}
             </div>
           </ScrollArea>
         </>

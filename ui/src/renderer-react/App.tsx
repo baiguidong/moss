@@ -355,7 +355,14 @@ export default function App() {
   const [operationDrafts, setOperationDrafts] = React.useState<OperationDraft[]>([]);
   const [selectedOperationDraftId, setSelectedOperationDraftId] = React.useState<string | null>(null);
   const [activeView, setActiveViewRaw] = React.useState<MainView>('chat');
-  const setActiveView = React.useCallback((view: MainView) => { if (confirmAppViewLeave()) setActiveViewRaw(view); }, []);
+  const openSessionRequestIdRef = React.useRef(0);
+  const [openingSessionId, setOpeningSessionId] = React.useState<string | null>(null);
+  const setActiveView = React.useCallback((view: MainView) => {
+    if (!confirmAppViewLeave()) return;
+    openSessionRequestIdRef.current++;
+    setOpeningSessionId(null);
+    setActiveViewRaw(view);
+  }, []);
   const [settingsInitialSection, setSettingsInitialSection] = React.useState<'basic-info' | 'model' | 'permission' | 'agents'>('basic-info');
   const [settingsInitialAppId, setSettingsInitialAppId] = React.useState<string | null>(null);
   const [compactViewport, setCompactViewport] = React.useState(() => window.innerWidth < 720);
@@ -439,6 +446,8 @@ export default function App() {
   }, []);
   const [browserOpenSignal, setBrowserOpenSignal] = React.useState(0);
   const [summaries, setSummaries] = React.useState<SessionSummary[]>([]);
+  const [sessionListState, setSessionListState] = React.useState<'loading' | 'ready' | 'error'>('loading');
+  const [restoringApps, setRestoringApps] = React.useState(false);
   const removedSessionIdsRef = React.useRef<Set<string>>(new Set());
   const deletingSessionIdsRef = React.useRef<Set<string>>(new Set());
   const [projects, setProjects] = React.useState<Project[]>([]);
@@ -610,7 +619,6 @@ export default function App() {
     setLayout(previous => ({ ...previous, rightCollapsed: false, rightWidth: previous.rightCollapsed ? Math.max(previous.rightWidth, 440) : previous.rightWidth }));
     sessionPanel.selectTab('presentation');
   });
-  const openSessionRequestIdRef = React.useRef(0);
   const workspaceDirectoryLoader = React.useMemo(() => createWorkspaceDirectoryLoader({
     getScope: () => {
       const detail = activeDetailRef.current;
@@ -654,6 +662,7 @@ export default function App() {
     const visible = excludeRemovedSessions(list, removedSessionIdsRef.current);
     initializeHomeResourceUsage(visible);
     setSummaries(visible);
+    setSessionListState('ready');
     return visible;
   }, []);
 
@@ -895,34 +904,37 @@ export default function App() {
   }, [clearSessionWorkspaceState, refreshAssistants]);
 
   const openSession = React.useCallback(async (sessionId: string, signal?: AbortSignal) => {
-    if (!confirmAppViewLeave()) return false;
+    if (signal?.aborted || !confirmAppViewLeave()) return false;
     const requestId = ++openSessionRequestIdRef.current;
-    let detail;
+    const isCurrent = () => !signal?.aborted && requestId === openSessionRequestIdRef.current;
+    setOpeningSessionId(sessionId);
     try {
-      detail = await window.agentDesktop.getSession({ sessionId });
-      const context = await window.agentDesktop.getAppAuthoringContext?.(sessionId);
+      const [detail, context] = await Promise.all([
+        window.agentDesktop.getSession({ sessionId }),
+        window.agentDesktop.getAppAuthoringContext?.(sessionId).catch(() => null),
+      ]);
+      if (!isCurrent()) return false;
       if (context) {
         const previous = composerDraftsRef.current[sessionId] || { text: '', files: [] };
         composerDraftsRef.current[sessionId] = { ...previous, appSelection: { ...context, appId: context.providerId.split('/')[0], title: 'App 项目' } };
       }
-    } catch {
-      // 会话可能已被删除或后端出错; 忽略并保持当前视图
+      const workspaceChanged = activeDetailRef.current?.id !== sessionId
+        || activeDetailRef.current?.workspace !== detail.workspace;
+      setActiveViewRaw('chat');
+      activeSessionIdRef.current = sessionId;
+      activeDetailRef.current = detail;
+      setActiveSessionId(sessionId);
+      setComposerIntent(reconcileComposerIntent(detail, composerIntentStatesRef.current));
+      setActiveDetail(detail);
+      if (workspaceChanged) clearSessionWorkspaceState();
+      return true;
+    } catch (error) {
+      if (isCurrent()) showPermissionNotice(`会话打开失败：${cleanIpcErrorMessage(error)}`, 'error', 6000);
       return false;
+    } finally {
+      if (requestId === openSessionRequestIdRef.current) setOpeningSessionId(null);
     }
-    if (signal?.aborted || requestId !== openSessionRequestIdRef.current) {
-      return false;
-    }
-    const workspaceChanged = activeDetailRef.current?.id !== sessionId
-      || activeDetailRef.current?.workspace !== detail.workspace;
-    setActiveView('chat');
-    activeSessionIdRef.current = sessionId;
-    activeDetailRef.current = detail;
-    setActiveSessionId(sessionId);
-    setComposerIntent(reconcileComposerIntent(detail, composerIntentStatesRef.current));
-    setActiveDetail(detail);
-    if (workspaceChanged) clearSessionWorkspaceState();
-    return true;
-  }, [clearSessionWorkspaceState]);
+  }, [clearSessionWorkspaceState, showPermissionNotice]);
 
   const handleOpenSearchResult = React.useCallback(async (result: SessionSearchResult) => {
     setGlobalSearchOpen(false);
@@ -991,7 +1003,6 @@ export default function App() {
       const sessionId = projectCreationReturnSessionRef.current;
       projectCreationReturnSessionRef.current = null;
       await openSession(sessionId);
-      setActiveView('chat');
     }
     return result;
   }, [createAndOpenSession, openSession]);
@@ -1331,41 +1342,42 @@ export default function App() {
 
   React.useEffect(() => {
     let cancelled = false;
-
-    void (async () => {
-      try {
-        const status = await window.agentDesktop.getStatus();
-        let nextSettings = await window.agentDesktop.getSettings();
-        if (!nextSettings.appearancePersisted) {
-          nextSettings = await window.agentDesktop.updateSettings({
-            appearance: appearanceRef.current,
-          });
-        }
-        if (!status.sdkReady) {
-          setBootError('缺少嵌入式代码会话运行时，请重新构建或安装 Moss。');
-        }
-        applyDesktopSettings(nextSettings);
-        const [initialApps] = await Promise.all([
-          refreshApps(),
-          refreshSummaries(),
-          refreshProjects(),
-          refreshAssistants('local'),
-        ]);
-        if (!cancelled && !window.mossWeb) {
-          if (initialApps.length === 0) setActiveView('apps');
-          requestAnimationFrame(() => { void window.agentDesktop.ipcInvoke('host:renderer-ready').catch(() => {}); });
-        }
-      } catch (error: any) {
-        if (!cancelled) {
-          setBootError(error?.message || String(error));
-        }
+    const reportError = (error: unknown) => {
+      if (!cancelled) setBootError(cleanIpcErrorMessage(error));
+    };
+    void refreshSummaries().catch(error => {
+      if (!cancelled) setSessionListState('error');
+      reportError(error);
+    }).then(() => {
+      if (cancelled || window.mossWeb) return;
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        setRestoringApps(true);
+        void window.agentDesktop.ipcInvoke('host:renderer-ready').catch(reportError).finally(() => {
+          if (!cancelled) setRestoringApps(false);
+        });
+      });
+    });
+    void refreshApps().then(initialApps => {
+      if (!cancelled && !window.mossWeb && !initialApps.length && openSessionRequestIdRef.current === 0) setActiveView('apps');
+    }).catch(reportError);
+    void refreshProjects().catch(reportError);
+    void refreshAssistants('local').catch(reportError);
+    void window.agentDesktop.getStatus().then(status => {
+      if (!cancelled && !status.sdkReady) setBootError('缺少嵌入式代码会话运行时，请重新构建或安装 Moss。');
+    }).catch(reportError);
+    void window.agentDesktop.getSettings().then(async nextSettings => {
+      if (cancelled) return;
+      if (!nextSettings.appearancePersisted) {
+        nextSettings = await window.agentDesktop.updateSettings({ appearance: appearanceRef.current });
       }
-    })();
+      if (!cancelled) applyDesktopSettings(nextSettings);
+    }).catch(reportError);
 
     return () => {
       cancelled = true;
     };
-  }, [applyDesktopSettings, openSession, refreshApps, refreshSummaries, refreshProjects, refreshAssistants]);
+  }, [applyDesktopSettings, refreshApps, refreshSummaries, refreshProjects, refreshAssistants, setActiveView]);
 
   React.useEffect(() => {
     if (!window.mossWeb) return;
@@ -1893,9 +1905,7 @@ export default function App() {
   const handleSelectSession = React.useCallback(async (sessionId: string) => {
     setToolFocusTarget(null);
     setMessageFocusTarget(null);
-    const opened = await openSession(sessionId);
-    if (!opened) return;
-    setActiveView('chat');
+    await openSession(sessionId);
   }, [openSession]);
 
   const handleForkSession = React.useCallback(async () => {
@@ -2713,9 +2723,7 @@ export default function App() {
       setToolFocusTarget(null);
       setMessageFocusTarget(null);
       if (!entry.sessionId) return navigateToHome();
-      const opened = await openSession(entry.sessionId, signal);
-      if (!opened && !signal.aborted) showPermissionNotice('该会话已删除或暂时无法打开。', 'error', 5000);
-      return opened;
+      return openSession(entry.sessionId, signal);
     }
     if (entry.view === 'app-info') {
       if (!apps.some(app => app.name === entry.appName)) {
@@ -2845,7 +2853,7 @@ export default function App() {
 
   React.useEffect(() => window.agentDesktop.onAppOpenSession(({ sessionId, toolUseId }) => {
     void openSession(sessionId).then(opened => {
-      if (!opened) { showPermissionNotice('对应会话不存在或当前无法打开。', 'error', 6000); return; }
+      if (!opened) return;
       toolFocusRequestIdRef.current += 1;
       setToolFocusTarget(toolUseId ? { sessionId, toolUseId, requestId: toolFocusRequestIdRef.current } : null);
     }).catch(error => showPermissionNotice(String(error.message || error), 'error', 6000));
@@ -3171,6 +3179,9 @@ export default function App() {
           <AppSidebar
             headerActions={window.mossWeb && !window.mossDesktopShell?.getPresentation ? notificationCenter : undefined}
             sessions={sidebarSessions}
+            sessionListState={sessionListState}
+            openingSessionId={openingSessionId}
+            restoringApps={restoringApps}
             projects={projects}
             apps={apps}
             activeSessionId={activeSessionId}
@@ -3279,7 +3290,7 @@ export default function App() {
               onBack={() => {
                 const returnSession = projectCreationReturnSessionRef.current;
                 projectCreationReturnSessionRef.current = null;
-                if (returnSession) { void openSession(returnSession); setActiveView('chat'); }
+                if (returnSession) void openSession(returnSession);
                 else setActiveView(appDetailsReturnView.current);
               }}
               onTry={prompt => {

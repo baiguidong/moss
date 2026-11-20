@@ -54,7 +54,7 @@ function PluginSectionView({ section }: { section: PluginSection }) {
   </section>;
 }
 
-export function SessionPluginsPanel({ session, apps: _apps, installedAssistants: _installedAssistants, initialCatalog }: {
+export function SessionPluginsPanel({ session, apps, installedAssistants: _installedAssistants, initialCatalog }: {
   session: SessionDetail;
   apps: StoredApp[];
   installedAssistants: InstalledAssistant[];
@@ -67,7 +67,7 @@ export function SessionPluginsPanel({ session, apps: _apps, installedAssistants:
       if (active && value) setCatalog(value as SessionPluginCatalog);
     }).catch(() => {});
     return () => { active = false; };
-  }, [session.id, session.assistantName, (session.skillIds || []).join('\u0000'), (session.appIds || []).join('\u0000'), (session.appServiceIds || []).join('\u0000'), (session.connectorIds || []).join('\u0000')]);
+  }, [apps, session.id, session.assistantName, (session.skillIds || []).join('\u0000'), (session.appIds || []).join('\u0000'), (session.appServiceIds || []).join('\u0000'), (session.connectorIds || []).join('\u0000')]);
 
   const sections = React.useMemo<PluginSection[]>(() => {
     const toolCards: PluginCard[] = catalog.tools.map(tool => ({ id: `tool:${tool.id}`, title: firstText(tool.title, tool.name, tool.id), description: tool.description, meta: tool.source === 'built-in' ? 'Moss 内置工具' : tool.source === 'mcp' ? 'MCP 工具' : '当前会话 App 工具', badges: [tool.source === 'built-in' ? '内置' : tool.source === 'mcp' ? 'MCP' : 'App'], icon: toolIcon() }));
