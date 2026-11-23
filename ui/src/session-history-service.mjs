@@ -100,7 +100,8 @@ export function createSessionHistoryService({
     getPath: record => record.agentMode === 'remote-direct' || record.isSubAgent
       ? null : getLocalSessionTranscriptPath(record),
     readHistory: record => loadDisplayHistoryFromLocalTranscript(record, { requireComplete: true }),
-    canSync: record => !record.busy && !record.syncingLocalTranscript && !hasActiveAgentTeam(record)
+    canSync: (record, duringPreparation) => !record.busy && (!record.preparingPrompt || duringPreparation)
+      && !record.syncingLocalTranscript && !hasActiveAgentTeam(record)
       && !Object.values(record.runtime?.getAppState?.()?.tasks || {}).some(task => task?.status === 'running'),
     invalidateRuntime: record => disposeRuntime(record),
     applyHistory: (record, history, { modifiedAt }) => {

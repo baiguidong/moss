@@ -85,6 +85,7 @@ ${content.trimEnd()}
 
 The command is likely blocked on an interactive prompt. Kill this task and re-run with piped input (e.g., \`echo y | command\`) or a non-interactive flag if one exists.`;
         enqueuePendingNotification({
+          backgroundTaskId: taskId,
           value: message,
           mode: 'task-notification',
           priority: 'next',
@@ -144,6 +145,7 @@ function enqueueShellNotification(taskId: string, description: string, status: '
 <${SUMMARY_TAG}>${escapeXml(summary)}</${SUMMARY_TAG}>
 </${TASK_NOTIFICATION_TAG}>`;
   enqueuePendingNotification({
+    backgroundTaskId: taskId,
     value: message,
     mode: 'task-notification',
     priority: 'later',

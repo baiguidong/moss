@@ -6,8 +6,16 @@ import type { ImageSettings } from '../services/imageGeneration.js'
 
 export type SessionExecutionEnvironment = 'desktop' | 'server'
 
+/** The host serializes consumers with user turns and persists receipts until accepted. */
+export type SessionTaskInbox = {
+  publish(uuid: string, value: string, taskId: string): boolean
+  peek(): { uuid: string; value: string } | undefined
+  acknowledge(uuid: string): void
+}
+
 /** Host-owned capabilities, inherited by workers; never taken from model input. */
 export type SessionRuntime = {
+  taskInbox?: SessionTaskInbox
   /** Explicit host capability; a desktop execution environment alone is insufficient. */
   presentationEnabled?: boolean
   presentationTurn?: { id: string; sessionId: string; epoch?: string }

@@ -126,6 +126,7 @@ export async function startMonitorTask(
     }
     eventCount += 1;
     enqueuePendingNotification({
+      backgroundTaskId: taskId,
       value: formatMonitorEventNotification(
         { taskId, line, eventNumber: eventCount },
         outputFile,
@@ -241,6 +242,7 @@ export async function startMonitorTask(
             ? undefined
             : "exited with an error";
       enqueuePendingNotification({
+        backgroundTaskId: taskId,
         value: formatMonitorCompletionNotification(
           taskId,
           outputFile,

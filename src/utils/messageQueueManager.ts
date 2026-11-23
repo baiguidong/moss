@@ -17,6 +17,8 @@ import type { PastedContent } from './config.js'
 import { extractTextContent } from './messages.js'
 import { objectGroupBy } from './objectGroupBy.js'
 import { recordQueueOperation } from './sessionStorage.js'
+import { getSessionRuntimeContext, type SessionTaskInbox } from './sessionIdContext.js'
+import type { Message } from '../types/message.js'
 import { createSignal } from './signal.js'
 
 export type SetAppState = (f: (prev: AppState) => AppState) => void
@@ -158,9 +160,30 @@ export function enqueue(command: QueuedCommand): void {
  */
 export function enqueuePendingNotification(command: QueuedCommand): void {
   const queuedCommand = withQueueDefaults(command, 'later')
+  const inbox = getSessionRuntimeContext()?.taskInbox
+  if (inbox && queuedCommand.backgroundTaskId && queuedCommand.sessionId === getSessionId() && queuedCommand.agentId === undefined &&
+      queuedCommand.mode === 'task-notification' && typeof queuedCommand.value === 'string') {
+    if (inbox.publish(queuedCommand.uuid!, queuedCommand.value, queuedCommand.backgroundTaskId)) logOperation('enqueue', queuedCommand)
+    return
+  }
   commandQueue.push(queuedCommand)
   notifySubscribers()
   logOperation('enqueue', queuedCommand)
+}
+
+export function acknowledgeTaskNotification(inbox: SessionTaskInbox, receipt: { uuid: string; value: string }): void {
+  inbox.acknowledge(receipt.uuid)
+  logOperation('dequeue', { uuid: receipt.uuid as UUID, value: receipt.value, mode: 'task-notification' })
+}
+
+export function nextTaskNotification(inbox: SessionTaskInbox | undefined, messages: readonly Message[]) {
+  if (!inbox) return undefined
+  // A restart can land between flushing the transcript and acknowledging its input.
+  for (let receipt = inbox.peek(); receipt; receipt = inbox.peek()) {
+    const { uuid } = receipt
+    if (!messages.some(m => m.type === 'user' && m.origin?.kind === 'task-notification' && m.uuid === uuid)) return receipt
+    acknowledgeTaskNotification(inbox, receipt)
+  }
 }
 
 const PRIORITY_ORDER: Record<QueuePriority, number> = {

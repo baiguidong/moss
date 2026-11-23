@@ -48,6 +48,15 @@ describe('local transcript synchronization', () => {
     await appendFile(record.file, jsonl([user('CLI turn after the Desktop cache was loaded')]));
     expect(await service.loadSessionHistoryFromSource(record)).toEqual([user('desktop prompt'), user('CLI turn after the Desktop cache was loaded')]);
     expect(record.runtime).toBeNull();
+
+    const runtime = {};
+    Object.assign(record, { runtime, preparingPrompt: true });
+    await appendFile(record.file, jsonl([user('CLI turn before the next Desktop send')]));
+    expect(await service.localTranscriptSync.refresh(record)).toBe(false);
+    expect(record.runtime).toBe(runtime);
+    expect(await service.localTranscriptSync.refresh(record, { duringPreparation: true })).toBe(true);
+    expect(record.runtime).toBeNull();
+    expect(record.history.at(-1)).toEqual(user('CLI turn before the next Desktop send'));
   });
 
   it('publishes CLI appends while Desktop stays open, and invalidates its stale runtime', async () => {

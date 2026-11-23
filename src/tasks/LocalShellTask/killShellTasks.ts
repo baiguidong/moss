@@ -4,6 +4,7 @@
 
 import type { AppState } from '../../state/AppState.js'
 import type { AgentId } from '../../types/ids.js'
+import { getSessionIdContext } from '../../utils/sessionIdContext.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { logError } from '../../utils/log.js'
 import { dequeueAllMatching } from '../../utils/messageQueueManager.js'
@@ -72,5 +73,6 @@ export function killShellTasksForAgent(
   // has exited and won't drain them. killTask fires 'killed' notifications
   // asynchronously; drop the ones already queued and any that land later sit
   // harmlessly (no consumer matches a dead agentId).
-  dequeueAllMatching(cmd => cmd.agentId === agentId)
+  const owner = getSessionIdContext()
+  dequeueAllMatching(cmd => cmd.agentId === agentId && (!owner || cmd.sessionId === owner))
 }

@@ -51,6 +51,7 @@ import { buildFileAttachmentPrompt, createSessionPromptPreparation } from './ses
 import { ensureInsideRoot, getSessionWorkspaceRoot, applyRemoteSessionWorkspace } from './workspace-paths.mjs';
 import { isPathInsideDirectory, hasFile } from './shared/file-path-utils.mjs';
 import { registerSessionControlIpc } from './session-control-ipc.mjs';
+import { createSessionTaskInbox } from './session-task-inbox.mjs';
 import { createSessionSendCancellation } from './session-send-cancellation.mjs';
 import { registerSessionEffortIpc } from './session-effort.mjs';
 import { createDesktopControlFeature } from './desktop-control/feature.mjs';
@@ -819,6 +820,31 @@ const memoryCatalog = createMemoryCatalog({
   readRemoteSessionMemory: (sessionId) => readRemoteSessionMemoryForDesktop(sessionId),
 });
 const desktopStateStore = createDesktopStateStore(sessionDb);
+const sessionTaskInbox = createSessionTaskInbox({
+  db: sessionDb,
+  getSession: id => sessions.get(id),
+  canRun: () => !appQuitting && !appQuitPending && !webAutomationsPaused && !hostControlPaused && !hostAccessDenied,
+  whenIdle: async id => {
+    while (sessionSendQueues.has(id) || sessionPromptQueues.has(id)) {
+      await Promise.allSettled([sessionSendQueues.get(id), sessionPromptQueues.get(id)]);
+    }
+  },
+  deliver: (record, inbox) => sessionSendCancellation.run(record.id, signal =>
+    runInKeyedQueue(sessionSendQueues, record.id, async () => {
+      signal.throwIfAborted();
+      if (!inbox.peek()) return;
+      const project = record.projectId && getSessionProject(record);
+      if (record.projectId && (!project || project.archivedAt)) {
+        sessionTaskInbox.cancel(record);
+        return;
+      }
+      if (sessionSendCancellation.hasWaitingInput(record.id, signal)) return false;
+      await runSessionPrompt({ sessionRecord: record, runtimePrompt: '', taskInbox: inbox,
+        notificationsOnly: true, controllerSignal: signal, failOnApiError: true });
+      return !sessionSendCancellation.hasWaitingInput(record.id, signal);
+    })),
+  onError: (id, error) => mossLog('warn', 'session', 'Background task notification delivery failed', { sessionId: id, error: error.message }),
+});
 const agentChannelStore = createAgentChannelStore(sessionDb);
 const agentMailStore = createAgentMailStore(sessionDb);
 const appNotificationBroker = createAppNotificationBroker(sessionDb, {
@@ -1055,6 +1081,7 @@ const sessionTaskService = createSessionTaskService({
   scheduleSubAgentSessionSync, sessions, subAgentSessions,
   getAppTasks: id => appExecutionHost?.listSession(id) || [],
   getAppTaskHistory: id => appExecutionHost?.listSessionHistory(id) || [],
+  onTaskStopped: (record, taskId) => sessionTaskInbox.cancelTask(record, taskId),
   cancelAppTask: (sessionId, taskId) => { const task = appExecutionHost?.tasks[taskId]; if (!task || task.source.sessionId !== sessionId) return false; appExecutionHost.cancelTask(task, '用户停止任务'); return true; },
 });
 const { attachBackgroundTaskWatcher, attachSessionTaskWatcher, getClaudeTempDirForLookup, snapshotBackgroundTasks, snapshotSessionTasks } = sessionTaskService;
@@ -3789,6 +3816,8 @@ async function runSessionPromptObserved({
   controllerSignal,
   retryEncryptedContentOnce = false,
   suppressInitialPromptEcho = false,
+  notificationsOnly = false,
+  taskInbox,
   agentMailTurn = null,
   turnContext,
 }) {
@@ -3807,7 +3836,9 @@ async function runSessionPromptObserved({
     await prepareAssistantContextForSessionStart(sessionRecord);
     sessionRecord.managedCatalogKey = catalogKey;
   }
-  await localTranscriptSync.refresh(sessionRecord);
+  // Refresh before selecting the engine. A watcher must not dispose that
+  // engine between here and the transition from preparingPrompt to busy.
+  await localTranscriptSync.refresh(sessionRecord, { duringPreparation: true });
   if (sessionRecord.projectId && !sessionRecord.isSubAgent) {
     snapshotLegacyProjectDefaults(sessionRecord);
     if (refreshProjectSessionInstructions(readProjectSync(sessionRecord.projectId), sessionRecord)) {
@@ -3928,7 +3959,14 @@ async function runSessionPromptObserved({
         submittedVisibleUserIds.add(visibleUserEvent.uuid);
         await bindVisibleUser(visibleUserEvent);
       }
-      for await (const message of runtime.send(prompt, controllerSignal, { userMessageId: visibleUserEvent?.uuid, preparedTools, presentationTurn: turnContext })) {
+      const inbox = taskInbox || (sessionRecord.agentMode !== 'remote-direct' && runtime.sessionId
+        ? sessionTaskInbox.bind(sessionRecord, runtime.sessionId) : undefined);
+      const turnInbox = inbox && { ...inbox, peek: () =>
+        sessionSendCancellation.hasWaitingInput(sessionRecord.id, controllerSignal) ? undefined : inbox.peek() };
+      for await (const message of runtime.send(prompt, controllerSignal, {
+        userMessageId: visibleUserEvent?.uuid, preparedTools, presentationTurn: turnContext,
+        taskInbox: turnInbox, notificationsOnly,
+      })) {
         if (isExpectedControllerCancellation(message, controllerSignal)) continue;
         if (turnContext.observation) turnObservationService.observeMessage(turnContext.observation, message);
         const replayUserText = extractTextFromUserReplayMessage(message);
@@ -4045,7 +4083,7 @@ async function runSessionPromptObserved({
     };
 
     const runtimePromptText = extractTextFromRuntimePrompt(runtimePrompt);
-    const allowAutoCompactRetry =
+    const allowAutoCompactRetry = !notificationsOnly &&
       !runtimePromptText.trim().startsWith(AUTOMATIC_COMPACT_PROMPT);
 
     const runAutomaticCompactRetry = async (reason) => {
@@ -7172,7 +7210,7 @@ hostControl = createHostControlClient({ home: MOSS_HOME, db: sessionDb, kind: is
     const wasDenied = Boolean(hostAccessDenied);
     hostAccessDenied = access.allowed ? null : access.reason || '企业访问已停用';
     saveHostControlState();
-    if (wasDenied && !hostAccessDenied && !hostControlPaused) { startMossCronScheduler(); initializeAgentMail(); agentMailPoller?.refresh(); }
+    if (wasDenied && !hostAccessDenied && !hostControlPaused) { sessionTaskInbox.recover(); startMossCronScheduler(); initializeAgentMail(); agentMailPoller?.refresh(); }
     if (hostAccessDenied) {
       for (const record of sessions.values()) if ((isWebHost || hostControl.ownsSession(record.id)) && (record.busy || record.preparingPrompt)) {
         await ipcMain.invoke('agent:abort', { transport: 'control-plane' }, { sessionId: record.id }).catch(() => {});
@@ -7181,7 +7219,7 @@ hostControl = createHostControlClient({ home: MOSS_HOME, db: sessionDb, kind: is
   },
   execute: async command => {
     if (command.action === 'pause') { hostControlPaused = true; saveHostControlState(); return; }
-    if (command.action === 'resume') { hostControlPaused = false; saveHostControlState(); startMossCronScheduler(); initializeAgentMail(); agentMailPoller?.refresh(); return; }
+    if (command.action === 'resume') { hostControlPaused = false; saveHostControlState(); sessionTaskInbox.recover(); startMossCronScheduler(); initializeAgentMail(); agentMailPoller?.refresh(); return; }
     if (command.action === 'cancel-session') {
       const record = getSessionRecord(command.input.sessionId);
       if (!record || !hostControl.ownsSession(record.id)) throw new Error('会话不属于当前企业账号');
@@ -8449,7 +8487,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         appRuntimeRestorePromise = appRuntime?.restore({ signal: resumeSignal, concurrency: 3 });
         await appRuntimeRestorePromise;
         if (resumeSignal.aborted) return;
-        initializeAgentMail(); startMossCronScheduler(); agentTeamsService?.start();
+        sessionTaskInbox.recover(); initializeAgentMail(); startMossCronScheduler(); agentTeamsService?.start();
       },
       registry: ipcMain, home: MOSS_HOME, rendererRoot: path.dirname(rendererHtml), overrides, oauth: webOAuth, resources: webResources, apps: webApps,
       onDisconnect: connectionId => webTerminals?.disconnect(connectionId),
@@ -8484,6 +8522,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         await refreshRestoredAppServices(undefined, webRestoreSignal);
         if (webRestoreSignal.aborted) return;
         if (!webAutomationsPaused) {
+          sessionTaskInbox.recover();
           initializeAgentMail();
           startMossCronScheduler();
           agentTeamsService?.start();
@@ -8525,6 +8564,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         await refreshRestoredAppServices(startupApps, restoreSignal);
         if (restoreSignal.aborted) return;
         if (!webAutomationsPaused) {
+          sessionTaskInbox.recover();
           initializeAgentMail();
           startMossCronScheduler();
           agentTeamsService?.start();
@@ -10056,6 +10096,7 @@ ipcMain.handle('agent:rewind-turn', async (_event, { sessionId, userMessageId } 
       try {
         restoredFiles = await runtime.rewindFiles(targetId);
         removedRuntimeMessages = await runtime.rewindConversation(targetId);
+        sessionTaskInbox.cancel(sessionRecord);
       } catch (error) {
         try {
           await appSessionSourceHost?.updateEvent(sessionEvent, {
@@ -10328,7 +10369,8 @@ async function deleteSessionRecordById(sessionId, guard) {
   // cleanup that must not publish a final state for a session being deleted.
   sessionRecord.deleted = true;
   try { await appSessionStorage.closeSession(sessionId); }
-  catch (error) { sessionRecord.deleted = false; throw error; }
+  catch (error) { sessionRecord.deleted = false; sessionTaskInbox.recover(); throw error; }
+  sessionTaskInbox.cancel(sessionRecord);
   await computerUseService.disposeSession(sessionRecord.id);
   localTranscriptSync.forget(sessionRecord);
   try {
@@ -10543,7 +10585,10 @@ ipcMain.handle('agent:set-session-workspace', async (_event, { sessionId, worksp
 });
 
 registerSessionControlIpc({
-  abortPendingSends: id => sessionSendCancellation.abort(id),
+  abortPendingSends: id => {
+    sessionTaskInbox.cancel(getSessionRecord(id));
+    sessionSendCancellation.abort(id);
+  },
   cancelPendingSend: (id, clientMessageId) => sessionSendCancellation.cancel(id, clientMessageId),
   stopComputerUse: id => computerUseService.stop('abort', id),
   stopAppTasks: async id => { await appExecutionHost?.cancelSession(id); await appAuthoring?.stopSession(id); },

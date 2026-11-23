@@ -208,7 +208,7 @@ export function createDesktopStateStore(db, { now = () => Date.now() } = {}) {
     WHERE id = ?
   `);
   const listQueuedTurns = db.prepare(`
-    SELECT * FROM session_turn_queue WHERE status = 'queued' ORDER BY created_at ASC
+    SELECT * FROM session_turn_queue WHERE status = 'queued' AND source_channel <> 'runtime-task' ORDER BY created_at ASC
   `);
   const listPendingTurnDeliveries = db.prepare(`
     SELECT * FROM session_turn_queue

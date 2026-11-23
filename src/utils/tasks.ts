@@ -114,6 +114,7 @@ export const TaskSchema = lazySchema(() =>
     activeForm: z.string().optional(), // present continuous form for spinner (e.g., "Running tests")
     owner: z.string().optional(), // agent ID
     status: TaskStatusSchema(),
+    backgroundTaskId: z.string().nullable().optional(),
     blocks: z.array(z.string()), // task IDs this task blocks
     blockedBy: z.array(z.string()), // task IDs that block this task
     metadata: z.record(z.string(), z.unknown()).optional(), // arbitrary metadata
@@ -381,9 +382,10 @@ async function updateTaskUnsafe(
   taskListId: string,
   taskId: string,
   updates: Partial<Omit<Task, 'id'>>,
+  matches?: (current: Task) => boolean,
 ): Promise<Task | null> {
   const existing = await getTask(taskListId, taskId)
-  if (!existing) {
+  if (!existing || (matches && !matches(existing))) {
     return null
   }
   const updated: Task = { ...existing, ...updates, id: taskId }
@@ -397,6 +399,7 @@ export async function updateTask(
   taskListId: string,
   taskId: string,
   updates: Partial<Omit<Task, 'id'>>,
+  matches?: (current: Task) => boolean,
 ): Promise<Task | null> {
   const path = getTaskPath(taskListId, taskId)
 
@@ -410,7 +413,7 @@ export async function updateTask(
   let release: (() => Promise<void>) | undefined
   try {
     release = await lockfile.lock(path, LOCK_OPTIONS)
-    return await updateTaskUnsafe(taskListId, taskId, updates)
+    return await updateTaskUnsafe(taskListId, taskId, updates, matches)
   } finally {
     await release?.()
   }

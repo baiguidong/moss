@@ -46,16 +46,19 @@ export function createLocalTranscriptSync({
     return entries.get(record);
   }
 
-  async function refresh(record) {
+  async function refresh(record, { duringPreparation = false } = {}) {
     if (disposed) return false;
     const filePath = getPath(record);
     if (!filePath || record.deleted) return false;
     const entry = watch(record);
-    if (entry.pending) return entry.pending;
-    if (!canSync(record)) return false;
+    if (entry.pending) {
+      const synced = await entry.pending;
+      if (synced || !duringPreparation) return synced;
+    }
+    if (!canSync(record, duringPreparation)) return false;
     const revision = entry.revision;
     const isCurrent = () => entries.get(record) === entry && entry.revision === revision
-      && !record.deleted && getPath(record) === filePath && canSync(record);
+      && !record.deleted && getPath(record) === filePath && canSync(record, duringPreparation);
     entry.pending = (async () => {
       let info;
       try { info = await stat(filePath); } catch (error) {

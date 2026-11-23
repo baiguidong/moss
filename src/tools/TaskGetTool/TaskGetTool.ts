@@ -23,6 +23,7 @@ const outputSchema = lazySchema(() =>
         id: z.string(),
         subject: z.string(),
         description: z.string(),
+        backgroundTaskId: z.string().nullable().optional(),
         status: TaskStatusSchema(),
         blocks: z.array(z.string()),
         blockedBy: z.array(z.string()),
@@ -84,6 +85,7 @@ export const TaskGetTool = buildTool({
           id: task.id,
           subject: task.subject,
           description: task.description,
+          backgroundTaskId: task.backgroundTaskId,
           status: task.status,
           blocks: task.blocks,
           blockedBy: task.blockedBy,
@@ -103,6 +105,7 @@ export const TaskGetTool = buildTool({
 
     const lines = [
       `Task #${task.id}: ${task.subject}`,
+      ...(task.backgroundTaskId ? [`Background execution: ${task.backgroundTaskId}`] : []),
       `Status: ${task.status}`,
       `Description: ${task.description}`,
     ]

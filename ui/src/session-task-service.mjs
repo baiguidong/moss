@@ -9,6 +9,7 @@ export function createSessionTaskService({
   getAppTasks = () => [],
   getAppTaskHistory = getAppTasks,
   cancelAppTask = () => false,
+  onTaskStopped = () => {},
   emitToRenderer,
   getSessionRecord,
   scheduleSubAgentSessionSync,
@@ -316,6 +317,7 @@ export function createSessionTaskService({
       try {
         if (typeof sessionRecord.runtime?.stopTask === 'function') {
           await sessionRecord.runtime.stopTask(taskId);
+          onTaskStopped(sessionRecord, taskId);
           return { ok: true };
         }
         if (task.type !== 'local_bash') {
@@ -323,6 +325,7 @@ export function createSessionTaskService({
         }
         task.shellCommand?.kill();
         task.shellCommand?.cleanup?.();
+        onTaskStopped(sessionRecord, taskId);
         return { ok: true };
       } catch (err) {
         return { ok: false, error: String(err?.message || err) };

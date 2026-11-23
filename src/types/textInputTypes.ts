@@ -297,6 +297,8 @@ export type QueuePriority = 'now' | 'next' | 'later'
  * Queued command type
  */
 export type QueuedCommand = {
+  /** Execution that produced this event. Other internal messages do not wake idle sessions. */
+  backgroundTaskId?: string
   value: string | Array<ContentBlockParam>
   mode: PromptInputMode
   /** Defaults to the priority implied by `mode` when enqueued. */

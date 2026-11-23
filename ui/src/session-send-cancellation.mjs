@@ -11,6 +11,12 @@ export function createSessionSendCancellation() {
     while (canceled.size > 1024) canceled.delete(canceled.keys().next().value);
   };
   return {
+    hasWaitingInput(sessionId, activeSignal) {
+      for (const request of pending.get(sessionId) || []) {
+        if (request.controller.signal !== activeSignal && !request.accepted && !request.controller.signal.aborted) return true;
+      }
+      return false;
+    },
     async run(sessionId, execute, clientMessageId) {
       const controller = new AbortController();
       prune();

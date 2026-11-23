@@ -73,7 +73,7 @@ import {
   type ExternalPermissionMode,
 } from './types/permissions.js'
 import { executePermissionRequestHooks } from './utils/hooks.js'
-import { dequeue } from './utils/messageQueueManager.js'
+import { acknowledgeTaskNotification, dequeue, nextTaskNotification } from './utils/messageQueueManager.js'
 import type { ThinkingConfig } from './utils/thinking.js'
 import { runWithCwdOverride, runWithCwdOverrideGenerator } from './utils/cwd.js'
 import { findGitRoot } from './utils/git.js'
@@ -122,6 +122,7 @@ import {
   runWithSessionIdContext,
   getSessionRuntimeContext,
   runWithSessionIdContextGenerator,
+  type SessionTaskInbox,
   type TaskScope,
 } from './utils/sessionIdContext.js'
 import {
@@ -429,6 +430,14 @@ export function getAuthDebugSnapshot() {
 
 /** `allow-all` is retained as a compatibility alias for older desktop callers. */
 export type PermissionMode = ExternalPermissionMode | 'allow-all'
+
+type DesktopTurnOptions = {
+  userMessageId?: string
+  preparedTools?: string[]
+  presentationTurn?: { id: string; sessionId: string; epoch?: string }
+  taskInbox?: SessionTaskInbox
+  notificationsOnly?: boolean
+}
 
 export type DesktopPermissionDecision =
   | boolean
@@ -1277,6 +1286,7 @@ export class ClaudeSession {
       appendSystemPrompt: appendSystemPrompt || undefined,
       mainSessionSystemPrompt: [
         this.#opts.mainSessionSystemPrompt,
+        'When background work belongs to a tracked task, link the returned execution ID with TaskUpdate.backgroundTaskId and keep the task in_progress. On a task notification, continue the original request using the result. For failures, inspect the output and retry when a corrective action is available within the user’s scope. Honor cancellations and report a blocker when another attempt would make no progress.',
         // Use the final tool pool, after host, mode and allowlist filtering.
         tools.some(tool => tool.name === 'moss_present') ? MOSS_PRESENTATION_PROMPT : '',
       ].filter(Boolean).join('\n\n') || undefined,
@@ -1309,7 +1319,7 @@ export class ClaudeSession {
    * @param text    用户消息文本，或 Anthropic content block 数组
    * @param signal  可选 AbortSignal
    */
-  async *send(text: string | Array<{ type: string; [k: string]: unknown }>, signal?: AbortSignal, turnOptions?: { userMessageId?: string; preparedTools?: string[]; presentationTurn?: { id: string; sessionId: string; epoch?: string } }): AsyncGenerator<SDKMessage> {
+  async *send(text: string | Array<{ type: string; [k: string]: unknown }>, signal?: AbortSignal, turnOptions?: DesktopTurnOptions): AsyncGenerator<SDKMessage> {
     if (this.#disposed) throw new Error('Session has been disposed')
 
     // 串行队列
@@ -1346,7 +1356,8 @@ export class ClaudeSession {
 
       const sessionId = asSessionId(this.sessionId)
       const projectDir = this.#opts.projectDir
-      const turnRuntime = { ...this.#opts.runtime, ...(turnOptions?.presentationTurn ? { presentationTurn: Object.freeze({ ...turnOptions.presentationTurn }) } : {}) }
+      const inbox = turnOptions?.taskInbox
+      const turnRuntime = { ...this.#opts.runtime, taskInbox: inbox, ...(turnOptions?.presentationTurn ? { presentationTurn: Object.freeze({ ...turnOptions.presentationTurn }) } : {}) }
       const runInSessionContext = <T>(fn: () => T): T =>
         runWithSessionIdContext(sessionId, projectDir, () =>
           runWithCoordinatorMode(this.#opts.coordinatorMode, fn),
@@ -1422,6 +1433,7 @@ export class ClaudeSession {
       engine.resetAbort()
 
       const prompt = typeof text === 'string' ? text : text as any
+      const isCoordinator = this.#opts.coordinatorMode
       const waitSignal = combinedSignal
       let finalResult: SDKMessage | undefined
 
@@ -1435,10 +1447,10 @@ export class ClaudeSession {
       ) =>
         cmd.agentId === undefined &&
         (cmd.mode === 'task-notification' || cmd.mode === 'orphaned-permission') &&
-        (cmd.sessionId === undefined || cmd.sessionId === sessionId)
+        cmd.sessionId === sessionId
 
       const dequeueMainThreadTaskNotification = () =>
-        this.#opts.coordinatorMode
+        isCoordinator
           ? dequeue(isCurrentSessionMainThreadCommand)
           : undefined
 
@@ -1448,7 +1460,7 @@ export class ClaudeSession {
         return Object.values(state.tasks).some(
           task =>
             task.type !== 'in_process_teammate' &&
-            this.#opts.coordinatorMode && (
+            isCoordinator && (
               isBackgroundTask(task) ||
               (task.type === 'local_agent' && task.notificationPending && !task.notified)
             ),
@@ -1540,11 +1552,13 @@ export class ClaudeSession {
                     | Array<{ type: string; [k: string]: unknown }>,
                   mode: 'prompt' | 'task-notification' | 'orphaned-permission',
                   uuid?: string,
+                  onInputRecorded?: () => void,
                 ): AsyncGenerator<SDKMessage> {
                   engine.beginTurnInputs()
                   const iterator = engine.submitMessage(turnPrompt, {
                     uuid,
                     mode,
+                    onInputRecorded,
                     preparedTools: turnOptions?.preparedTools,
                   })
 
@@ -1578,7 +1592,7 @@ export class ClaudeSession {
                         | 'orphaned-permission'
                       uuid?: string
                     }
-                  | undefined = {
+                  | undefined = turnOptions?.notificationsOnly ? undefined : {
                   value: prompt,
                   mode: 'prompt',
                   // Use the host identity for both the live message and JSONL.
@@ -1596,6 +1610,20 @@ export class ClaudeSession {
                   if (nextTurn) {
                     yield* runTurn(nextTurn.value, nextTurn.mode, nextTurn.uuid)
                     nextTurn = undefined
+                  }
+
+                  // Both an idle wake and the coordinator's foreground loop use
+                  // the same inbox. User turns stay free to finish in chat mode.
+                  if (waitSignal.aborted) break
+                  const receipt = (turnOptions?.notificationsOnly || isCoordinator) ? nextTaskNotification(inbox, engine.getMessages()) : undefined
+                  if (receipt && inbox) {
+                    let accepted = false
+                    yield* runTurn(receipt.value, 'task-notification', receipt.uuid, () => {
+                      acknowledgeTaskNotification(inbox, receipt)
+                      accepted = true
+                    })
+                    if (!accepted || (turnOptions?.notificationsOnly && !isCoordinator)) break
+                    continue
                   }
 
                   const queuedCmd = dequeueMainThreadTaskNotification()

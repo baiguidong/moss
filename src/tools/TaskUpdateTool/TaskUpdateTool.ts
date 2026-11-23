@@ -35,6 +35,7 @@ const inputSchema = lazySchema(() => {
 
   return z.strictObject({
     taskId: z.string().describe('The ID of the task to update'),
+    backgroundTaskId: z.string().nullable().optional().describe('Associate the execution ID returned by a background tool with this task. Use the new execution ID when retrying, or null to unlink.'),
     subject: z.string().optional().describe('New subject for the task'),
     description: z.string().optional().describe('New description for the task'),
     activeForm: z
@@ -115,6 +116,7 @@ export const TaskUpdateTool = buildTool({
   async call(
     {
       taskId,
+      backgroundTaskId,
       subject,
       description,
       activeForm,
@@ -147,6 +149,16 @@ export const TaskUpdateTool = buildTool({
       }
     }
 
+    const linkedId = backgroundTaskId === undefined ? existingTask.backgroundTaskId : backgroundTaskId
+    const execution = linkedId ? context.getAppState().tasks[linkedId] : undefined
+    if (backgroundTaskId && !execution) {
+      return { data: { success: false, taskId, updatedFields: [], error: 'Background execution not found in this session' } }
+    }
+    if ((linkedId && status === 'pending') ||
+        (status === 'completed' && (execution?.status === 'running' || execution?.status === 'pending'))) {
+      return { data: { success: false, taskId, updatedFields: [], error: 'Keep the task in_progress while following its background execution. Unlink it explicitly to defer the work.' } }
+    }
+    if (backgroundTaskId && !status) status = 'in_progress'
     const updatedFields: string[] = []
 
     // Update basic fields if provided and different from current value
@@ -155,9 +167,14 @@ export const TaskUpdateTool = buildTool({
       description?: string
       activeForm?: string
       status?: TaskStatus
+      backgroundTaskId?: string | null
       owner?: string
       metadata?: Record<string, unknown>
     } = {}
+    if (backgroundTaskId !== undefined && backgroundTaskId !== existingTask.backgroundTaskId) {
+      updates.backgroundTaskId = backgroundTaskId
+      updatedFields.push('backgroundTaskId')
+    }
     if (subject !== undefined && subject !== existingTask.subject) {
       updates.subject = subject
       updatedFields.push('subject')
@@ -262,7 +279,13 @@ export const TaskUpdateTool = buildTool({
     }
 
     if (Object.keys(updates).length > 0) {
-      await updateTask(taskListId, taskId, updates)
+      const checkBinding = updates.status !== undefined || updates.backgroundTaskId !== undefined
+      const updated = await updateTask(taskListId, taskId, updates, checkBinding
+        ? current => current.backgroundTaskId === existingTask.backgroundTaskId && current.status === existingTask.status
+        : undefined)
+      if (!updated) {
+        return { data: { success: false, taskId, updatedFields: [], error: 'Task was changed or removed. Read its current state before retrying.' } }
+      }
     }
 
     // Notify new owner via mailbox when ownership changes

@@ -59,6 +59,7 @@ function createHarness(sessionMode = 'fixed') {
     },
     persistAgentMailThreadSummary: noop,
     managedResourceClient: { refresh: async () => null },
+    sessionTaskInbox: { bind: () => undefined },
     assertWorkspaceVersionIdle: noop,
     localTranscriptSync: { refresh: noop, acknowledge: noop },
     shutdownSessionAgentTeam: (record: any) => { shutdownIds.push(record.id); },

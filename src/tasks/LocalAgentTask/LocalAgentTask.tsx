@@ -243,11 +243,13 @@ export function enqueueAgentNotification({
   // If the task was already marked as notified (e.g., by TaskStopTool), skip
   // enqueueing to avoid sending redundant messages to the model.
   let shouldEnqueue = false;
+  let parentId: string | undefined;
   updateTaskState<LocalAgentTaskState>(taskId, setAppState, task => {
     if (task.notified) {
       return task;
     }
     shouldEnqueue = true;
+    parentId = task.parentId;
     return {
       ...task,
       notified: true
@@ -274,7 +276,9 @@ export function enqueueAgentNotification({
 <${SUMMARY_TAG}>${summary}</${SUMMARY_TAG}>${resultSection}${usageSection}${worktreeSection}
 </${TASK_NOTIFICATION_TAG}>`;
   enqueuePendingNotification({
+    backgroundTaskId: taskId,
     value: message,
+    agentId: parentId ? asAgentId(parentId) : undefined,
     mode: 'task-notification'
   });
 }

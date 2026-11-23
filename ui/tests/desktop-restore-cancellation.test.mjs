@@ -42,6 +42,7 @@ for (const mode of ['desktop', 'web']) {
         initializeAgentMail: () => calls.push('mail-start'), startMossCronScheduler: () => calls.push('cron-start'),
         agentTeamsService: { start: () => calls.push('teams-start') },
         recoverInterruptedProjectCoordinatorTasks: () => calls.push('coordinator-start'),
+        sessionTaskInbox: { recover: () => calls.push('task-notifications') },
         emitAppsChanged: () => calls.push('catalog'), mossLog: (...args) => { if (args[0] === 'error') assert.fail(args.join(' ')); },
         ipcMain: { handle: (_channel, fn) => { context.ready = fn; } },
         setTimeout: fn => fn(),
@@ -57,7 +58,7 @@ for (const mode of ['desktop', 'web']) {
       const pending = context.appRuntimeRestorePromise;
       if (phase === 'none') {
         await pending;
-        assert.deepEqual(calls, ['register', 'restore', 'recover', 'mcp', 'channel', 'connector', 'mail-start', 'cron-start', 'teams-start', 'coordinator-start', ...(mode === 'desktop' ? ['catalog'] : [])]);
+        assert.deepEqual(calls, ['register', 'restore', 'recover', 'mcp', 'channel', 'connector', 'task-notifications', 'mail-start', 'cron-start', 'teams-start', 'coordinator-start', ...(mode === 'desktop' ? ['catalog'] : [])]);
         return;
       }
       await paused;

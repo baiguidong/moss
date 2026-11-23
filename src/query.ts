@@ -1,4 +1,5 @@
 import { withTraceRequestMetadata } from './services/trace/requestMetadata.js'
+import { getSessionIdContext } from './utils/sessionIdContext.js'
 import { getPostCompactBoundaryId } from './services/compact/compactContext.js'
 import type {
   ToolResultBlockParam,
@@ -1505,9 +1506,11 @@ async function* queryLoop(
     const isMainThread =
       querySource.startsWith('repl_main_thread') || querySource === 'sdk'
     const currentAgentId = toolUseContext.agentId
+    const ownerSessionId = getSessionIdContext()
     const queuedCommandsSnapshot = getCommandsByMaxPriority(
       sleepRan ? 'later' : 'next',
     ).filter(cmd => {
+      if (ownerSessionId && cmd.sessionId !== ownerSessionId) return false
       if (isSlashCommand(cmd)) return false
       if (isMainThread) return cmd.agentId === undefined
       // Subagents only drain task-notifications addressed to them — never

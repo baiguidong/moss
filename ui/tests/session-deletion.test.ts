@@ -341,6 +341,7 @@ function deletionHarness(deleteRemote: () => Promise<void>, closeStorage: () => 
   const end = mainSource.indexOf("ipcMain.handle('agent:delete-session'", start);
   const remove = runInNewContext(`${mainSource.slice(start, end)}; deleteSessionRecordById;`, {
     appExecutionHost: { cancelSession: () => {} },
+    sessionTaskInbox: { cancel: () => {}, recover: () => {} },
     appSessionStorage: {
       closeSession: async (id: string) => {
         expect(id).toBe(record.id);

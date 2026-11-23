@@ -12,6 +12,7 @@ export const PROMPT = `Use this tool to update a task in the task list.
 
 - ONLY mark a task as completed when you have FULLY accomplished it
 - If you encounter errors, blockers, or cannot finish, keep the task as in_progress
+- When a tool returns a background execution ID for a task, immediately link it via backgroundTaskId. Keep the task in_progress while waiting or retrying. A retry replaces the execution ID. Mark the task completed after verifying the result.
 - When blocked, create a new task describing what needs to be resolved
 - Never mark a task as completed if:
   - Tests are failing

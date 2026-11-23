@@ -83,6 +83,8 @@ import {
 import { buildSideQuestionFallbackParams, fetchSystemPromptParts } from './utils/queryContext.js'
 import { setCwd } from './utils/Shell.js'
 import { sanitizeMessagesAfterApiFailure } from './utils/sessionResumeSanitizer.js'
+import { getSessionRuntimeContext } from './utils/sessionIdContext.js'
+import { acknowledgeTaskNotification, nextTaskNotification } from './utils/messageQueueManager.js'
 import {
   flushSessionStorage,
   recordTranscript,
@@ -303,7 +305,7 @@ export class QueryEngine {
 
   async *submitMessage(
     prompt: string | ContentBlockParam[],
-    options?: { uuid?: string; isMeta?: boolean; mode?: PromptInputMode; preparedTools?: string[] },
+    options?: { uuid?: string; isMeta?: boolean; mode?: PromptInputMode; preparedTools?: string[]; onInputRecorded?: () => void },
   ): AsyncGenerator<SDKMessage, void, unknown> {
     const recoveredMessages = sanitizeMessagesAfterApiFailure(
       this.mutableMessages,
@@ -598,11 +600,12 @@ export class QueryEngine {
     if (persistSession && messagesFromUserInput.length > 0) {
       const transcriptStart = Date.now()
       const transcriptPromise = recordTranscript(messages)
-      if (isBareMode()) {
+      if (isBareMode() && !options?.onInputRecorded) {
         void transcriptPromise
       } else {
         await transcriptPromise
         if (
+          options?.onInputRecorded ||
           isEnvTruthy(process.env.CLAUDE_CODE_EAGER_FLUSH) ||
           isEnvTruthy(process.env.CLAUDE_CODE_IS_COWORK)
         ) {
@@ -618,6 +621,8 @@ export class QueryEngine {
         },
       )
     }
+
+    options?.onInputRecorded?.()
 
     // Filter messages that should be acknowledged after transcript
     const replayableMessages = messagesFromUserInput.filter(
@@ -840,12 +845,22 @@ export class QueryEngine {
       : 0
 
     const queryLoopStart = Date.now()
+    const taskInbox = getSessionRuntimeContext()?.taskInbox
+    let inlineReceipt: ReturnType<typeof nextTaskNotification>
     processUserInputContext = { ...processUserInputContext,
-      takePendingUserMessages: closeIfEmpty => this.turnInputs.take(closeIfEmpty).map(entry => {
-        const message = createUserMessage({ content: entry.text, uuid: entry.id })
-        entry.onState('consumed')
-        return message
-      }),
+      takePendingUserMessages: closeIfEmpty => {
+        const receipt = nextTaskNotification(taskInbox, this.mutableMessages)
+        const inputs = this.turnInputs.take(closeIfEmpty && !receipt)
+        if (inputs.length || !receipt) {
+          return inputs.map(entry => {
+            const message = createUserMessage({ content: entry.text, uuid: entry.id })
+            entry.onState('consumed')
+            return message
+          })
+        }
+        inlineReceipt = receipt
+        return [createUserMessage({ content: receipt.value, uuid: receipt.uuid, isMeta: true, origin: { kind: 'task-notification' } })]
+      },
       closePendingUserMessages: () => this.turnInputs.close(),
     }
     this.sideQuestionContext = { systemPrompt, userContext, systemContext,
@@ -893,8 +908,14 @@ export class QueryEngine {
           }
         }
         messages.push(message)
-        if (persistSession && !awaitingFinalUsage && message.type !== 'assistant') {
+        const received = taskInbox && inlineReceipt && inlineReceipt.uuid === message.uuid
+        if (persistSession && (!awaitingFinalUsage || received) && message.type !== 'assistant') {
           await recordTranscript(messages)
+          if (received) await flushSessionStorage()
+        }
+        if (received && taskInbox && inlineReceipt) {
+          acknowledgeTaskNotification(taskInbox, inlineReceipt)
+          inlineReceipt = undefined
         }
 
         // Acknowledge initial user messages after first transcript recording
