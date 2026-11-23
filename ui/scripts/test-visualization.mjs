@@ -148,8 +148,18 @@ try {
   await inline.getByRole('button', { name: '在右侧展开' }).click();
   await until(async () => await rightFrame().locator('#growth-total').innerText() === '46.61 万元', 'persisted state reopen');
   mark('sliders synchronize both surfaces and survive reopening; obsolete toolbar removed');
+  const header = right.locator('[data-preview-header-row="tabs"]');
+  await header.getByRole('button', { name: '标注修改' }).waitFor();
+  const inlineHeader = inline.getByRole('button', { name: '在右侧展开' }).locator('..');
+  await inlineHeader.getByRole('button', { name: '标注修改' }).click();
+  assert.equal(await inline.getByRole('button', { name: '选择元素' }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await right.getByRole('group', { name: '标注方式' }).count(), 0);
+  await inlineHeader.getByRole('button', { name: '退出标注' }).click();
+  assert.equal(await inline.getByRole('group', { name: '标注方式' }).count(), 0);
+  mark('each visualization opens annotation tools from its own existing header');
   await page.getByRole('textbox', { name: '主会话输入', exact: true }).fill('保留我的草稿');
   await right.getByRole('button', { name: '标注修改', exact: true }).click();
+  await rightFrame().locator('html[data-moss-annotating="element"]').waitFor();
   assert.equal(await rightFrame().locator('h2').evaluate(element => getComputedStyle(element).cursor), 'crosshair');
   await rightFrame().locator('h2').click();
   await right.getByRole('textbox', { name: '标注内容' }).fill('把这个标题字号调大');
@@ -172,6 +182,7 @@ try {
   mark('anchored element annotation submits compact card, retains draft and carries hidden source/state; failed send keeps comment');
   await right.getByRole('button', { name: '标注修改', exact: true }).click();
   await right.getByRole('button', { name: '选择文字', exact: true }).click();
+  await rightFrame().locator('html[data-moss-annotating="text"]').waitFor();
   await rightFrame().locator('h2').evaluate(element => {
     const range = document.createRange(); range.selectNodeContents(element);
     const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
@@ -184,6 +195,7 @@ try {
   assert.equal(annotations[1].annotation.selection.text, '时间如何放大复利');
   await right.getByRole('button', { name: '标注修改', exact: true }).click();
   await right.getByRole('button', { name: '框选区域', exact: true }).click();
+  await rightFrame().locator('html[data-moss-annotating="region"]').waitFor();
   const box = await rightFrame().locator('#growth-bars').boundingBox();
   await page.mouse.move(box.x + 10, box.y + 10); await page.mouse.down();
   await page.mouse.move(box.x + box.width - 10, box.y + box.height - 10, { steps: 8 }); await page.mouse.up();
@@ -206,12 +218,14 @@ try {
   await rightFrame().locator('#growth-total').waitFor();
   assert.ok(await rightFrame().locator('html').evaluate(element => element.scrollWidth <= innerWidth));
   await right.getByRole('button', { name: '标注修改', exact: true }).click();
+  await rightFrame().locator('html[data-moss-annotating="element"]').waitFor();
   await rightFrame().locator('h2').click();
   await right.getByRole('textbox', { name: '标注内容' }).fill('窄屏标注也能输入');
   const narrowEditor = await right.locator('[data-annotation-editor]').boundingBox();
   assert.ok(narrowEditor.x >= 0 && narrowEditor.x + narrowEditor.width <= 390);
   await right.screenshot({ path: path.join(output, 'right-panel-narrow.png') });
   await right.getByRole('button', { name: '取消', exact: true }).click();
+  assert.ok(await header.getByRole('button', { name: '标注修改' }).evaluate(button => button.matches(':focus')));
   mark('light/dark themes and 390px layout render without horizontal overflow');
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.evaluate(() => { document.documentElement.classList.remove('dark'); document.documentElement.dataset.theme = 'light'; });
@@ -253,12 +267,24 @@ try {
   assert.ok(forgedTokenPresent);
   assert.equal(await right.getByRole('textbox', { name: '标注内容' }).count(), 0);
   mark('opaque iframe blocks host DOM, network and oversized state; forged sender rejected');
-  await rightFrame().locator('#growth-total').evaluate(() => window.mossVisualization.requestFollowUp('解释当前选中数值'));
-  await right.getByRole('textbox', { name: '标注内容' }).waitFor();
-  assert.equal(await right.getByRole('textbox', { name: '标注内容' }).inputValue(), '解释当前选中数值');
+  const followUp = await create({ title: '作品内追问', mode: 'html', html: `
+    <button id="ask">追问</button><button id="next">下一项</button>
+    <script>document.getElementById('ask').addEventListener('click', () => window.mossVisualization.requestFollowUp('解释当前选中数值'))</script>` });
+  await page.evaluate(markdown => window.setVisualizationMarkdown(markdown), followUp.result.displayMarkdown);
+  await inline.getByRole('button', { name: '在右侧展开' }).click();
+  for (const [surface, frame] of [[inline, inlineFrame()], [right, rightFrame()]]) {
+    await frame.getByRole('button', { name: '追问' }).press('Enter');
+    const editor = surface.getByRole('textbox', { name: '标注内容' });
+    assert.equal(await editor.inputValue(), '解释当前选中数值');
+    await editor.fill('');
+    if (surface === inline) await editor.press('Escape');
+    else await surface.getByRole('button', { name: '取消', exact: true }).click();
+    await frame.locator('#ask:focus').waitFor();
+    await page.keyboard.press('Tab');
+    assert.ok(await frame.locator('#next').evaluate(button => button.matches(':focus')));
+  }
   assert.equal(annotations.length, 3);
-  await right.getByRole('button', { name: '取消', exact: true }).click();
-  mark('page follow-up API opens anchored confirmation without automatically sending');
+  mark('canceling a page follow-up restores its trigger and tab order on both surfaces without sending');
   const errorTask = await create({ title: '运行错误验证', mode: 'html', html: '<script>throw new Error("intentional-visualization-test")</script>' });
   await service.beginTurn(session.id, 'turn-error');
   const failed = await service.present(session.id, errorTask.result.presentation, { turnId: 'turn-error' });

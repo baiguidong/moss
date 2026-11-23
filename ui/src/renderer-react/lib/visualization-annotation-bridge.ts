@@ -3,7 +3,7 @@ export function visualizationAnnotationBridge(channel: string, token: string) {
   let mode: 'element' | 'text' | 'region' | null = null;
   let highlight: HTMLDivElement | null = null;
   let start: { x: number; y: number; target: Element } | null = null;
-  let selected: { rect: { x: number; y: number; width: number; height: number }; element?: Element; range?: Range } | null = null;
+  let selected: { rect: { x: number; y: number; width: number; height: number }; element?: Element; range?: Range; followUpTrigger?: Element | null } | null = null;
   let lastTarget: Element | null = null;
   const send = (type: string, payload: unknown) => parent.postMessage({ channel, token, type, payload }, '*');
   const rectValue = (rect: DOMRect) => ({ x: Math.max(0, rect.left + scrollX), y: Math.max(0, rect.top + scrollY), width: Math.max(1, rect.width), height: Math.max(1, rect.height) });
@@ -32,6 +32,7 @@ export function visualizationAnnotationBridge(channel: string, token: string) {
   };
   const commit = (kind: 'element' | 'text' | 'region', target: Element, rect: ReturnType<typeof rectValue>, selectedText: string, prompt = '', range?: Range) => {
     selected = { rect, ...(kind === 'element' ? { element: target } : {}), ...(range ? { range } : {}) };
+    if (prompt) selected.followUpTrigger = document.activeElement;
     send('annotation-selection', { selection: { kind, selector: selector(target), text: selectedText.slice(0, 2000), nearbyText: text(target.parentElement), rect }, prompt });
     anchor();
   };
@@ -43,6 +44,11 @@ export function visualizationAnnotationBridge(channel: string, token: string) {
   addEventListener('message', event => {
     const data = event.data;
     if (event.source !== parent || data?.channel !== channel || data.token !== token) return;
+    if (data.type === 'dismiss-follow-up') {
+      const trigger = selected?.followUpTrigger;
+      setMode(null);
+      if (trigger?.isConnected && (trigger instanceof HTMLElement || trigger instanceof SVGElement)) trigger.focus({ preventScroll: true });
+    }
     if (data.type === 'annotation-mode' && [null, 'element', 'text', 'region'].includes(data.payload)) setMode(data.payload);
     if (data.type === 'annotation-clear') { selected = null; start = null; show(null); getSelection()?.removeAllRanges(); }
   });

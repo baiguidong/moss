@@ -144,7 +144,7 @@ export function PreviewViewer({ file, toolbarContainer, toolbarMenuItems, downlo
     case "markdown":
       return <MarkdownViewer content={file.content} />;
     case "html":
-      if (metadata.interactiveVisualization && typeof metadata.resourceUri === 'string') return <VisualizationSurface content={file.content} resourceUri={metadata.resourceUri} sessionId={typeof metadata.sessionId === 'string' ? metadata.sessionId : undefined} title={file.relativePath} panel onReady={onReady} onError={onError} />;
+      if (metadata.interactiveVisualization && typeof metadata.resourceUri === 'string') return <VisualizationSurface content={file.content} resourceUri={metadata.resourceUri} sessionId={typeof metadata.sessionId === 'string' ? metadata.sessionId : undefined} title={file.relativePath} panel toolbarContainer={toolbarContainer} onReady={onReady} onError={onError} />;
       return <HTMLViewer onReady={onReady} content={file.content} filePath={file.path} baseUrl={metadata.previewBaseUrl} />;
     case "word":
       return <WordViewer previewPdfPath={typeof metadata.officePreviewPdfPath === 'string' ? metadata.officePreviewPdfPath : undefined} {...annotation} onReady={onReady} onError={onError} filePath={previewPath} fileVersion={fileVersion} toolbarContainer={toolbarContainer} toolbarMenuItems={toolbarMenuItems} downloadMenuItems={downloadMenuItems} onDownload={onDownload} downloadDisabled={downloadDisabled} />;
@@ -558,6 +558,7 @@ export function PreviewDrawer({
         {headerStatus}
         {headerActions}
         {compactOffice ? <div ref={setViewerToolbarContainer} data-office-toolbar className="flex shrink-0 items-center gap-1 pr-2" /> : <>
+        {activeMetadata.interactiveVisualization === true && <div ref={setViewerToolbarContainer} className="mr-1 flex shrink-0 empty:hidden" />}
         {onPopout && <Button variant="ghost" size="icon-sm" className="mr-1 h-7 w-7 shrink-0 rounded-md" title="在独立窗口打开" aria-label="在独立窗口打开" onClick={onPopout}><ExternalLink className="h-3.5 w-3.5" /></Button>}
         <Button
           variant="ghost"
