@@ -21,10 +21,18 @@
     "moss.templates": "0.2.4",
     "moss.app-builder": "0.1.12",
     "moss.buddy": "0.1.12",
-    "moss.browser-use": "0.1.10",
+    "moss.browser-use": "0.1.11",
     "moss.computer-use": "0.2.7"
   },
   "toolDefaults": {
+    "moss.visualize": { "scope": "global", "loading": "always" },
+    "moss.document": { "scope": "global", "loading": "on-demand" },
+    "moss.pdf": { "scope": "global", "loading": "on-demand" },
+    "moss.spreadsheets": { "scope": "global", "loading": "on-demand" },
+    "moss.presentations": { "scope": "global", "loading": "on-demand" },
+    "moss.templates": { "scope": "global", "loading": "on-demand" },
+    "moss.app-builder": { "scope": "global", "loading": "on-demand" },
+    "moss.buddy": { "scope": "session", "loading": "on-demand" },
     "moss.browser-use": { "scope": "global", "loading": "on-demand" },
     "moss.computer-use": { "scope": "global", "loading": "on-demand" }
   }

@@ -13,7 +13,7 @@ import {
   withPrivateFileLockSync,
   writePrivateFileAtomic,
 } from '../../../shared/security/credential-crypto.mjs'
-import { AppRuntimeHost } from '../../../packages/app-runtime/src/index.mjs'
+import { AppRuntimeHost, validateAppPackage } from '../../../packages/app-runtime/src/index.mjs'
 
 const CREDENTIAL_VERSION = 1
 
@@ -150,8 +150,15 @@ export async function installAppArchive(runtime, archivePath, options = {}) {
   try {
     options.onProgress?.({ phase: 'extracting' })
     await extractAppArchive(archivePath, staging)
+    const install = options.installPackage || (packageRoot => runtime.installFromDirectory(packageRoot))
     let packageRoot = staging
     if (!fs.existsSync(path.join(packageRoot, 'app.moss.json'))) {
+      const markerFile = path.join(staging, 'offline.json')
+      const markerSize = (await fsp.stat(markerFile).catch(() => null))?.size
+      if (markerSize && markerSize <= 64 * 1024) {
+        const marker = JSON.parse(await fsp.readFile(markerFile, 'utf8'))
+        if (marker?.format === 1 && marker.appArchive) return await installOfflineApp(runtime, staging, marker, install)
+      }
       const entries = await fsp.readdir(staging, { withFileTypes: true })
       const candidates = entries.filter(entry => entry.isDirectory() && entry.name !== '__MACOSX'
         && fs.existsSync(path.join(staging, entry.name, 'app.moss.json')))
@@ -161,11 +168,45 @@ export async function installAppArchive(runtime, archivePath, options = {}) {
       }
       packageRoot = path.join(staging, candidates[0].name)
     }
-    return options.installPackage
-      ? await options.installPackage(packageRoot)
-      : await runtime.installFromDirectory(packageRoot)
+    return await install(packageRoot)
   } finally {
     await fsp.rm(staging, { recursive: true, force: true })
+  }
+}
+
+async function installOfflineApp(runtime, staging, marker, install) {
+  const platform = `${process.platform}-${process.arch}`
+  if (marker.platform !== platform) throw new Error(`离线包的平台为 ${marker.platform}，当前平台为 ${platform}。`)
+  if (typeof marker.appArchive !== 'string' || !/^[\w.+-]+\.zip$/.test(marker.appArchive)
+    || !Array.isArray(marker.resources) || !marker.resources.length
+    || new Set(marker.resources).size !== marker.resources.length
+    || marker.resources.some(name => typeof name !== 'string' || !/^[\w.+-]+$/.test(name) || name === marker.appArchive || name === 'offline.json' || name === '.' || name === '..')) {
+    throw new Error('离线包清单无效。')
+  }
+  const packageRoot = path.join(staging, 'app')
+  await extractAppArchive(path.join(staging, marker.appArchive), packageRoot)
+  const { manifest } = await validateAppPackage(packageRoot)
+  if (marker.appId !== manifest.id || marker.version !== manifest.version) throw new Error('离线包与内含 App 的标识或版本不匹配。')
+
+  const directory = path.join(runtime.appsDir, manifest.id, 'offline-kits')
+  await fsp.mkdir(directory, { recursive: true })
+  const temporary = await fsp.mkdtemp(path.join(directory, '.staging-'))
+  const destination = path.join(directory, `${manifest.version}-${randomUUID()}`)
+  let published = false
+  try {
+    for (const name of ['offline.json', ...marker.resources]) {
+      const file = path.join(staging, name)
+      if (!(await fsp.stat(file)).isFile()) throw new Error(`离线包资源无效：${name}`)
+      await fsp.copyFile(file, path.join(temporary, name))
+    }
+    await fsp.rename(temporary, destination)
+    published = true
+    return await install(packageRoot)
+  } catch (error) {
+    if (published) await fsp.rm(destination, { recursive: true, force: true })
+    throw error
+  } finally {
+    await fsp.rm(temporary, { recursive: true, force: true })
   }
 }
 

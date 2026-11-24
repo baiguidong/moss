@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import JSZip from 'jszip'
+import { createHash } from 'node:crypto'
 import { extractAppArchive, installAppArchive } from '../src/apps/app-runtime.mjs'
 
 const roots: string[] = []
@@ -13,7 +14,7 @@ async function temporaryRoot() {
   return root
 }
 
-async function writeArchive(root: string, entries: Record<string, string>) {
+async function writeArchive(root: string, entries: Record<string, string | Buffer>) {
   const zip = new JSZip()
   for (const [name, value] of Object.entries(entries)) zip.file(name, value)
   const archive = path.join(root, 'app.zip')
@@ -86,5 +87,36 @@ describe('App archive extraction', () => {
     expect(installed.id).toBe('example.app')
     const ambiguous = await writeArchive(root, { 'one/app.moss.json': '{}', 'two/app.moss.json': '{}' })
     await expect(installAppArchive({}, ambiguous)).rejects.toThrow('包含多个 App')
+  })
+
+  it('installs a complete offline ZIP through the same callback as an ordinary App', async () => {
+    const root = await temporaryRoot()
+    const appsDir = path.join(root, 'apps')
+    const platform = `${process.platform}-${process.arch}`
+    const manifest = { schemaVersion: 2, id: 'example.offline', version: '1.0.0', displayName: 'Offline', hostApi: '^3.0.0', permissions: [], ui: { entry: 'index.html' } }
+    const files = { 'app.moss.json': JSON.stringify(manifest), 'index.html': '<main>offline</main>' }
+    const checksums = Object.fromEntries(Object.entries(files).map(([name, value]) => [name, `sha256-${createHash('sha256').update(value).digest('base64')}`]))
+    const app = await writeArchive(root, { ...files, 'checksums.json': JSON.stringify(checksums) })
+    const outer = await writeArchive(root, {
+      'offline.json': JSON.stringify({ format: 1, appId: manifest.id, version: manifest.version, platform, appArchive: 'online.zip', resources: ['dependency.part'] }),
+      'online.zip': await fs.readFile(app),
+      'dependency.part': 'offline dependency bytes',
+    })
+    const resources = path.join(appsDir, manifest.id, 'offline-kits')
+    const inspect = async (directory: string) => {
+      expect(JSON.parse(await fs.readFile(path.join(directory, 'app.moss.json'), 'utf8'))).toEqual(manifest)
+      const [installed] = await fs.readdir(resources)
+      expect(await fs.readFile(path.join(resources, installed, 'dependency.part'), 'utf8')).toBe('offline dependency bytes')
+    }
+    await expect(installAppArchive({ appsDir }, outer, { installPackage: async directory => {
+      await inspect(directory)
+      throw new Error('install canceled')
+    } })).rejects.toThrow('install canceled')
+    expect(await fs.readdir(resources)).toEqual([])
+    const installed = await installAppArchive({ appsDir }, outer, { installPackage: async directory => {
+      await inspect(directory)
+      return manifest
+    } })
+    expect(installed).toEqual(manifest)
   })
 })
