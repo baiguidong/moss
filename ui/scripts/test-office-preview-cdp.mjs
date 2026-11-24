@@ -135,9 +135,18 @@ try{
  const selectRegion=async()=>{await page.getByRole('button',{name:'请求修改',exact:true}).click();await page.getByRole('button',{name:'在页面上框选区域',exact:true}).click()}
  const showThumbnails=async()=>{const toggle=pdf().getByRole('button',{name:'页面缩略图',exact:true});if(await toggle.getAttribute('aria-pressed')!=='true')await toggle.click()}
  const selectMode=async name=>{await page.getByRole('button',{name:'预览模式',exact:true}).click();await page.getByRole('menuitemradio',{name,exact:true}).click()}
- const open=async task=>{await page.evaluate(({sessionId,input})=>window.agentDesktop.presentation.open({sessionId,input}),{sessionId,input:task.result.presentation});await pdf().waitFor();await pdf().locator('canvas[data-painted="true"]').first().waitFor();await page.waitForFunction(()=>[...document.querySelectorAll('[data-pdf-preview] canvas')].some(c=>c.dataset.painted==='true'&&c.width>0))}
- for(const task of [docs,sheets,slides]){await open(task);assert.equal(await pdf().locator('[data-pdf-page]').count(),task.result.visualReview.pageCount);await capture(task.result.title+'-preview');assert.equal(await page.getByText('继续修改',{exact:true}).count(),0)}
- mark('Main-session right pane immediately renders Word, Excel and PPT pages with no separate App UI')
+ const waitForPages=async()=>{await pdf().locator('canvas[data-painted="true"]').first().waitFor();await page.waitForFunction(()=>[...document.querySelectorAll('[data-pdf-preview] canvas')].some(c=>c.dataset.painted==='true'&&c.width>0))}
+ const open=async(task,{worksheet=false}={})=>{
+  await page.evaluate(({sessionId,input})=>window.agentDesktop.presentation.open({sessionId,input}),{sessionId,input:task.result.presentation});
+  if(worksheet) await page.locator('[data-spreadsheet-grid]').waitFor();
+  else await waitForPages();
+ }
+ const openExcelPage=async()=>{
+  await page.evaluate(({sessionId,uri})=>window.agentDesktop.presentation.open({sessionId,input:{items:[{resource_uri:uri+'#page=1'}]}}),{sessionId,uri:sheets.result.resourceUri});
+  await waitForPages();
+ }
+ for(const task of [docs,sheets,slides]){await open(task,{worksheet:task===sheets});if(task===sheets)await openExcelPage();assert.equal(await pdf().locator('[data-pdf-page]').count(),task.result.visualReview.pageCount);await capture(task.result.title+'-preview');assert.equal(await page.getByText('继续修改',{exact:true}).count(),0)}
+ mark('The main-session right pane renders Word and PPT pages and opens Excel pages from citations')
  await open(docs)
  const textSpan=pdf().locator('[data-pdf-page="1"] .textLayer span').filter({hasText:'项目周报'}).first();await textSpan.waitFor();const textBox=await textSpan.boundingBox();assert.ok(textBox)
  await page.mouse.move(textBox.x+1,textBox.y+textBox.height/2);await page.mouse.down();await page.mouse.move(textBox.x+textBox.width-1,textBox.y+textBox.height/2,{steps:10});await page.mouse.up()
@@ -160,11 +169,11 @@ try{
  const request=requests.find(body=>JSON.stringify(body.messages).includes('把第二页图表标题字号调大')),serialized=JSON.stringify(request.messages)
  assert.ok(serialized.includes('pageNumber'));assert.ok(serialized.includes(slides.artifacts[0].path));await until(async()=>await page.locator('[data-visualization-annotation]').count()===1,'annotation queue settled');await page.locator('[data-visualization-annotation] summary').click();await page.locator('[data-visualization-annotation]').getByText('第 2 页',{exact:true}).waitFor();await capture('page-annotation-in-main-chat')
  mark('Region annotation opens its local editor and sends original App resource + page/coordinates to the main model; conversation displays one annotation')
- await open(sheets);await selectMode('交互表格');await page.getByRole('button',{name:'说明',exact:true}).click();await page.getByText('公式结果应为 42,000',{exact:true}).waitFor();await capture('excel-sheets');await selectMode('页面版式');await pdf().locator('canvas[data-painted="true"]').first().waitFor()
- await selectMode('交互表格');await page.getByRole('button',{name:'预算',exact:true}).click();
+ await open(sheets,{worksheet:true});await page.getByRole('button',{name:'说明',exact:true}).click();await page.getByText('公式结果应为 42,000',{exact:true}).waitFor();await capture('excel-sheets');await openExcelPage()
+ await page.getByRole('button',{name:'返回工作表',exact:true}).click();await page.getByRole('button',{name:'预算',exact:true}).click();
  await page.getByRole('button',{name:'更多预览操作',exact:true}).click();await page.getByRole('menuitemcheckbox',{name:'公式栏',exact:true}).click();await page.locator('[data-cell="B4"]').getByRole('button').click();assert.equal((await page.locator('[data-cell="B4"]').innerText()).trim(),'42,000');assert.ok((await page.locator('[data-cell-details]').innerText()).includes('=B2-B3'));await capture('excel-formatted-formula');
- await selectMode('页面版式');await pdf().locator('canvas[data-painted="true"]').first().waitFor();
- mark('Excel switches between page layout and sheets with formatted values and clickable formulas')
+ await openExcelPage();
+ mark('Excel page citations and the workbook grid preserve formatted values and clickable formulas')
  await resize({width:1000,height:800});await page.getByRole('combobox',{name:'页面缩放'}).selectOption('width');await capture('narrow-preview')
  assert.ok(await pdf().evaluate(node=>node.scrollWidth<=node.clientWidth+1))
  await page.evaluate(()=>{document.documentElement.classList.add('dark');document.documentElement.dataset.theme='dark'});await capture('dark-preview')
@@ -196,7 +205,7 @@ try{
   await resize({width:1000,height:800});await page.evaluate(()=>{document.documentElement.classList.add('dark');document.documentElement.dataset.theme='dark'});await capture('comparison-narrow-dark');assert.ok(await comparison.evaluate(node=>node.scrollWidth<=node.clientWidth+1))
   await resize({width:1440,height:900});await page.evaluate(()=>{document.documentElement.classList.remove('dark');document.documentElement.dataset.theme='light'})
   await comparison.getByRole('button',{name:'修改后 · 定位原文',exact:true}).first().click();await pdf().locator('[data-citation-highlight="true"]').first().waitFor();assert.equal(await pdf().getByRole('textbox',{name:'页码'}).inputValue(),'2')
-  await open(workflow.changedSheet);await page.getByRole('button',{name:'查看 2 处修改',exact:true}).click();await comparison.waitFor();assert.ok((await comparison.innerText()).includes('40000'));assert.ok((await comparison.innerText()).includes('42000'));await capture('excel-formula-comparison')
+  await open(workflow.changedSheet,{worksheet:true});await page.getByRole('button',{name:'查看 2 处修改',exact:true}).click();await comparison.waitFor();assert.ok((await comparison.innerText()).includes('40000'));assert.ok((await comparison.innerText()).includes('42000'));await capture('excel-formula-comparison')
   mark('Invalid citations fail visibly and recover; the right-pane version toolbar opens native object/cell comparisons, links back to sources, and works in narrow/dark layouts')
   assert.ok(await comparison.locator('[data-diff-highlight]').count()>0)
   await open(workflow.changedWords);await page.getByRole('button',{name:'查看 2 处修改',exact:true}).click();await comparison.waitFor();assert.equal(await comparison.locator('section').count(),2);assert.ok(await comparison.locator('[data-diff-highlight]').count()>0);await capture('word-aligned-comparison')

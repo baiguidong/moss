@@ -1,0 +1,24 @@
+diff --git a/dist/index.js b/dist/index.js
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -14754,7 +14754,7 @@
+           cell.colSpan = merge.colspan;
+         }
+       }
+-      const text = sourceCell ? formatCell(sourceCell) : "";
++      const text = sourceCell ? (formatCell(sourceCell) ?? (sourceCell.f ? "=" + sourceCell.f : "")) : "";
+       const richText = sourceAddress ? richTextByCell.get(sourceAddress) : void 0;
+       if (richText?.length) {
+         appendWorkbookCellRichText(cell, richText);
+diff --git a/dist/index.cjs b/dist/index.cjs
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -14868,7 +14868,7 @@
+           cell.colSpan = merge.colspan;
+         }
+       }
+-      const text = sourceCell ? formatCell(sourceCell) : "";
++      const text = sourceCell ? (formatCell(sourceCell) ?? (sourceCell.f ? "=" + sourceCell.f : "")) : "";
+       const richText = sourceAddress ? richTextByCell.get(sourceAddress) : void 0;
+       if (richText?.length) {
+         appendWorkbookCellRichText(cell, richText);

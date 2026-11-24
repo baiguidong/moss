@@ -53,8 +53,6 @@ try {
   await page.evaluate(() => localStorage.setItem('ui.panelLayout.v1', JSON.stringify({ leftWidth: 240, leftCollapsed: false, rightWidth: 650, rightCollapsed: false, rightExpanded: false })));
   await page.reload(); await page.getByText('表格样式验证', { exact: true }).first().click();
   await page.evaluate(({ sessionId, file }) => window.agentDesktop.presentation.open({ sessionId, input: { items: [{ path: file }] } }), { sessionId, file });
-  await page.getByRole('button', { name: '预览模式', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: '工作表', exact: true }).click();
   await page.locator('[data-cell="A1"]').waitFor();
   assert.equal(await page.locator('[data-cell-details]').count(), 0);
   assert.equal(await page.locator('[data-preview-header-row]').count(), 1);
@@ -140,7 +138,7 @@ try {
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('ui.panelLayout.v1')).rightWidth === 320);
   const narrowHeader = page.locator('[data-preview-header-row]');
   assert.ok(await narrowHeader.evaluate(element => element.scrollWidth <= element.clientWidth));
-  for (const label of ['预览模式', '工作表缩放', '公式栏', '更多预览操作']) {
+  for (const label of ['工作表缩放', '更多预览操作']) {
     const control = page.getByLabel(label, { exact: true });
     const box = await control.boundingBox(), headerBox = await narrowHeader.boundingBox();
     assert.ok(box.x >= headerBox.x && box.x + box.width <= headerBox.x + headerBox.width + 1);
@@ -150,15 +148,11 @@ try {
   mark('All controls fit a 320px pane in one row without overflow');
   await page.reload();
   await page.getByText('表格样式验证', { exact: true }).first().click();
-  await page.getByRole('button', { name: '预览模式', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: '工作表', exact: true }).click();
   await page.locator('[data-cell="A1"]').waitFor();
   assert.equal(await page.locator('[data-cell-details]').count(), 0);
   await page.getByRole('button', { name: '公式栏', exact: true }).click();
   await page.reload();
   await page.getByText('表格样式验证', { exact: true }).first().click();
-  await page.getByRole('button', { name: '预览模式', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: '工作表', exact: true }).click();
   await page.locator('[data-cell-details]').waitFor();
   mark('Both expanded and collapsed formula bar preferences survive desktop reload');
   const secondFile = path.join(workspace, '销售订单_用于验证很长文件名在窄面板中的显示与已打开文件切换.xlsx');

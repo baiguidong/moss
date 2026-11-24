@@ -79,11 +79,10 @@ try {
   await page.evaluate(() => localStorage.setItem('ui.panelLayout.v1', JSON.stringify({ leftWidth: 240, leftCollapsed: false, rightWidth: 650, rightExpanded: true, rightCollapsed: false })));
   await page.reload(); await page.getByText('Office 易用性验证', { exact: true }).first().click();
   const pdf = () => page.locator('[data-pdf-preview]').filter({ visible: true });
-  const mode = async value => { await page.getByRole('button', { name: '预览模式', exact: true }).click(); await page.getByRole('menuitemradio', { name: value, exact: true }).click(); };
   const open = async file => {
     await page.evaluate(({ sessionId, file }) => window.agentDesktop.presentation.open({ sessionId, input: { items: [{ path: file }] } }), { sessionId, file });
     await page.getByRole('button', { name: '请求修改', exact: true }).waitFor();
-    if (file.endsWith('.xlsx')) { await mode('工作表'); await page.locator('[data-cell="A1"]').waitFor(); }
+    if (file.endsWith('.xlsx')) await page.locator('[data-cell="A1"]').waitFor();
     else await pdf().locator('canvas[data-painted="true"]').first().waitFor();
   };
   for (const [index, item] of files.entries()) {
