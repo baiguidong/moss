@@ -1,11 +1,13 @@
 !ifndef BUILD_UNINSTALLER
-Function PrepareMossInstallation
-  ClearErrors
-  ExecWait '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --prepare-install' $9
-  ${If} ${Errors}
-    StrCpy $9 1
-  ${EndIf}
-FunctionEnd
+!macro customHeader
+  Function PrepareMossInstallation
+    ClearErrors
+    ExecWait '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" --prepare-install' $9
+    ${If} ${Errors}
+      StrCpy $9 1
+    ${EndIf}
+  FunctionEnd
+!macroend
 
 !macro customInstall
   SetDetailsPrint textonly
