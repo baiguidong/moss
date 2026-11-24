@@ -8,9 +8,14 @@ import type { ResourceMonitorSnapshot, ResourceProcess } from '@/lib/resource-mo
 
 const POLL_INTERVAL_MS = 10_000;
 const kindLabels = { main: '主进程', app: 'App 后端', renderer: '界面', child: '子进程', helper: '系统辅助' };
-const stateLabels: Record<string, string> = { running: '运行中', starting: '启动中', stopping: '停止中', stopped: '已停止', error: '运行异常', 'crash-loop': '反复崩溃' };
+const stateLabels: Record<string, string> = {
+  running: '运行中', starting: '启动中', stopping: '停止中', stopped: '已停止',
+  error: '运行异常', 'crash-loop': '反复崩溃', stale: '占用记录残留',
+  orphan: '后台仍在占用', 'other-host': '由另一个 Moss 管理',
+};
 type Selection = { id: string; name: string };
 type LogPanel = { name: string; entries: Array<{ timestamp?: number; level?: string; message?: unknown }> };
+type ProcessAction = 'logs' | 'restart' | 'release';
 
 function MetricCard({ icon: Icon, label, value, detail, warning = false }: {
   icon: React.ComponentType<{ className?: string }>; label: string; value: string; detail: string; warning?: boolean;
@@ -64,14 +69,20 @@ export function ResourceMonitorView() {
     return () => { disposed = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', visibilityChanged); release(); };
   }, []);
 
-  const runAction = async (row: ResourceProcess, action: 'logs' | 'restart') => {
+  const runAction = async (row: ResourceProcess, action: ProcessAction) => {
     if (!row.appId || !row.instanceId) return;
     if (action === 'restart' && !window.confirm(`重启“${row.appName || row.name}”？正在执行的 App 操作会中断。`)) return;
+    if (action === 'release' && (!row.leaseId || (row.state === 'orphan' &&
+      !window.confirm(`结束“${row.appName || row.name}”残留的后台进程？该 App 正在执行的操作会中断。`)))) return;
     setBusyAction(`${row.id}:${action}`);
     setActionError('');
     try {
       const payload = { appId: row.appId, instanceId: row.instanceId };
-      if (action === 'restart') await window.agentDesktop.restartAppInstance(payload);
+      if (action === 'release' && row.leaseId) {
+        await window.agentDesktop.resourceMonitor.releaseBackend({ appId: row.appId, leaseId: row.leaseId });
+        const next = await window.agentDesktop.resourceMonitor.getSnapshot();
+        setSnapshot(next);
+      } else if (action === 'restart') await window.agentDesktop.restartAppInstance(payload);
       else setLogs({ name: row.name, entries: await window.agentDesktop.getAppInstanceLogs({ ...payload, limit: 200 }) });
     } catch (err) { setActionError(err instanceof Error ? err.message : String(err)); }
     finally { setBusyAction(''); }
@@ -92,7 +103,7 @@ export function ResourceMonitorContent({ snapshot, error = '', now, metric = 'cp
   selection?: Selection | null; onSelect?: (selection: Selection | null) => void;
   filter?: 'all' | 'apps' | 'alerts'; onFilterChange?: (filter: 'all' | 'apps' | 'alerts') => void;
   showStopped?: boolean; onShowStoppedChange?: (show: boolean) => void;
-  busyAction?: string; actionError?: string; onAction?: (row: ResourceProcess, action: 'logs' | 'restart') => void;
+  busyAction?: string; actionError?: string; onAction?: (row: ResourceProcess, action: ProcessAction) => void;
   logs?: LogPanel | null; onCloseLogs?: () => void;
 }) {
   const frames = snapshot?.history || [];
@@ -202,14 +213,19 @@ export function ResourceMonitorContent({ snapshot, error = '', now, metric = 'cp
             <td className="whitespace-nowrap px-3 py-3"><span className={cn('inline-flex items-center gap-1.5', alertIds.has(row.id) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground')}>
               <span className={cn('h-1.5 w-1.5 rounded-full', unavailable ? 'bg-muted-foreground/40' : alertIds.has(row.id) ? 'bg-amber-500' : row.state === 'running' ? 'bg-emerald-500' : 'bg-muted-foreground/40')} />{unavailable ? '待采集' : row.cpuHighSince != null ? '持续高负载' : row.orphaned ? '父进程已退出' : stateLabels[row.state] || row.state}</span>
               {!!row.recentCrashCount && <p className="mt-1 text-[10px] text-muted-foreground">5 分钟内异常退出 {row.recentCrashCount} 次</p>}
+              {row.state === 'other-host' && row.ownerPid && <p className="mt-1 text-[10px] text-muted-foreground">Moss PID {row.ownerPid} · 请在该窗口重启 App</p>}
             </td>
             <td className={cn('whitespace-nowrap px-3 py-3 text-right tabular-nums', row.cpuHighSince != null && 'font-medium text-amber-600 dark:text-amber-400')}>{formatCpu(unavailable ? null : row.cpuPercent)}</td>
             <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{formatMemory(unavailable ? null : row.memoryBytes)}</td>
             <td className="px-3 py-3"><ResourceSparkline points={resourceSeries(sparkFrames, metric, row.id)} metric={metric} /></td>
             <td className="whitespace-nowrap px-3 py-3 text-[11px] tabular-nums text-muted-foreground">{row.pid && row.startedAt ? formatDuration(now - row.startedAt) : '—'}</td>
-            <td className="px-3 py-3"><div className="flex justify-end gap-1">{row.canManage && <>
+            <td className="px-3 py-3"><div className="flex justify-end gap-1">
+              {row.canRelease && <Button variant="outline" size="sm" disabled={Boolean(busyAction)}
+                onClick={() => onAction(row, 'release')}>
+                {row.state === 'orphan' ? '结束占用进程' : '清除占用'}
+              </Button>}{row.canManage && <>
               <Button variant="ghost" size="icon-sm" title={`查看 ${row.appName || row.name} 日志`} aria-label={`查看 ${row.appName || row.name} 日志`} disabled={Boolean(busyAction)} onClick={() => onAction(row, 'logs')}><SquareTerminal className="h-3.5 w-3.5" /></Button>
-              <Button variant="ghost" size="icon-sm" title={`重启 ${row.appName || row.name}`} aria-label={`重启 ${row.appName || row.name}`} disabled={Boolean(busyAction) || !row.canRestart} onClick={() => onAction(row, 'restart')}><RefreshCw className={cn('h-3.5 w-3.5', busyAction === `${row.id}:restart` && 'animate-spin')} /></Button>
+              {!row.leaseId && <Button variant="ghost" size="icon-sm" title={`重启 ${row.appName || row.name}`} aria-label={`重启 ${row.appName || row.name}`} disabled={Boolean(busyAction) || !row.canRestart} onClick={() => onAction(row, 'restart')}><RefreshCw className={cn('h-3.5 w-3.5', busyAction === `${row.id}:restart` && 'animate-spin')} /></Button>}
             </>}</div></td>
           </tr>)}</tbody>
         </table>

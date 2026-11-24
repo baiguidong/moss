@@ -200,6 +200,48 @@ probe.once('message', () => import('./main.mjs'))
     expect(second.status?.state).not.toBe('running')
     expect(second.errors.join(' ')).toContain('already running in another Host')
     expect(await readProcessInfo(first.status.pid)).not.toBeNull()
+    const lease = await leaseFiles()
+    const record = JSON.parse(await fs.readFile(path.join(lease.directory, lease.owner), 'utf8'))
+    const leases = new AppProcessLeases({ directory: path.dirname(lease.directory) })
+    expect(await leases.listOccupants(record.appOwner.key)).toMatchObject([
+      { state: 'other-host', ownerPid: first.child.pid, pid: first.status.pid },
+    ])
+    await expect(leases.releaseOccupant(appId, record.id, record.appOwner.key)).rejects.toThrow('仍由 Moss 管理')
+  })
+
+  it('allows a verified abandoned backend to be ended from the monitor', async () => {
+    const pid = await killHostWithBlockedBackend()
+    const lease = await leaseFiles()
+    const record = JSON.parse(await fs.readFile(path.join(lease.directory, lease.owner), 'utf8'))
+    const leases = new AppProcessLeases({ directory: path.dirname(lease.directory), killTimeoutMs: 100 })
+    expect(await leases.listOccupants(record.appOwner.key)).toMatchObject([{ pid, ownerPid: null, state: 'orphan' }])
+    await expect(leases.releaseOccupant(appId, record.id, 'another-owner')).rejects.toThrow('占用状态已变化')
+    await leases.releaseOccupant(appId, record.id, record.appOwner.key)
+    expect(await gone(pid)).toBe(true)
+    expect(await leases.listOccupants(record.appOwner.key)).toEqual([])
+  })
+
+  it.skipIf(process.platform === 'win32')('clears a lease whose backend and process group have exited while the owner remains live', async () => {
+    const leases = new AppProcessLeases({ directory: root })
+    const appOwner = { key: 'host' }
+    const definition = { appId, instanceId: `${appId}--default`, owner: appOwner }
+    const old = await leases.acquire(definition)
+    const child = spawn(nodeExecutable, ['-e', 'setInterval(() => {}, 1000)', '--', old.marker], {
+      detached: true, stdio: 'ignore',
+    })
+    children.push(child)
+    await once(child, 'spawn')
+    await old.recordChild(child.pid!)
+    const exited = once(child, 'exit')
+    child.kill('SIGTERM')
+    await exited
+    const [record] = await leases.listOccupants(appOwner.key)
+    expect(record).toMatchObject({ state: 'stale', pid: null, ownerPid: process.pid })
+    const replacement = await leases.acquire(definition)
+    await old.release()
+    // A delayed completion from the old process must leave the new lease intact.
+    expect((await leases.listOccupants(appOwner.key))[0]).toMatchObject({ state: 'owned', ownerPid: process.pid })
+    await replacement.release()
   })
 
   it('finds the orphan by its launch marker when the child PID record is missing', async () => {

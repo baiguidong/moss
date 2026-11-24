@@ -37,7 +37,7 @@ export async function signalProcessTree(pid, signal) {
     if (!['ESRCH', 'EPERM'].includes(error.code)) throw error
     try { process.kill(pid, signal) } catch (directError) {
       if (!['ESRCH', 'EPERM'].includes(directError.code)) throw directError
-      if (error.code === 'EPERM') throw error
+      if (error.code === 'EPERM' && !await waitForProcessTreeGone(pid, 350)) throw error
     }
   }
 }

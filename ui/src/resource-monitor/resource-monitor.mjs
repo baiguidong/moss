@@ -105,8 +105,7 @@ export function createResourceMonitor({
     const begin = monotonic();
     const time = now();
     try {
-      const labels = getLabels();
-      const raw = await readProcesses();
+      const [labels, raw] = await Promise.all([getLabels(), readProcesses()]);
       if (!raw.some(row => row.pid === rootPid)) throw new Error('未能读取 Moss 主进程');
       const end = monotonic();
       const dt = previousMono === null ? null : (end - previousMono) / 1000;
@@ -135,6 +134,9 @@ export function createResourceMonitor({
         if (row.state === 'crash-loop') issue('crash', 'App 反复崩溃，已停止自动重启');
         else if (row.recentCrashCount >= 2) issue('crash', `最近 5 分钟异常退出 ${row.recentCrashCount} 次`);
         if (row.state === 'error') issue('runtime', row.lastError || 'App 运行异常');
+        if (row.state === 'stale') issue('runtime', 'App 后台已退出，仍有占用记录');
+        if (row.state === 'other-host') issue('runtime', 'App 后台由另一个 Moss 窗口管理');
+        if (row.state === 'orphan') issue('orphan', '后台进程仍在占用 App');
         if (row.state === 'running' && row.lastHeartbeatAt) {
           const heartbeatId = row.targetKey || row.id;
           heartbeatIds.add(heartbeatId);

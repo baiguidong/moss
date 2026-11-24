@@ -56,19 +56,39 @@ export function buildProcessLabels({ app, webContents, getWindow, getRuntime, ge
   return [...labels.values(), ...stopped];
 }
 
+async function includeBackendOccupancy(labels, runtime, apps) {
+  if (!runtime?.supervisor.leases) return labels;
+  const occupants = await runtime.supervisor.leases.listOccupants(runtime.currentOwner().key);
+  for (const occupant of occupants) {
+    if (occupant.state === 'owned') continue;
+    const name = apps.find(app => (app.id || app.name) === occupant.appId)?.displayName || occupant.appId;
+    const index = labels.findIndex(label => label.kind === 'app' && label.instanceId === occupant.instanceId);
+    const occupancy = {
+      ...labels[index], ...occupant, kind: 'app',
+      targetKey: labels[index]?.targetKey || `occupancy:${occupant.appId}`,
+      name: `${name} · 后端`, appName: name,
+      canRelease: occupant.state !== 'other-host' && Boolean(runtime.installations.get(occupant.appId)),
+      canRestart: false,
+    };
+    if (index < 0) labels.push(occupancy);
+    else labels[index] = occupancy;
+  }
+  return labels;
+}
+
 export function registerResourceMonitorIpc(options) {
   const { ipcMain, app, getWindow, log = () => {}, createMonitor = createResourceMonitor, createLag = monitorEventLoopDelay } = options;
   const lag = createLag({ resolution: 100 });
   let appNames = [];
   let namesReadAt = 0;
   const service = createMonitor({
-    getLabels: () => buildProcessLabels({ ...options, getApps: () => {
+    getLabels: () => includeBackendOccupancy(buildProcessLabels({ ...options, getApps: () => {
       if (!namesReadAt || Date.now() - namesReadAt >= 30_000) {
         appNames = options.getApps();
         namesReadAt = Date.now();
       }
       return appNames;
-    } }),
+    } }), options.getRuntime(), appNames),
     getLoopDelay: () => { const value = Math.max(0, lag.max / 1e6 - 100); lag.reset(); return value; },
     onAlert: event => log(event.phase === 'started' ? 'warn' : 'info', 'resource-monitor', event.message, event),
   });
@@ -87,6 +107,14 @@ export function registerResourceMonitorIpc(options) {
   ipcMain.handle('resource-monitor:release', event => {
     assertOwner(event);
     lag.disable(); lag.reset(); service.stop();
+  });
+  ipcMain.handle('resource-monitor:release-backend', async (event, { appId, leaseId } = {}) => {
+    assertOwner(event);
+    if (typeof appId !== 'string' || typeof leaseId !== 'string') throw new Error('缺少 App 占用信息。');
+    const runtime = options.getRuntime();
+    if (!runtime) throw new Error('App 服务尚未就绪。');
+    await runtime.releaseBackendOccupancy(appId, leaseId);
+    await service.sample();
   });
   app.once('will-quit', () => { service.stop(); lag.disable(); });
   return service;

@@ -998,6 +998,14 @@ export class AppRuntimeHost {
     return this.transitionApp(appId, () => this.restartInstanceNow(appId, instanceId))
   }
 
+  async releaseBackendOccupancy(appId, leaseId) {
+    return this.transitionApp(appId, async () => {
+      if (!this.installations.get(appId)) throw new AppServiceError(APP_ERROR_CODES.invalidInput, 'App 尚未安装。')
+      await this.supervisor.leases.releaseOccupant(appId, leaseId, this.currentOwner().key)
+      this.publishRuntimeEvent({ type: 'installation-changed', appId })
+    })
+  }
+
   async restartInstanceNow(appId, instanceId) {
     this.cancelHostRequests(appId, instanceId)
     const instance = this.requireInstance(appId, instanceId)

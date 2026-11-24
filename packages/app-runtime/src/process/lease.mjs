@@ -13,6 +13,7 @@ import {
 
 const ownerFilePattern = /^[a-f0-9-]{36}\.json$/
 const unavailable = message => new AppServiceError(APP_ERROR_CODES.backendUnavailable, message)
+const leaseDirectoryName = appId => createHash('sha256').update(appId).digest('hex')
 
 async function removeLease(directory, id) {
   // Never recursively remove the shared path: another Host may already own it.
@@ -52,10 +53,54 @@ export class AppProcessLeases {
     return errors
   }
 
+  async listOccupants(ownerKey) {
+    if (!this.directory) return []
+    const entries = await fs.readdir(this.directory, { withFileTypes: true }).catch(error => {
+      if (error.code === 'ENOENT') return []
+      throw error
+    })
+    const occupants = await Promise.all(entries
+      .filter(entry => entry.isDirectory() && /^[a-f0-9]{64}$/.test(entry.name))
+      .map(entry => this.inspect(path.join(this.directory, entry.name), null, ownerKey).catch(() => null)))
+    return occupants.filter(Boolean)
+  }
+
+  async inspect(directory, appId, ownerKey) {
+    const record = await this.readLease(directory, appId)
+    if (!record || record.appOwner?.key !== ownerKey) return null
+    const owner = await readProcessInfo(record.owner.pid)
+    const activeHost = owner?.started === record.owner.started
+    const child = await this.readChild(directory, record.id, record.appId)
+    const current = child && await readProcessInfo(child.pid)
+    const matchingChild = current?.started === child?.started && hasProcessMarker(current, record.marker)
+    const stoppedChild = Boolean(child && (!current || current.started !== child.started) && !processTreeExists(child.pid))
+    return {
+      appId: record.appId,
+      instanceId: record.instanceId,
+      leaseId: record.id,
+      ownerPid: activeHost ? owner.pid : null,
+      pid: matchingChild ? current.pid : null,
+      state: stoppedChild ? 'stale' : !activeHost ? 'orphan' : owner.pid !== process.pid ? 'other-host' : 'owned',
+    }
+  }
+
+  async releaseOccupant(appId, leaseId, ownerKey) {
+    const directory = path.join(this.directory, leaseDirectoryName(appId))
+    const occupant = await this.inspect(directory, appId, ownerKey)
+    if (!occupant || occupant.leaseId !== leaseId) throw unavailable('App 占用状态已变化，请刷新后重试。')
+    if (occupant.state === 'stale') {
+      await this.recover(directory, appId, { expectedLeaseId: leaseId, clearStopped: true })
+    } else if (occupant.state === 'orphan') {
+      await this.recover(directory, appId, { expectedLeaseId: leaseId })
+    } else {
+      throw unavailable('此后台仍由 Moss 管理，请在对应的 Moss 窗口重启该 App。')
+    }
+  }
+
   async acquire(definition) {
     const base = this.directory || path.join(definition.runtimeDir, 'processes')
     await fs.mkdir(base, { recursive: true, mode: 0o700 })
-    const directory = path.join(base, createHash('sha256').update(definition.appId).digest('hex'))
+    const directory = path.join(base, leaseDirectoryName(definition.appId))
     const owner = await readProcessInfo(process.pid)
     if (!owner) throw unavailable('Cannot identify the App Backend Host process')
     const id = randomUUID()
@@ -94,17 +139,14 @@ export class AppProcessLeases {
     }
   }
 
-  async recover(directory, appId, { skipActive = false } = {}) {
+  async readLease(directory, appId) {
     let entries
     try { entries = await fs.readdir(directory) } catch (error) {
       if (error.code === 'ENOENT') return
       throw error
     }
     if (!entries.length) {
-      await fs.rmdir(directory).catch(error => {
-        if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error
-      })
-      return
+      return null
     }
     const files = entries.filter(name => ownerFilePattern.test(name))
     if (files.length !== 1) throw unavailable(`Invalid App Backend ownership record: ${appId}`)
@@ -116,26 +158,55 @@ export class AppProcessLeases {
     if (record.schemaVersion !== 1 || `${record.id}.json` !== files[0]
       || typeof record.appId !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,159}$/.test(record.appId)
       || (appId && record.appId !== appId)
-      || createHash('sha256').update(record.appId).digest('hex') !== path.basename(directory)
+      || leaseDirectoryName(record.appId) !== path.basename(directory)
       || record.marker !== `--moss-app-process=${record.id}` || !Number.isSafeInteger(record.owner?.pid)
       || record.owner.pid < 1 || typeof record.owner.started !== 'string' || !record.owner.started) {
       throw unavailable(`Invalid App Backend ownership record: ${appId}`)
     }
+    return record
+  }
+
+  async readChild(directory, leaseId, appId) {
+    let savedChild = null
+    try { savedChild = JSON.parse(await fs.readFile(path.join(directory, `${leaseId}.child.json`), 'utf8')) } catch (error) {
+      if (error.code !== 'ENOENT') throw unavailable(`Cannot read App Backend process record: ${appId}`)
+    }
+    if (savedChild && (!Number.isSafeInteger(savedChild.pid) || savedChild.pid < 1 || typeof savedChild.started !== 'string' || !savedChild.started)) {
+      throw unavailable(`Invalid App Backend process record: ${appId}`)
+    }
+    return savedChild
+  }
+
+  async recover(directory, appId, { skipActive = false, expectedLeaseId, clearStopped = false } = {}) {
+    const record = await this.readLease(directory, appId)
+    if (!record) {
+      await fs.rmdir(directory).catch(error => {
+        if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error
+      })
+      return
+    }
+    if (expectedLeaseId && record.id !== expectedLeaseId) throw unavailable('App 占用状态已变化，请刷新后重试。')
     appId = record.appId
     const owner = await readProcessInfo(record.owner.pid)
     if (owner?.started === record.owner.started) {
+      // On this Host a failed shutdown can leave a lease after its group has gone.
+      // Foreign live Hosts require an explicit request before clearing even an empty lease.
+      if (owner.pid === process.pid || clearStopped) {
+        const child = await this.readChild(directory, record.id, appId)
+        if (child && !processTreeExists(child.pid)) {
+          const current = await readProcessInfo(child.pid)
+          if (current?.started !== child.started && !(await findMarkedProcesses(record.marker)).length) {
+            await removeLease(directory, record.id)
+            return
+          }
+        }
+      }
       if (skipActive) return
-      throw unavailable(`App Backend is already running in another Host: ${appId}`)
+      throw unavailable(`App Backend is already running in another Host: ${appId}。可在「概览 → 资源监控」查看占用情况。`)
     }
-    let savedChild = null
-    try { savedChild = JSON.parse(await fs.readFile(path.join(directory, `${record.id}.child.json`), 'utf8')) } catch (error) {
-      if (error.code !== 'ENOENT') throw unavailable(`Cannot read App Backend process record: ${appId}`)
-    }
+    const savedChild = await this.readChild(directory, record.id, appId)
     let recordedProcess = null
     if (savedChild) {
-      if (!Number.isSafeInteger(savedChild.pid) || savedChild.pid < 1 || typeof savedChild.started !== 'string' || !savedChild.started) {
-        throw unavailable(`Invalid App Backend process record: ${appId}`)
-      }
       const current = await readProcessInfo(savedChild.pid)
       if (current?.started === savedChild.started && !hasProcessMarker(current, record.marker)) {
         throw unavailable(`Cannot verify the previous App Backend identity; refusing to start another process: ${appId}`)

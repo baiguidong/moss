@@ -257,6 +257,7 @@ export function createMossClient(transport, platform = {}) {
   resourceMonitor: {
     getSnapshot: (payload) => transport.invoke('resource-monitor:snapshot', payload),
     release: () => transport.invoke('resource-monitor:release'),
+    releaseBackend: payload => transport.invoke('resource-monitor:release-backend', payload),
   },
   listAppVersions: (payload) => transport.invoke('app:list-versions', payload),
   launchApp: (payload) => transport.invoke('app:launch', payload),

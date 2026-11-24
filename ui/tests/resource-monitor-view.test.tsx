@@ -32,6 +32,21 @@ describe('resource monitor display', () => {
     expect(html).not.toContain('>140.0%<');
     expect(html).toContain('待采集');
   });
+  test('provides separate actions for stopped leases and verified orphan backends', () => {
+    const base = { ...snapshot.processes[0], canManage: false, canRestart: false };
+    const html = renderToStaticMarkup(<ResourceMonitorContent now={time} snapshot={{
+      ...snapshot,
+      processes: [
+        { ...base, id: 'stale', pid: null, state: 'stale', canRelease: true },
+        { ...base, id: 'orphan', pid: 102, state: 'orphan', canRelease: true },
+        { ...base, id: 'outside', pid: 103, state: 'other-host', ownerPid: 101 },
+      ],
+    }} />);
+    expect(html).toContain('占用记录残留');
+    expect(html).toContain('清除占用');
+    expect(html).toContain('结束占用进程');
+    expect(html).toContain('Moss PID 101');
+  });
   test('renders selected memory trend and gracefully handles an empty anomaly filter', () => {
     const html = renderToStaticMarkup(<ResourceMonitorContent snapshot={snapshot} now={time} metric="memoryBytes" filter="alerts"
       selection={{ id: '100:first', name: 'Example App' }} />);

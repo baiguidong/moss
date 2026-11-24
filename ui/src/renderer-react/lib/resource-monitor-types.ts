@@ -17,6 +17,9 @@ export type ResourceProcess = {
   pendingActions?: number;
   canManage?: boolean;
   canRestart?: boolean;
+  canRelease?: boolean;
+  leaseId?: string;
+  ownerPid?: number | null;
   orphaned?: boolean;
   cpuPercent: number | null;
   memoryBytes: number | null;
