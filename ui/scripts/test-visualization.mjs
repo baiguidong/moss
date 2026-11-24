@@ -50,8 +50,8 @@ try {
   const available = await skills.resolveAppSkills(host);
   assert.equal(available.skills.length, 1); assert.equal(available.skills[0].name, 'moss-visualize');
   const globalTools = await host.listContributions({ kinds: ['tools'], selectedAppIds: [], loadSchemas: true });
-  assert.equal(globalTools.tools.filter(tool => tool.appId === 'moss.visualize').length, 5);
-  assert.deepEqual(globalTools.tools.map(tool => tool.name).sort(), ['visualize_create', 'visualize_export', 'visualize_list', 'visualize_status', 'visualize_templates']);
+  assert.equal(globalTools.tools.filter(tool => tool.appId === 'moss.visualize').length, 7);
+  assert.deepEqual(globalTools.tools.map(tool => tool.name).sort(), ['visualize_create', 'visualize_export', 'visualize_export_view', 'visualize_inspect', 'visualize_list', 'visualize_status', 'visualize_templates']);
   assert.ok(globalTools.tools.filter(tool => tool.appId === 'moss.visualize').every(tool => tool.toolLoading === 'always'));
   assert.equal(manifest.navigation.location, 'none'); assert.equal(manifest.ui, undefined);
   const catalog = await invoke('catalog.get');
