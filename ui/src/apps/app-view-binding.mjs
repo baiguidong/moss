@@ -11,5 +11,10 @@ export function resolveAppSettingsView(manifest, installation, { settingId, vers
 
 export function validateAppViewState(input) {
   if (!input || typeof input.dirty !== 'boolean' || typeof input.busy !== 'boolean') throw new Error('无效的页面状态。');
-  return { dirty: input.dirty, busy: input.busy };
+  const state = { dirty: input.dirty, busy: input.busy };
+  if (input.returnToPreview !== true) return state;
+  if (state.dirty || state.busy) throw new Error('请先处理待保存的修改。');
+  const sheet = typeof input.sheet === 'string' && input.sheet.length <= 31 ? input.sheet : undefined;
+  const cell = typeof input.cell === 'string' && /^[A-Z]{1,3}\d{1,5}$/.test(input.cell) ? input.cell : undefined;
+  return { ...state, returnToPreview: true, saved: input.saved === true, sheet, cell };
 }

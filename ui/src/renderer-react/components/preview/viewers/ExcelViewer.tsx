@@ -1,10 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown, FileText, Table2 } from "lucide-react";
+import { ChevronDown, FileText, Pencil, Table2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { documentIpc } from "@/ipc/document.ipc";
+import { appRouteLink, spreadsheetEditorHref } from "@/lib/markdown-links";
+import { EmbeddedAppView } from "@/components/embedded-app-view";
+import { setAppViewGuard } from "@/lib/app-view-guard";
 import { OfficeEditRequest } from '../OfficeEditRequest';
 import { OfficePreviewToolbar } from "../OfficePreviewToolbar";
 import { LazyOpenFileViewer } from "./LazyOpenFileViewer";
@@ -83,6 +86,11 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMe
   const [zoom, setZoom] = React.useState<number | 'fit'>(100);
   const [activeSheet, setActiveSheet] = React.useState('');
   const [selectedCell, setSelectedCell] = React.useState('');
+  const editorHref = spreadsheetEditorHref(annotation.resourceUri, annotation.sessionId);
+  const [editing, setEditing] = React.useState('');
+  const [returnCell, setReturnCell] = React.useState<{ sheet?: string; cell?: string }>();
+  React.useEffect(() => () => { if (editing) setAppViewGuard(null); }, [editing, editorHref]);
+  React.useEffect(() => { setEditing(''); }, [editorHref]);
   const [showFormulaBar, setShowFormulaBar] = React.useState(() => {
     try { return localStorage.getItem(FORMULA_BAR_PREFERENCE) === 'true'; } catch { return false; }
   });
@@ -99,19 +107,39 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMe
   React.useEffect(() => {
     let active = true;
     const pdfReady = Boolean(previewPdfPath);
-    setSelectedCell('');
     setState({ key, pdfPath: pdfReady ? previewPdfPath : undefined, pdfPending: false, dataPending: true });
-    setMode(documentLocation?.sheet ? 'sheets' : pdfReady ? 'pages' : 'sheets');
     void documentIpc.convert({ filePath, to: 'excel-json' }).catch(error => ({ result: { success: false, error: String(error.message || error) } })).then(workbook => {
       if (!active) return;
       setState(current => ({ ...current!, key, dataPending: false, data: workbook.result?.success ? workbook.result.data : undefined, dataError: workbook.result?.error }));
     });
     return () => { active = false; };
   }, [key, filePath]);
+  React.useEffect(() => {
+    setMode(documentLocation?.sheet ? 'sheets' : previewPdfPath ? 'pages' : 'sheets');
+    setSelectedCell('');
+    setReturnCell(undefined);
+  }, [filePath, previewPdfPath]);
   const excelData = state?.key === key ? state.data : undefined, pdfPath = state?.key === key ? state.pdfPath : undefined;
   React.useEffect(() => { if (excelData && (mode === 'sheets' || !pdfPath)) onReady?.(); }, [excelData, mode, pdfPath, onReady]);
   React.useEffect(() => { if (mode === 'sheets' && excelData) tableRoot.current?.querySelector('[data-citation-cell="true"]')?.scrollIntoView({ block: 'center', inline: 'nearest' }); }, [mode, activeSheet, excelData, locationKey]);
+  React.useEffect(() => {
+    const cell = returnCell?.cell;
+    if (!editing && mode === 'sheets' && excelData && cell && returnCell.sheet === activeSheet) {
+      tableRoot.current?.querySelector(`[data-cell="${cell}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+  }, [editing, mode, excelData, activeSheet, returnCell]);
   const citationError = documentLocation?.sheet && excelData && !excelData.sheets?.some((sheet: any) => sheet.name === documentLocation.sheet) ? `引用的工作表「${documentLocation.sheet}」不存在` : '';
+  if (editing && editorHref) return <div className="h-full min-h-0 flex-1" data-spreadsheet-editor>
+    <EmbeddedAppView appName="moss.spreadsheets" route={editing} sessionId={annotation.sessionId} compact onViewState={view => {
+      setAppViewGuard(view.returnToPreview ? null : view);
+      if (!view.returnToPreview) return;
+      if (view.sheet) setActiveSheet(view.sheet);
+      if (view.cell) setSelectedCell(view.cell);
+      setReturnCell({ sheet: view.sheet, cell: view.cell });
+      if (view.saved) setAttempt(value => value + 1);
+      setEditing('');
+    }} />
+  </div>;
   if (state?.key !== key) return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在渲染工作簿…</div>;
   // Selecting page layout without a cached PDF keeps the old usable worksheet
   // fallback and explains why a rendered page view is unavailable.
@@ -119,6 +147,15 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMe
   const showingPages = mode === 'pages' && Boolean(pdfPath);
   const showingOriginal = mode === 'original';
   const toolbar = <OfficePreviewToolbar filePath={filePath} onRefresh={() => setAttempt(value => value + 1)} container={toolbarContainer} menuItems={<><DropdownMenuCheckboxItem checked={showFormulaBar} onCheckedChange={setShowFormulaBar}>公式栏</DropdownMenuCheckboxItem>{toolbarMenuItems}</>} downloadMenuItems={downloadMenuItems} onDownload={onDownload} downloadDisabled={downloadDisabled}>
+    {editorHref && <Button variant="ghost" size="sm" className="h-7 shrink-0 gap-1 rounded-md px-2 text-xs" onClick={() => {
+      const url = new URL(editorHref);
+      url.searchParams.set('inline', '1');
+      const sheet = activeSheet || excelData?.sheets?.[0]?.name;
+      if (sheet) url.searchParams.set('sheet', sheet);
+      if (selectedCell) url.searchParams.set('cell', selectedCell);
+      const route = appRouteLink(url.href);
+      if (route) setEditing(route.route);
+    }}><Pencil className="h-3.5 w-3.5" />编辑工作簿</Button>}
     {(showingSheets || showingOriginal) && <OfficeEditRequest target={annotation.resourceUri ? { resourceUri: annotation.resourceUri, sessionId: annotation.sessionId } : { artifactId: annotation.artifactId, revision: annotation.revision, sessionId: annotation.sessionId }} selection={showingSheets && selectedCell && excelData?.sheets?.length ? { kind: 'cell', sheet: (excelData.sheets.find((sheet: any) => sheet.name === activeSheet) || excelData.sheets[0]).name, range: selectedCell, selector: selectedCell, text: '', nearbyText: '', rect: { x: 0, y: 0, width: 1, height: 1 } } : undefined} selectionLabel={showingSheets ? `单元格 ${selectedCell}` : undefined} />}
     <div ref={setPageControls} className="flex shrink-0 items-center gap-1 empty:hidden" />
     <DropdownMenu>

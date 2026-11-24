@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MarkdownRenderer } from '../src/renderer-react/components/markdown/markdown-renderer';
-import { appRouteLink, fileLinkLabel, handleMarkdownLinkClick, markdownUrlTransform, normalizeMarkdownHref } from '../src/renderer-react/lib/markdown-links';
+import { appRouteLink, fileLinkLabel, handleMarkdownLinkClick, markdownUrlTransform, normalizeMarkdownHref, spreadsheetEditorHref } from '../src/renderer-react/lib/markdown-links';
 import { remarkFileReferences } from '../src/renderer-react/lib/remark-file-references';
 import { isAppResourceUri } from '../src/shared/app-resource-uri.mjs';
 const uri = 'example-notes://document/11112222?revision=abc&name=Notes';
@@ -25,6 +25,14 @@ describe('Markdown App resource links', () => {
   test('retains custom citations in rendered conversation text', () => {
     const html = renderToStaticMarkup(<MarkdownRenderer content={`来源：[笔记](${uri})`} />);
     expect(html).toContain(`href="${uri.replaceAll('&', '&amp;')}"`);
+  });
+  test('opens the exact session workbook from an Excel preview', () => {
+    const id = '66afe4e8-943b-4c40-90f4-e750b1d1de7e';
+    const expected = { appName: 'moss.spreadsheets', route: `#/runs/${id}?session=source-session` };
+    expect(appRouteLink(spreadsheetEditorHref(`moss-spreadsheets://works/${id}?session=source-session#sheet=预算`, 'source-session')!)).toEqual(expected);
+    expect(appRouteLink(spreadsheetEditorHref(`moss-spreadsheets://files/${id}/0`, 'source-session')!)).toEqual(expected);
+    expect(spreadsheetEditorHref(`moss-spreadsheets://works/${id}?session=other-session`, 'source-session')).toBeNull();
+    expect(spreadsheetEditorHref(`moss-spreadsheets://files/${id}/1`, 'source-session')).toBeNull();
   });
   test('opens references using an App provider in any conversation', async () => {
     const state = setup(); await handleMarkdownLinkClick(state.event, uri, state.host);

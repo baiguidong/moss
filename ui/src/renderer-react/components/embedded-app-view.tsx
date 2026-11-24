@@ -15,6 +15,8 @@ type EmbeddedAppSession = {
   app?: {id:string;name:string;displayName:string;description:string};
 };
 
+type EmbeddedViewState = { dirty: boolean; busy: boolean; returnToPreview?: boolean; saved?: boolean; sheet?: string; cell?: string };
+
 export function EmbeddedAppView({
   appName,
   app,
@@ -34,7 +36,7 @@ export function EmbeddedAppView({
   settingId?: string;
   version?: string;
   onBack?: () => void;
-  onViewState?: (state: { dirty: boolean; busy: boolean }) => void;
+  onViewState?: (state: EmbeddedViewState) => void;
 }) {
   const webviewRef = React.useRef<any>(null);
   const [session, setSession] = React.useState<EmbeddedAppSession | null>(null);
@@ -43,12 +45,16 @@ export function EmbeddedAppView({
   const [reloadKey, setReloadKey] = React.useState(0);
   const viewStateCallback = React.useRef(onViewState); viewStateCallback.current = onViewState;
   React.useEffect(() => {
-    if (!session || !settingId) return;
+    if (!session) return;
     const handler = window.agentDesktop.ipcOn('app:embedded-state', (event: any) => {
-      if (event.embedId === session.embedId) viewStateCallback.current?.({ dirty: event.dirty === true, busy: event.busy === true });
+      if (event.embedId === session.embedId) viewStateCallback.current?.({
+        dirty: event.dirty === true, busy: event.busy === true,
+        returnToPreview: event.returnToPreview === true, saved: event.saved === true,
+        sheet: event.sheet, cell: event.cell,
+      });
     });
     return () => { window.agentDesktop.ipcOff('app:embedded-state', handler); viewStateCallback.current?.({ dirty: false, busy: false }); };
-  }, [session, settingId]);
+  }, [session]);
 
   React.useEffect(() => {
     let cancelled = false;

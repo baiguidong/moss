@@ -66,9 +66,6 @@ function capabilityMessage(capability: OpenFileViewerProps["capability"]): strin
   if (capability === "structure") {
     return "当前格式仅提供结构或元数据预览，内容可能不完整。";
   }
-  if (capability === "basic") {
-    return "当前格式为基础预览，复杂布局、字体或专有对象可能降级。";
-  }
   return null;
 }
 

@@ -34,6 +34,15 @@ export function appRouteLink(href: string) {
   } catch { return null; }
 }
 
+export function spreadsheetEditorHref(resourceUri?: string, sessionId?: string) {
+  if (!resourceUri) return null;
+  const match = /^moss-spreadsheets:\/\/(?:works\/([a-f0-9-]{36})|files\/([a-f0-9-]{36})\/0)(?:\?|#|$)/.exec(resourceUri);
+  if (!match) return null;
+  const owner = new URL(resourceUri).searchParams.get('session') || sessionId;
+  if (!owner || !/^[a-zA-Z0-9._-]{1,128}$/.test(owner) || (sessionId && owner !== sessionId)) return null;
+  return `moss-app://moss.spreadsheets/runs/${match[1] || match[2]}?session=${owner}`;
+}
+
 type LinkHost = {
   openAppResource: Window['agentDesktop']['openAppResource'];
   shell: Pick<Window['agentDesktop']['shell'], 'openExternal'>;
