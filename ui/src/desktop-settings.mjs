@@ -1077,7 +1077,8 @@ export function createDesktopSettingsStore({ settingsPath, log = () => {} }) {
   let value = state.value;
   syncDesktopThinkingEnv(value);
   syncDesktopModelEnv(value);
-  log('info', 'settings', 'Settings loaded', { path: state.path, exists: state.exists });
+  if (!state.exists) log('info', 'settings', 'Using default settings on startup', { path: state.path });
+  else if (state.loaded) log('info', 'settings', 'Settings loaded', { path: state.path });
 
   return {
     authConfig,

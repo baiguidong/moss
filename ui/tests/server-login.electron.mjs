@@ -108,6 +108,17 @@ try {
   assert.equal(await evaluate("document.body.textContent.includes('Error invoking remote method')"), false);
   console.log('PASS: missing/expired login opens the shared flow, configured addresses skip configuration, login resumes cloud switching, cancellation clears the action, and network errors stay readable');
 } catch (error) { console.error(error); process.exitCode = 1; }
-finally { clearTimeout(timeout); window?.destroy(); await server?.close(); await rm(temp, { recursive: true, force: true }); app.exit(process.exitCode || 0); }
+finally {
+  clearTimeout(timeout);
+  window?.destroy();
+  try {
+    await server?.close();
+    await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch (error) {
+    console.error(error);
+    process.exitCode = 1;
+  }
+  app.exit(process.exitCode || 0);
+}
 }
 void run();

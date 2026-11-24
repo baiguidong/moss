@@ -58,21 +58,37 @@ test('an account switch discards an in-flight heartbeat policy and commands', as
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-host-switch-'));
   const db = new DatabaseSync(path.join(home, 'host.sqlite'));
   createUsageLedger(db);
-  let release, arrived, runs = 0, policies = 0;
+  let release, arrived, runs = 0, account = 'alice';
+  const models = [];
   const entered = new Promise(resolve => { arrived = resolve; });
   const client = createHostControlClient({ home, db, kind: 'desktop', version: 'test',
-    getConnection: () => ({ serverUrl: 'https://enterprise.test', accountId: 'alice', authToken: 'alice' }),
-    getStatus: () => ({}), execute: () => { runs++; }, applyPolicy: () => { policies++; },
-    fetchImpl: async () => { arrived(); await new Promise(resolve => { release = resolve; });
-      return Response.json({ token: 'device-alice', policy: { revision: 1, settings: { bypassPermissions: true } }, commands: [{ id: 'stale', action: 'pause' }] }); },
+    getConnection: () => ({ serverUrl: 'https://enterprise.test', accountId: account, authToken: account }),
+    getStatus: () => ({}), execute: () => { runs++; }, applyPolicy: (_policy, config) => { models.push(config.model); },
+    fetchImpl: async (_url, init) => {
+      const alice = init.headers.Authorization === 'Bearer alice';
+      if (alice) {
+        arrived();
+        await new Promise(resolve => { release = resolve; });
+      }
+      return Response.json({
+        token: alice ? 'device-alice' : 'device-bob',
+        policy: { revision: 1, settings: {} },
+        modelConfig: { model: alice ? 'alice-model' : 'bob-model' },
+        commands: alice ? [{ id: 'stale', action: 'pause' }] : [],
+      });
+    },
   });
   t.after(async () => { await client.stop(); db.close(); await fs.rm(home, { recursive: true, force: true }); });
   const request = client.refresh();
   await entered;
+  account = 'bob';
   client.invalidate();
-  const stopping = client.stop();
-  release(); await request; await stopping;
-  assert.equal(runs, 0); assert.equal(policies, 0);
+  const signedIn = client.refresh();
+  release();
+  await signedIn;
+  await request;
+  assert.equal(runs, 0);
+  assert.deepEqual(models, ['bob-model']);
 });
 
 test('a revoked Host suspends work without enrolling again or applying queued commands', async t => {

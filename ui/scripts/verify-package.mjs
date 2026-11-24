@@ -182,6 +182,41 @@ async function extractAndVerifyRuntimes(resourcesDir, platform, arch) {
   }
 }
 
+async function verifyWindowsInstallation(paths, installerName, builtins) {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'moss-setup-'));
+  const home = path.join(root, 'profile');
+  const runtimeHome = path.join(home, 'runtimes');
+  const installDir = path.join(root, 'Moss Install');
+  const logPath = path.join(home, 'logs', 'moss.log');
+  try {
+    run(path.join(paths.installersDir, installerName), ['/S', '/currentuser', `/D=${installDir}`], {
+      // NSIS reads the last /D= argument verbatim, including any spaces.
+      windowsVerbatimArguments: true,
+      timeout: 8 * 60_000,
+      env: { ...process.env, MOSS_HOME: home, MOSS_RUNTIME_HOME: runtimeHome, MOSS_DISABLE_AUTO_UPDATE: 'true' },
+    });
+    requireFile(path.join(installDir, 'Moss.exe'), 'Installed Moss');
+    const log = await fsp.readFile(logPath, 'utf8');
+    if (!log.includes('Desktop installation ready')) throw new Error('Setup did not complete desktop preparation.');
+    const registry = JSON.parse(await fsp.readFile(path.join(runtimeHome, 'registry.json'), 'utf8'));
+    for (const [name, version] of Object.entries(MANAGED_RUNTIME_VERSIONS)) {
+      const entry = registry.runtimes?.[name]?.[version];
+      if (!entry?.verified) throw new Error(`Setup did not verify ${name} ${version}.`);
+      run(requireFile(entry.executablePath, `Installed ${name}`), ['--version']);
+    }
+    for (const { id, version } of builtins.apps) {
+      const current = JSON.parse(await fsp.readFile(path.join(home, 'apps', id, 'current.json'), 'utf8'));
+      if (current.version !== version) throw new Error(`Setup did not install ${id} ${version}.`);
+    }
+    console.log('Windows Setup verified runtimes and bundled Apps before exiting.');
+  } catch (error) {
+    const log = await fsp.readFile(logPath, 'utf8').catch(() => '');
+    throw new Error([error.message, log].filter(Boolean).join('\n'), { cause: error });
+  } finally {
+    await fsp.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+}
+
 function commandResult(command, args) {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
@@ -475,6 +510,9 @@ async function main() {
   }
   await verifyUpdateMetadata(platform, paths, installerFiles, appPackage.version);
   verifyUnsignedPackage(platform, paths, installerFiles);
+  if (platform === 'win32' && process.env.GITHUB_ACTIONS === 'true') {
+    await verifyWindowsInstallation(paths, `Moss-Setup-${appPackage.version}-${arch}.exe`, builtins);
+  }
 
   console.log(JSON.stringify({
     ok: true,

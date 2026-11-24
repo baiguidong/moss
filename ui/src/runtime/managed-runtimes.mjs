@@ -37,7 +37,7 @@ function commandExists(command) {
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'ignore', 'pipe'],
       windowsHide: true,
       ...options,
     });
@@ -149,13 +149,7 @@ async function extractTarGz(archivePath, targetDir) {
 async function extractZip(archivePath, targetDir) {
   await clearDirectory(targetDir);
   if (process.platform === 'win32') {
-    await run('powershell.exe', [
-      '-NoProfile',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-Command',
-      `Expand-Archive -LiteralPath ${JSON.stringify(archivePath)} -DestinationPath ${JSON.stringify(targetDir)} -Force`,
-    ]);
+    await run('tar.exe', ['-xf', archivePath, '-C', targetDir]);
     return;
   }
   await run('unzip', ['-q', archivePath, '-d', targetDir]);
@@ -314,14 +308,14 @@ async function ensureGitRuntime() {
   const version = MANAGED_RUNTIME_VERSIONS.git;
   const installDir = gitRoot();
   const executablePath = gitBashExecutablePath();
-  if (await verifyExecutable(executablePath)) {
+  if (await verifyExecutable(executablePath) && await verifyExecutable(gitExecutablePath())) {
     await markInstalled('git', version, executablePath, installDir);
     return { ok: true, executablePath, installPath: installDir, installed: false };
   }
   const resource = findResource('git');
   if (!resource) return { ok: false, missing: true, name: 'git' };
   await extractPortableGit(resource, installDir);
-  if (!(await verifyExecutable(executablePath))) {
+  if (!(await verifyExecutable(executablePath) && await verifyExecutable(gitExecutablePath()))) {
     throw new Error(`Managed Git Bash runtime failed verification: ${executablePath}`);
   }
   await markInstalled('git', version, executablePath, installDir);

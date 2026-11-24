@@ -27,7 +27,7 @@ export function createHostControlClient({ home, db, kind, environmentId, version
   let activeAccount, activeConnection;
   let generation = 0;
   const epoch = randomUUID();
-  let timer, busy, stopped = false;
+  let timer, busy, busyGeneration, stopped = false;
   const save = () => {
     fs.mkdirSync(home, { recursive: true, mode: 0o700 });
     fs.writeFileSync(filename + '.tmp', JSON.stringify(state), { mode: 0o600 });
@@ -111,7 +111,10 @@ export function createHostControlClient({ home, db, kind, environmentId, version
   }
   const refresh = () => {
     if (stopped) return Promise.resolve();
-    return busy ||= tick().catch(onError).finally(() => { busy = null; });
+    if (busy) return busyGeneration === generation ? busy : busy.then(refresh);
+    busyGeneration = generation;
+    busy = tick().catch(onError).finally(() => { busy = null; });
+    return busy;
   };
   return {
     attributeSession(sessionId) {

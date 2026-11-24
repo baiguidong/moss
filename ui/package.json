@@ -240,6 +240,7 @@
     },
     "nsis": {
       "artifactName": "${productName}-Setup-${version}-${arch}.${ext}",
+      "include": "build/installer.nsh",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true

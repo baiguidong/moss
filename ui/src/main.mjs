@@ -398,6 +398,7 @@ import { createAgentMailStore } from './agent-mail-store.mjs';
 import { createAgentMailPoller } from './agent-mail-poller.mjs';
 
 const isWebHost = process.env.MOSS_WEB_MODE === '1';
+const prepareInstall = !isWebHost && process.argv.includes('--prepare-install');
 // A managed Host obtains the canonical public origin from its authenticated
 // controller, so moving the gateway does not require replacing its container.
 if (isWebHost && process.env.MOSS_ENVIRONMENT_ID && process.env.MOSS_WEB_AUTH_SERVER) {
@@ -474,7 +475,7 @@ protocol.registerSchemesAsPrivileged([
 // Project scheduling mutates persistent state, so only one desktop main process may run it.
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
-  app.exit(0);
+  app.exit(prepareInstall ? 1 : 0);
   await new Promise(() => {});
 }
 
@@ -5086,6 +5087,15 @@ function attachEmbeddedAppWebContents(pending, targetWebContents, embedId) {
   state.sessionId = pending.sessionId;
   state.workspace = pending.sessionId ? getSessionRecord(pending.sessionId).workspace : pending.workspace;
   configureAppWebContents(targetWebContents, pending.bundleToken);
+  if (state.id === 'moss.buddy') {
+    targetWebContents.on('dom-ready', () => {
+      if (!isAppUrlForToken(targetWebContents.getURL(), pending.bundleToken)) return;
+      // Bundled Buddy releases scale the hatched avatar but leave the hatch
+      // preview at its full size inside the 56 px widget.
+      void targetWebContents.insertCSS('#buddy-app .b-mini .b-unhatched .b-stage > .b-art { transform: scale(.4); }')
+        .catch(error => mossLog('warn', 'app-ui', 'Unable to size the Buddy widget', { error: error.message }));
+    });
+  }
   targetWebContents.once('destroyed', () => {
     disposeAppWebContentsState(pending.webContentsId);
     pendingEmbeddedApps.delete(embedId);
@@ -7460,6 +7470,18 @@ const {
 });
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
+  const startedAt = Date.now();
+  mossLog('info', 'app', prepareInstall ? 'Preparing desktop installation' : 'Application starting', { version: app.getVersion() });
+  if (prepareInstall) {
+    const runtimes = await startManagedRuntimeInstall();
+    const failures = Object.entries(runtimes).filter(([, result]) => !result.ok);
+    if (failures.length) {
+      throw new Error(failures.map(([name, result]) => `${name}: ${result.error || 'bundled resource missing'}`).join('\n'));
+    }
+    if (app.isPackaged && !hasFile(path.join(process.resourcesPath, 'builtin-apps', 'manifest.json'))) {
+      throw new Error('The bundled App manifest is missing.');
+    }
+  }
   try { applyDockIcon(desktopSettings.appearance?.dockIcon); } catch (error) { console.warn('[appearance]', error.message); }
   appRuntimeRestorePending = !isWebHost;
   setEnterpriseFetchImplementation(enterpriseAccountNetFetch);
@@ -8231,9 +8253,21 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         rollback: rollbackAppInstallationIfCurrent, getRevision: getAppInstallationRevision,
         getInstalled: id => listAllStoredApps().find(item => item.id === id),
       }),
-    }).initialize().catch(error => { mossLog('error', 'builtin-apps', '无法加载内置应用清单', { error: String(error) }); return null; });
+    }).initialize().catch(error => {
+      if (prepareInstall) throw error;
+      mossLog('error', 'builtin-apps', '无法加载内置应用清单', { error: String(error) });
+      return null;
+    });
     const results = await builtinApps?.sync() || [];
-    for (const item of results.filter(item => item.error)) mossLog('error', 'builtin-apps', item.error, { appId: item.id });
+    const failures = results.filter(item => item.error);
+    for (const item of failures) mossLog('error', 'builtin-apps', item.error, { appId: item.id });
+    if (prepareInstall) {
+      if (failures.length) throw new Error(failures.map(item => `${item.displayName || item.id}: ${item.error}`).join('\n'));
+      await appRuntime.shutdown();
+      mossLog('info', 'app', 'Desktop installation ready', { durationMs: Date.now() - startedAt });
+      app.exit(0);
+      return;
+    }
   }
   ipcMain.handle('app:list-builtins', () => builtinApps?.list() || []);
   updateGuardedAppIpc.handle('app:restore-builtin', async (_event, { id } = {}) => {
@@ -8455,7 +8489,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     mossLog('error', 'app', 'Failed to initialize custom protocols', { error: err.message });
   }
 
-  mossLog('info', 'app', 'Application starting', { version: app.getVersion() });
   hostControl.start();
 
   if (selfTestTarget?.fixture) {
@@ -8605,8 +8638,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       mossLog('info', 'app', 'Main window recreated on activate');
     }
   });
-  mossLog('info', 'app', 'Application ready');
+  mossLog('info', 'app', 'Application ready', { durationMs: Date.now() - startedAt });
 }).catch(error => {
+  if (prepareInstall) {
+    mossLog('error', 'app', 'Desktop installation preparation failed', { error: error?.stack || String(error) });
+    app.exit(1);
+    return;
+  }
   if (!isWebHost) throw error;
   console.error('[moss-web] Host initialization failed:', error?.message || String(error));
   app.exit(1);
@@ -8992,7 +9030,7 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
   try {
     const authenticated = await promise;
     controller.signal.throwIfAborted();
-    const settings = await refreshDesktopSettings({
+    await refreshDesktopSettings({
       // A successful Server login also enables the control-plane heartbeat.
       // Without this flag the access token is stored, but the Desktop never
       // enrolls and therefore never receives the user's New API model key.
@@ -9005,8 +9043,9 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
       enterpriseAccountRefreshToken: authenticated.refreshToken || '',
       enterpriseAccountUserPassword: '',
     });
+    if (!isWebHost) await hostControl.refresh();
     mossLog('info', 'remote-auth', 'Moss Server authentication completed');
-    return settings;
+    return getDesktopSettingsPayload();
   } catch (error) {
     mossLog('error', 'remote-auth', 'Moss Server authentication failed', {
       error: redactAuthFailureText(error instanceof Error ? error.message : String(error)),
