@@ -24,6 +24,7 @@ import type {
   ScopedMcpServerConfig,
 } from '../../services/mcp/types.js'
 import type { Tool, ToolPermissionContext, Tools, ToolUseContext } from '../../Tool.js'
+import { getSessionRuntimeContext } from '../../utils/sessionIdContext.js'
 import { killShellTasksForAgent } from '../../tasks/LocalShellTask/killShellTasks.js'
 import type { Command } from '../../types/command.js'
 import type { AgentId } from '../../types/ids.js'
@@ -454,9 +455,15 @@ export async function* runAgent({
     }
   }
 
+  const channel = getSessionRuntimeContext()
+  const channelToolAllowlist = channel?.channelToolAllowlist
+  const workerTools = channelToolAllowlist
+    ? uniqBy([...(channel?.channelAppTools ?? []), ...availableTools], 'name')
+      .filter(tool => channelToolAllowlist.includes(tool.name))
+    : availableTools
   const resolvedTools = useExactTools
-    ? availableTools.filter(tool => !tool.requiresInteractiveMainSession)
-    : resolveAgentTools(agentDefinition, availableTools, isAsync).resolvedTools
+    ? workerTools.filter(tool => !tool.requiresInteractiveMainSession)
+    : resolveAgentTools(agentDefinition, workerTools, isAsync).resolvedTools
 
   const additionalWorkingDirectories = Array.from(
     (permissionContextOverride ?? appState.toolPermissionContext)
@@ -603,7 +610,7 @@ export async function* runAgent({
     tools: agentMcpTools,
     cleanup: mcpCleanup,
   } = await initializeAgentMcpServers(
-    agentDefinition,
+    channelToolAllowlist ? { ...agentDefinition, mcpServers: [] } : agentDefinition,
     toolUseContext.options.mcpClients,
   )
 

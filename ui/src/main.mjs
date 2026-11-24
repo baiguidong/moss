@@ -2091,6 +2091,9 @@ async function getAgentChannelCatalog(context = null, options = {}) {
         title: String(tool.title || tool.id || tool.name || ''),
         description: String(tool.description || ''),
         source: 'app',
+        appId: tool.appId,
+        appName: tool.appDisplayName,
+        enabledByDefault: tool.toolScope === 'global',
         effect: tool.effect || 'write',
       })).filter((tool) => tool.id)
     : [];
@@ -2113,6 +2116,7 @@ async function getAgentChannelCatalog(context = null, options = {}) {
         description: tool.searchHint || '',
         aliases: tool.aliases || [],
         source: tool.source || 'built-in',
+        availableInChat: tool.availableInChat,
       })),
       ...appTools,
     ],
@@ -2286,13 +2290,21 @@ async function authorizeAgentChannelPolicy(policy, context = null) {
   );
   let effectiveTools = tools.selected;
   if (agent && Array.isArray(agent.tools) && !agent.tools.includes('*')) {
-    const agentTools = new Set(agent.tools);
+    const agentTools = new Set([
+      ...agent.tools,
+      ...catalog.tools.filter(tool => [tool.id, ...(tool.aliases || [])].some(name =>
+        matchesAgentChannelTool(name, agent.tools))).map(tool => tool.id),
+    ]);
     effectiveTools = effectiveTools === null
       ? [...agentTools]
       : effectiveTools.filter((tool) => agentTools.has(tool));
   }
   return {
     ...requestedPolicy,
+    ...(Array.isArray(requestedPolicy.toolAllowlist) && {
+      toolAllowlist: requestedPolicy.toolAllowlist.filter(name =>
+        catalog.tools.some(tool => tool.id === name && tool.availableInChat !== false && tool.enabledByDefault !== false)),
+    }),
     agentAvailable: !requestedPolicy.agentId || Boolean(agent),
     resources: {
       tools: effectiveTools,
@@ -2403,9 +2415,14 @@ function listWritableAgentChannelSessions(query = '', context = null) {
 
 async function createSessionFromAgentChannel(input = {}) {
   const appId = String(input.appId || '').trim();
+  let title = String(input.title || '').trim();
+  if (!title) {
+    const sourceApp = listAllStoredApps().find(app => (app.id || app.name) === appId);
+    const sourceName = sourceApp?.displayName || sourceApp?.title || appId;
+    title = sourceName ? `${sourceName}会话` : 'App Channel 会话';
+  }
   const sessionRecord = createSessionRecord({
-    title: String(input.title || '').trim().slice(0, 120)
-      || 'App Channel 会话',
+    title: title.slice(0, 120),
     agentMode: 'local',
     originChannel: `app:${appId}`,
   });
@@ -2448,6 +2465,7 @@ async function sendPromptFromAgentChannel(sessionId, prompt, options = {}) {
     sourceChannel: options.sourceChannel || 'channel',
     runtimePromptPrefix: options.runtimeContext,
     additionalSystemPrompt: options.runtimeSystemPrompt,
+    onRuntimeMessage: options.onRuntimeMessage,
   });
   return { ...result, title: sessionRecord.title };
 }
@@ -2995,6 +3013,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord, runtimeSystemPrompt,
   restoreTestController(sessionRecord);
   applyManagedRuntimeEnv(getManagedRuntimeEnvOptions());
   const appScoped = isAppScopedSession(sessionRecord);
+  const channelToolAllowlist = sessionRecord?.channelRuntimePolicy?.toolAllowlist;
   if (appScoped) {
     if (isolateAppSession(sessionRecord)) schedulePersistSession(sessionRecord, true);
   } else await sessionApps.migrateRecord(sessionRecord);
@@ -3005,7 +3024,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord, runtimeSystemPrompt,
     sessionRecord?.agentMode === 'remote-direct' || !appRuntime
       ? []
       : appRuntime.listContributions({ ...(appScoped ? { appId: sessionRecord.channelAppId } : {}), kinds: ['tools'], loadSchemas: true, selectedAppIds, selectedAppServiceIds })
-        .then((contributions) => contributions.tools || [])
+        .then(({ tools = [] }) => channelToolAllowlist ? tools.filter(tool => channelToolAllowlist.includes(tool.name)) : tools)
         .catch((error) => {
           mossLog('error', 'app-runtime', 'Unable to load App Tool contributions', {
             error: error instanceof Error ? error.message : String(error),
@@ -3114,6 +3133,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord, runtimeSystemPrompt,
     allowedTools: sessionRecord?.projectCreationMode ? PROJECT_CREATION_TOOLS : sessionRecord?.appTestRunId ? (sessionRecord.appTestEvidenceReview ? TEST_REVIEW_ALLOWED_TOOLS : TEST_ALLOWED_TOOLS) : sessionRecord?.channelRuntimePolicy
       ? resolveAgentChannelToolSelectors(sessionRecord.channelRuntimePolicy, Object.keys(mcpServers))
       : null,
+    channelToolAllowlist,
     workspaceDirectories: sessionRecord
       ? getSessionWorkspaceDirectories(sessionRecord)
       : [],
@@ -3813,6 +3833,7 @@ async function runSessionPromptObserved({
   visualizationAnnotation,
   clientMessageId,
   onAccepted,
+  onRuntimeMessage,
   failOnApiError = false,
   controllerSignal,
   retryEncryptedContentOnce = false,
@@ -4056,6 +4077,7 @@ async function runSessionPromptObserved({
         }
 
         appendRuntimeMessageToSession(sessionRecord, message);
+        onRuntimeMessage?.(message);
         emitToRenderer('agent:event', { sessionId: sessionRecord.id, payload: message });
         scheduleSubAgentSessionSync(sessionRecord);
       }
@@ -7542,7 +7564,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     sendPrompt: sendPromptFromAgentChannel,
     abortSession: abortSessionFromAgentChannel,
     defaultsFor: agentChannelDefaults,
-    publishEvent: ({ appId, instanceId, protocol: eventProtocol, name, data, eventId }) => {
+    publishEvent: ({ appId, instanceId, protocol: eventProtocol, name, data, eventId, onlyIfRunning, timeoutMs }) => {
       if (!appRuntime) throw new Error('App Runtime is not ready.');
       return appRuntime.publishHostEvent(
         appId,
@@ -7550,7 +7572,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         eventProtocol,
         name,
         data,
-        { eventId },
+        { eventId, onlyIfRunning, timeoutMs },
       );
     },
     log: (level, message, details) => mossLog(level, 'agent-channel', message, details),
@@ -11099,6 +11121,7 @@ async function sendAgentPromptNow(event, {
   additionalSystemPrompt = '',
   controllerSignal,
   onAccepted,
+  onRuntimeMessage,
 } = {}) {
   controllerSignal?.throwIfAborted();
   const sender = event?.sender || mainWindow?.webContents || null;
@@ -11336,7 +11359,7 @@ async function sendAgentPromptNow(event, {
   controllerSignal?.throwIfAborted();
   const turn = await runSessionPrompt({ sessionRecord, sender, runtimePrompt, visibleUserPrompt,
     selectedSkills: isPlanOnly ? [] : skills,
-    clientMessageId, onAccepted,
+    clientMessageId, onAccepted, onRuntimeMessage,
     attachments: visibleAttachments, resources: appResources,
     preparedTools: isPlanOnly ? [] : preparedApp?.tools || [], composerContext: appContext,
     visualizationAnnotation: preparedAnnotation?.annotation,

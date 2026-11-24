@@ -47,7 +47,12 @@ for (const [module, prefix, protocol] of [[account, 'Account', 'moss.account/v1'
     errors: ['APP_INVALID_ACTION_INPUT', 'APP_PERMISSION_DENIED', 'APP_HOST_UNAVAILABLE', 'APP_HOST_PROTOCOL_ERROR'],
   }])), events: {} }
   if (prefix === 'Account') for (const [name, permission] of Object.entries(account.ACCOUNT_BACKEND_EVENT_PERMISSIONS)) protocols[protocol].events[name] = { permission, input: map('AccountBackendEventMap')[name] }
-  if (prefix === 'Agent') for (const [name, permission] of Object.entries(agent.AGENT_BACKEND_EVENT_PERMISSIONS)) protocols[protocol].events[name] = { permission, input: { type: 'object', required: name === 'binding.changed' ? ['externalConversationId', 'revision'] : ['externalConversationId', 'turnId'], properties: { externalConversationId: { type: 'string', minLength: 1 }, revision: { type: 'integer', minimum: 0 }, turnId: { type: 'string', minLength: 1 } }, additionalProperties: true } }
+  if (prefix === 'Agent') for (const [name, permission] of Object.entries(agent.AGENT_BACKEND_EVENT_PERMISSIONS)) {
+    const input = name === 'turn.progress'
+      ? schema(checker.getDeclaredTypeOfSymbol(exports.find(item => item.name === 'AgentTurnProgressEvent')))
+      : { type: 'object', required: name === 'binding.changed' ? ['externalConversationId', 'revision'] : ['externalConversationId', 'turnId'], properties: { externalConversationId: { type: 'string', minLength: 1 }, revision: { type: 'integer', minimum: 0 }, turnId: { type: 'string', minLength: 1 } }, additionalProperties: true }
+    protocols[protocol].events[name] = { permission, input }
+  }
 }
 const output = JSON.stringify(protocols, null, 2) + '\n'
 const destination = new URL('../src/host/public-contracts.json', import.meta.url)

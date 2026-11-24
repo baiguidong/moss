@@ -52,6 +52,72 @@ function runControllerScenario(source: string) {
 }
 
 describe('Agent Channel controller', () => {
+  it('enforces a turn tool selection within the Host policy and leaves default turns alone', () => {
+    const result = runControllerScenario(`
+      const fixture = setup('ai_auto');
+      const input = { externalUserId: 'user', externalConversationId: 'chat', text: 'hello' };
+      await fixture.controller.handleAgentRequest('binding.update', {
+        externalConversationId: '*', patch: { resources: { tools: ['Read', 'Grep'] } },
+      }, fixture.context);
+      const selected = await fixture.controller.startTurn({
+        ...input, externalEventId: 'selected', toolAllowlist: ['Read', 'Bash'],
+      }, fixture.context);
+      await waitFor(() => fixture.events.some(event => event.name === 'turn.completed' && event.data.turnId === selected.turnId));
+      const normal = await fixture.controller.startTurn({ ...input, externalEventId: 'default' }, fixture.context);
+      await waitFor(() => fixture.events.some(event => event.name === 'turn.completed' && event.data.turnId === normal.turnId));
+      const rejected = await fixture.controller.startTurn({
+        ...input, externalEventId: 'rejected', toolAllowlist: ['Bash'],
+      }, fixture.context).catch(error => error.code);
+      console.log(JSON.stringify({ policies: fixture.promptOptions.map(item => item.policy), rejected }));
+    `)
+    expect(result.policies[0].toolAllowlist).toEqual(['Read'])
+    expect(resolveAgentChannelToolSelectors(result.policies[0], ['external-mcp'])).toEqual(['Read'])
+    expect(resolveAgentChannelToolSelectors({ ...result.policies[0], agentId: 'support' })).toEqual(['Read', 'Agent', 'TaskOutput', 'TaskStop'])
+    expect(result.policies[1].toolAllowlist).toBeUndefined()
+    expect(result.policies[1].resources.tools).toEqual(['Read', 'Grep'])
+    expect(result.rejected).toBe('AGENT_CHANNEL_TOOLS_UNAVAILABLE')
+  })
+
+  it('publishes only the progress requested for each turn before its final reply', () => {
+    const result = runControllerScenario(`
+      const fixture = setup('ai_auto', { sendPrompt: async (_session, _prompt, { onRuntimeMessage }) => {
+        const thinking = { type: 'thinking', thinking: 'internal reasoning' };
+        const tool = { type: 'tool_use', id: 'tool-1', name: 'Read', input: { path: '/private' } };
+        onRuntimeMessage?.({ type: 'stream_event', event: { type: 'content_block_start', content_block: thinking } });
+        onRuntimeMessage?.({ type: 'stream_event', event: { type: 'content_block_start', content_block: tool } });
+        onRuntimeMessage?.({ type: 'assistant', message: { content: [thinking, tool] } });
+        onRuntimeMessage?.({ type: 'user', message: { content: [
+          { type: 'tool_result', tool_use_id: tool.id, is_error: true, content: 'sensitive result' },
+        ] } });
+        return { assistantText: 'answer' };
+      } });
+      for (const [externalEventId, progress] of [
+        ['default', undefined], ['thinking', { thinking: true }], ['tools', { tools: true }],
+        ['both', { thinking: true, tools: true }],
+      ]) {
+        const input = { externalUserId: 'user', externalConversationId: 'chat', externalEventId, text: 'hi', progress };
+        const { turnId } = await fixture.controller.startTurn(input, fixture.context);
+        await waitFor(() => fixture.events.some(event => event.name === 'turn.completed' && event.data.turnId === turnId));
+      }
+      console.log(JSON.stringify(fixture.events));
+    `)
+    const hints = result.filter((event: any) => event.name === 'turn.progress')
+    expect(hints.map(({ data }: any) => [data.externalEventId, data.kind, data.phase, data.toolName])).toEqual([
+      ['thinking', 'thinking', undefined, undefined],
+      ['tools', 'tool', 'started', 'Read'], ['tools', 'tool', 'failed', 'Read'],
+      ['both', 'thinking', undefined, undefined],
+      ['both', 'tool', 'started', 'Read'], ['both', 'tool', 'failed', 'Read'],
+    ])
+    expect(new Set(hints.map((event: any) => event.eventId)).size).toBe(hints.length)
+    expect(hints.every((event: any) => event.onlyIfRunning && event.appId === 'example.channel'
+      && event.instanceId === 'example.channel--default')).toBe(true)
+    expect(JSON.stringify(hints)).not.toMatch(/internal reasoning|private|sensitive result/)
+    for (const hint of hints) {
+      const final = result.find((event: any) => event.name === 'turn.completed' && event.data.turnId === hint.data.turnId)
+      expect(result.indexOf(hint)).toBeLessThan(result.indexOf(final))
+    }
+  })
+
   it('narrows runtime connectors without mutating the session connector selection', () => {
     const base = ['crm', 'mail']
     expect(resolveAgentChannelConnectorIds({ resources: { connectors: ['crm', 'crm'] } }, base))

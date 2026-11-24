@@ -1,5 +1,6 @@
-import { MOSS_AGENT_PROTOCOL } from '../../../app-sdk/src/index.mjs';
+import { AppServiceError, MOSS_AGENT_PROTOCOL } from '../../../app-sdk/src/index.mjs';
 import { DEFAULT_AGENT_CHANNEL_POLICY } from './store.mjs';
+import { createAgentTurnProgress } from './progress.mjs';
 
 const SAFE_TURN_FAILURE_MESSAGE = 'Moss 会话处理失败，请在 Moss 中查看详情后重试。';
 
@@ -203,6 +204,10 @@ export function resolveAgentChannelConnectorIds(policy, baseConnectorIds) {
 }
 
 export function resolveAgentChannelToolSelectors(policy, mcpServerNames = []) {
+  if (Array.isArray(policy?.toolAllowlist)) {
+    // Expert dispatch and task lifecycle use the parent session's orchestration tools.
+    return [...new Set([...policy.toolAllowlist, ...(policy.agentId ? ['Agent', 'TaskOutput', 'TaskStop'] : [])])];
+  }
   if (policy?.resources?.tools === null) return null;
   const selectors = [...(policy?.resources?.tools || [])];
   if (policy?.agentId) selectors.push('Agent', 'TaskOutput', 'TaskStop');
@@ -280,7 +285,7 @@ export function createAgentChannelController({
     return next;
   }
 
-  async function effectiveBinding(input, context) {
+  async function effectiveBinding(input, context, toolAllowlist) {
     const scope = contextScope(context);
     const resolved = store.resolveBinding({
       ...scope,
@@ -290,18 +295,29 @@ export function createAgentChannelController({
         || defaultBindingIdFor(input.externalConversationId, context)
         || '*',
     }, defaultsFor(context));
-    const authorized = await authorizePolicy(resolved, context);
-    return { ...resolved, ...authorized };
+    const requested = toolAllowlist ? { ...resolved, toolAllowlist } : resolved;
+    const authorized = await authorizePolicy(requested, context);
+    const policy = { ...requested, ...authorized };
+    if (!toolAllowlist) return policy;
+    const available = new Set(policy.toolAllowlist);
+    const selected = policy.resources.tools;
+    const allowed = [...new Set(toolAllowlist)].filter(name => available.has(name) && (
+      selected === null || selected.some(selector => selector === name ||
+        (selector.endsWith('*') && name.startsWith(selector.slice(0, -1))))
+    ));
+    return { ...policy, toolAllowlist: allowed };
   }
 
-  async function emitForTurn(turn, name, data = {}) {
+  async function emitForTurn(turn, name, data = {}, options = {}) {
     try {
       await publishEvent({
         appId: turn.appId,
         instanceId: turn.instanceId,
         protocol: MOSS_AGENT_PROTOCOL,
         name,
-        eventId: `${name}:${turn.id}:${turn.updatedAt}`,
+        eventId: options.eventId ?? `${name}:${turn.id}:${turn.updatedAt}`,
+        onlyIfRunning: options.onlyIfRunning,
+        timeoutMs: options.timeoutMs,
         data: {
           turnId: turn.id,
           externalConversationId: turn.externalConversationId,
@@ -341,6 +357,17 @@ export function createAgentChannelController({
         return;
       }
       let running = store.updateTurn(turn.id, { status: 'running' });
+      const progressOptions = turn.input?.progress;
+      const progress = progressOptions?.thinking === true || progressOptions?.tools === true
+        ? createAgentTurnProgress(progressOptions, (data, sequence) => {
+          if (store.getTurn(turn.id)?.status !== 'running') return false;
+          return emitForTurn(running, 'turn.progress', { externalEventId: turn.externalEventId, ...data }, {
+            eventId: `turn.progress:${turn.id}:${sequence}`,
+            onlyIfRunning: true,
+            timeoutMs: 1000,
+          });
+        })
+        : undefined;
       activeTurns.set(turn.id, { sessionId: turn.sessionId });
       try {
         await applySessionPolicy(session.id, turn.policy, {
@@ -359,6 +386,7 @@ export function createAgentChannelController({
             instanceId: turn.instanceId,
             sourceChannel: turn.appId,
             runtimeSystemPrompt: AGENT_CHANNEL_SYSTEM_PROMPT,
+            ...(progress && { onRuntimeMessage: progress.observe }),
             runtimeContext: buildExternalContext(
               turn.input?.message || {},
               turn.input?.continuitySummary || '',
@@ -366,6 +394,7 @@ export function createAgentChannelController({
             ),
           },
         );
+        await progress?.flush();
         const text = normalizeText(result?.assistantText) || '处理完成。';
         if (turn.replyMode === 'ai_draft_review') {
           running = store.updateTurn(turn.id, { status: 'awaiting_review', resultText: text });
@@ -384,6 +413,7 @@ export function createAgentChannelController({
           });
         }
       } catch (error) {
+        await progress?.flush();
         const latest = store.getTurn(turn.id);
         if (latest?.status === 'cancelled') return;
         const message = error instanceof Error ? error.message : String(error);
@@ -445,6 +475,8 @@ export function createAgentChannelController({
   async function startTurn(input, context) {
     const scope = contextScope(context);
     const message = sanitizeExternalMessage(input);
+    const thinking = input.progress?.thinking === true;
+    const tools = input.progress?.tools === true;
     const defaultConversationId = normalizeText(input.defaultConversationId)
       || defaultBindingIdFor(message.externalConversationId, context)
       || '*';
@@ -454,12 +486,15 @@ export function createAgentChannelController({
         externalConversationId: message.externalConversationId,
         externalMemberId: message.externalUserId,
         defaultConversationId,
-      }, context);
+      }, context, input.toolAllowlist);
       if (binding.permissionMode === 'bypassPermissions' && !context.grants?.includes('agent:permissions:bypass')) {
         throw new Error('Unrestricted Agent execution is no longer authorized for this App.');
       }
       if (binding.agentId && binding.agentAvailable === false) {
         throw new Error(`Configured Agent is unavailable: ${binding.agentId}`);
+      }
+      if (binding.toolAllowlist?.length === 0) {
+        throw new AppServiceError('AGENT_CHANNEL_TOOLS_UNAVAILABLE', '所选工具已不可用，请更新通道设置。');
       }
       const conversation = store.getOrCreateConversation({
         ...scope,
@@ -474,7 +509,10 @@ export function createAgentChannelController({
         hop: message.hop,
         replyMode: binding.replyMode,
         policy: binding,
-        input: { message, conversationId: conversation.id, defaultConversationId },
+        input: {
+          message, conversationId: conversation.id, defaultConversationId,
+          ...((thinking || tools) && { progress: { thinking, tools } }),
+        },
       });
       if (!claim.claimed) return turnResult(claim.turn, { duplicate: true });
 

@@ -2768,6 +2768,39 @@
             },
             "hop": {
               "type": "number"
+            },
+            "progress": {
+              "type": "object",
+              "properties": {
+                "thinking": {
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "const": true
+                    }
+                  ]
+                },
+                "tools": {
+                  "anyOf": [
+                    {
+                      "const": false
+                    },
+                    {
+                      "const": true
+                    }
+                  ]
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "toolAllowlist": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -3197,6 +3230,91 @@
             }
           },
           "additionalProperties": true
+        }
+      },
+      "turn.progress": {
+        "permission": "agent:turns:read",
+        "input": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "turnId": {
+                  "type": "string"
+                },
+                "externalConversationId": {
+                  "type": "string"
+                },
+                "externalEventId": {
+                  "type": "string"
+                },
+                "sessionId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "thinking"
+                }
+              },
+              "required": [
+                "turnId",
+                "externalConversationId",
+                "externalEventId",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "turnId": {
+                  "type": "string"
+                },
+                "externalConversationId": {
+                  "type": "string"
+                },
+                "externalEventId": {
+                  "type": "string"
+                },
+                "sessionId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "tool"
+                },
+                "phase": {
+                  "anyOf": [
+                    {
+                      "const": "completed"
+                    },
+                    {
+                      "const": "failed"
+                    },
+                    {
+                      "const": "started"
+                    }
+                  ]
+                },
+                "toolName": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "turnId",
+                "externalConversationId",
+                "externalEventId",
+                "kind",
+                "phase",
+                "toolName"
+              ],
+              "additionalProperties": false
+            }
+          ]
         }
       },
       "turn.review_requested": {

@@ -65,6 +65,7 @@ export const AGENT_HOST_METHOD_PERMISSIONS = Object.freeze({
 export const AGENT_BACKEND_EVENT_PERMISSIONS = Object.freeze({
   'binding.changed': AGENT_PERMISSIONS.bindingsRead,
   'turn.accepted': AGENT_PERMISSIONS.turnsRead,
+  'turn.progress': AGENT_PERMISSIONS.turnsRead,
   'turn.review_requested': AGENT_PERMISSIONS.turnsRead,
   'turn.completed': AGENT_PERMISSIONS.turnsRead,
   'turn.failed': AGENT_PERMISSIONS.turnsRead,
@@ -348,10 +349,10 @@ export function validateAgentHostInput(method, value) {
       requireText(input, 'externalEventId', normalizedMethod)
       requireText(input, 'text', normalizedMethod, { maxLength: 100_000 })
       break
-    case 'turn.start':
+    case 'turn.start': {
       rejectUnknownFields(input, [
         'externalUserId', 'externalConversationId', 'externalEventId', 'defaultConversationId',
-        'text', 'attachments', 'mentioned', 'source', 'hop',
+        'text', 'attachments', 'mentioned', 'source', 'hop', 'progress', 'toolAllowlist',
       ], normalizedMethod)
       requireText(input, 'externalUserId', normalizedMethod)
       requireText(input, 'externalConversationId', normalizedMethod)
@@ -368,7 +369,21 @@ export function validateAgentHostInput(method, value) {
         && (!Number.isInteger(input.hop) || input.hop < 0 || input.hop > 20)) {
         fail('turn.start hop must be between 0 and 20')
       }
+      if (input.progress !== undefined) {
+        const progress = record(input.progress, 'turn.start progress')
+        rejectUnknownFields(progress, ['thinking', 'tools'], 'turn.start progress')
+        for (const flag of Object.values(progress)) {
+          if (typeof flag !== 'boolean') fail('turn.start progress flags must be boolean')
+        }
+      }
+      if (input.toolAllowlist !== undefined) {
+        validateStringList(input.toolAllowlist, 'turn.start toolAllowlist', { nullable: false })
+        if (!input.toolAllowlist.length || input.toolAllowlist.some(name => !/^[a-zA-Z0-9_-]{1,128}$/.test(name))) {
+          fail('turn.start toolAllowlist requires at least one exact tool name')
+        }
+      }
       break
+    }
     case 'turn.get':
     case 'turn.abort':
       rejectUnknownFields(input, ['turnId'], normalizedMethod)
@@ -637,6 +652,19 @@ export function validateAgentBackendEventData(name, value) {
   } else {
     requireText(data, 'turnId', normalizedName)
     requireText(data, 'externalConversationId', normalizedName)
+  }
+  if (normalizedName === 'turn.progress') {
+    requireText(data, 'externalEventId', normalizedName)
+    const fields = ['turnId', 'externalConversationId', 'externalEventId', 'sessionId', 'status', 'kind']
+    if (data.kind === 'thinking') {
+      rejectUnknownFields(data, fields, normalizedName)
+    } else if (data.kind === 'tool') {
+      rejectUnknownFields(data, [...fields, 'phase', 'toolName'], normalizedName)
+      if (!['started', 'completed', 'failed'].includes(data.phase)) fail('Invalid tool progress phase')
+      if (typeof data.toolName !== 'string' || !/^[\w.:-]{1,128}$/.test(data.toolName)) fail('Invalid progress tool name')
+    } else {
+      fail('Invalid turn progress kind')
+    }
   }
   return data
 }

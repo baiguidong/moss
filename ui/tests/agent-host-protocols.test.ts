@@ -7,6 +7,7 @@ import {
   validateAccountBackendEventData,
   validateAccountHostInput,
   validateAccountHostOutput,
+  validateAgentBackendEventData,
   validateAgentHostInput,
   validateAgentHostOutput,
   validatePlatformHostInput,
@@ -34,6 +35,27 @@ function request(protocol: string, method: string, input: Record<string, unknown
 }
 
 describe('Account and Agent Host protocols', () => {
+  it('accepts a non-empty turn tool list with exact names only', () => {
+    const input = { externalUserId: 'user', externalConversationId: 'chat', externalEventId: 'message', text: 'hi' }
+    expect(validateAgentHostInput('turn.start', { ...input, toolAllowlist: ['Read', 'query_sheet'] }))
+      .toMatchObject({ toolAllowlist: ['Read', 'query_sheet'] })
+    for (const toolAllowlist of [[], ['*'], ['mcp__server__*'], null]) {
+      expect(() => validateAgentHostInput('turn.start', { ...input, toolAllowlist })).toThrow(/toolAllowlist/)
+    }
+  })
+
+  it('accepts independent turn progress flags and limits progress events to public status', () => {
+    const input = { externalUserId: 'user', externalConversationId: 'chat', externalEventId: 'message', text: 'hi' }
+    expect(validateAgentHostInput('turn.start', input)).toEqual(input)
+    expect(validateAgentHostInput('turn.start', { ...input, progress: { thinking: true, tools: false } }))
+      .toMatchObject({ progress: { thinking: true, tools: false } })
+    expect(() => validateAgentHostInput('turn.start', { ...input, progress: { thinking: 'yes' } })).toThrow(/boolean/)
+    const progress = { turnId: 'turn', externalConversationId: 'chat', externalEventId: 'message', kind: 'thinking' }
+    expect(validateAgentBackendEventData('turn.progress', progress)).toEqual(progress)
+    expect(() => validateAgentBackendEventData('turn.progress', { ...progress, text: 'internal' })).toThrow(/text/)
+    expect(() => validateAgentBackendEventData('turn.progress', { ...progress, kind: 'tool', phase: 'failed', toolName: 'Read' })).not.toThrow()
+  })
+
   it('accepts explicit App context boundaries and rejects unknown scope values', () => {
     expect(validateAgentHostInput('catalog.list', { kinds: ['tools'], contextScope: 'app' })).toMatchObject({ contextScope: 'app' })
     expect(validateAgentHostInput('binding.update', { externalConversationId: 'chat', patch: { contextScope: 'app' } })).toMatchObject({ patch: { contextScope: 'app' } })

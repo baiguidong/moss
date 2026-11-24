@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from 'async_hooks'
 import type { CronProvider } from '../../shared/cron-provider.js'
 import type { SessionId } from '../types/ids.js'
 import type { ImageSettings } from '../services/imageGeneration.js'
+import type { Tools } from '../Tool.js'
 
 export type SessionExecutionEnvironment = 'desktop' | 'server'
 
@@ -27,6 +28,8 @@ export type SessionRuntime = {
   cron?: CronProvider
   unattended?: boolean
   appToolPolicy?: AppToolPolicy
+  channelToolAllowlist?: string[]
+  channelAppTools?: Tools
   mcpLifetime?: { id: string; signal: AbortSignal; revokedServers?: Set<string> }
 }
 

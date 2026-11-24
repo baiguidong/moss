@@ -339,6 +339,7 @@ export type DesktopToolCatalogEntry = {
   aliases: string[]
   searchHint: string
   enabled: boolean
+  availableInChat: boolean
   source: 'built-in'
 }
 
@@ -350,6 +351,7 @@ export function listDesktopTools(settings?: { url?: string; apiKey?: string; ima
     aliases: [...(tool.aliases ?? [])],
     searchHint: tool.searchHint ?? '',
     enabled: tool.isEnabled({ executionEnvironment: 'desktop', image: settings?.image, modelConnection: { url: settings?.url, apiKey: settings?.apiKey } }),
+    availableInChat: isChatModeToolAllowed(tool.name, false),
     source: 'built-in' as const,
   }))
 }
@@ -552,6 +554,7 @@ export interface ClaudeSessionOptions {
   disabledAgentTypes?: string[]
   /** Optional allowlist applied after all built-in, MCP, and App tools are assembled. */
   allowedTools?: string[] | null
+  channelToolAllowlist?: string[]
   /** Desktop-managed writable workspaces, explicitly supplied by the session owner. */
   workspaceDirectories?: string[]
   /** Environment variables scoped to this embedded session and its subprocesses. */
@@ -898,6 +901,7 @@ export class ClaudeSession {
         cron: opts.cron,
         unattended: opts.unattended,
         appToolPolicy: structuredClone(opts.appToolPolicy || { appIds: [], mcpServers: {} }),
+        channelToolAllowlist: opts.channelToolAllowlist,
       },
       cwd,
       model,
@@ -1213,6 +1217,7 @@ export class ClaudeSession {
     // 工具列表
     const toolsStart = Date.now()
     const appTools = createAppContributionTools(this.#opts.appTools)
+    if (this.#opts.runtime.channelToolAllowlist) this.#opts.runtime.channelAppTools = appTools
     const computeTools = () => runWithSessionIdContext(
       asSessionId(this.sessionId),
       this.#opts.projectDir,

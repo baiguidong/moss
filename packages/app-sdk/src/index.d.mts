@@ -125,6 +125,7 @@ export type AgentHostMethod =
 export type AgentBackendEvent =
   | 'binding.changed'
   | 'turn.accepted'
+  | 'turn.progress'
   | 'turn.review_requested'
   | 'turn.completed'
   | 'turn.failed'
@@ -247,6 +248,8 @@ export interface AgentHostRequestMap {
     mentioned?: boolean
     source?: 'human' | 'agent' | 'system'
     hop?: number
+    progress?: { thinking?: boolean; tools?: boolean }
+    toolAllowlist?: string[]
   }
   'turn.list': {
     externalConversationId?: string
@@ -288,12 +291,27 @@ export interface AgentHostResultMap {
   'turn.delivery.ack': { acknowledged: boolean; turnId: string; status: string }
 }
 
+export type AgentTurnProgressEvent = {
+  turnId: string
+  externalConversationId: string
+  externalEventId: string
+  sessionId?: string
+  status?: string
+} & (
+  | { kind: 'thinking' }
+  | { kind: 'tool'; phase: 'started' | 'completed' | 'failed'; toolName: string }
+)
+
 export interface AppAgentApi {
   request<Method extends AgentHostMethod>(
     method: Method,
     input: AgentHostRequestMap[Method],
     options?: { requestId?: string; timeoutMs?: number; signal?: AbortSignal },
   ): Promise<AgentHostResultMap[Method]>
+  on(
+    name: 'turn.progress',
+    handler: (data: AgentTurnProgressEvent, context: HostEventContext) => unknown | Promise<unknown>,
+  ): () => void
   on(
     name: AgentBackendEvent,
     handler: (data: Record<string, unknown>, context: HostEventContext) => unknown | Promise<unknown>,
