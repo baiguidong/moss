@@ -659,14 +659,12 @@ function RuntimeStatusBadge({ runtime }: { runtime: { installed?: boolean; skipp
 
 function RuntimeRow({
   name,
-  description,
   runtime,
   enabled,
   busy,
   onEnabledChange,
 }: {
   name: string;
-  description?: string;
   runtime: { installed?: boolean; skipped?: boolean; resourceAvailable?: boolean };
   enabled: boolean;
   busy: boolean;
@@ -680,7 +678,6 @@ function RuntimeRow({
             <p className="text-[13px] font-medium text-foreground">{name}</p>
             <RuntimeStatusBadge runtime={runtime} />
           </div>
-          {description ? <p className="mt-1 text-xs leading-6 text-muted-foreground">{description}</p> : null}
         </div>
         <div className="flex shrink-0 items-center gap-3">
           <Toggle
@@ -794,7 +791,6 @@ function RuntimeSettings({
         {!git.skipped ? (
           <RuntimeRow
             name="Git Bash"
-            description="仅 Windows 使用，提供 Claude Code 需要的 bash.exe 和 git.exe。"
             runtime={git}
             enabled={runtimeSettings.git}
             busy={installingRuntime === 'git' || Boolean(status?.installing)}
