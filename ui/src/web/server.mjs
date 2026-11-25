@@ -22,6 +22,7 @@ import { createHostCapabilities } from '../shared/host-capabilities.mjs';
 // These operations require an Electron window or an app's restricted sender.
 // Browser equivalents are installed explicitly, never by spoofing that sender.
 const desktopMethods = new Set([
+  'storage:clean-app',
   'agent:pick-directory', 'agent:pick-files',
   'app:launch', 'app:embedded-open', 'app:embedded-attach', 'app:embedded-close',
   'app:open-resource', 'app:import-legacy-buddy', 'public-skillhub:open-import-dialog',

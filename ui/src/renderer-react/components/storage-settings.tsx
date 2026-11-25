@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { isWebUI } from '@/lib/host-environment';
 import { cleanIpcErrorMessage } from '@/lib/app-notifications';
-import type { ArchivedChat, StorageCacheCleanupResult, StorageCleanupResult, StorageOverview, StorageReview } from '../types';
+import type { ArchivedChat, StorageAppMode, StorageEntry, StorageCacheCleanupResult, StorageCleanupResult, StorageOverview, StorageReview } from '../types';
 
 const colors: Record<string, string> = { sessions: 'bg-blue-400', subagents: 'bg-cyan-400', archived: 'bg-sky-600', projects: 'bg-indigo-400', apps: 'bg-violet-400', 'app-data': 'bg-fuchsia-400', 'app-state': 'bg-purple-400', runtimes: 'bg-teal-400', resources: 'bg-emerald-400', cache: 'bg-amber-400', history: 'bg-orange-400', logs: 'bg-slate-400', other: 'bg-zinc-300 dark:bg-zinc-600' };
 const selectClass = 'h-9 rounded-lg border border-border bg-background px-3 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring';
@@ -17,7 +17,53 @@ function message(error: unknown) {
   return cleanIpcErrorMessage(error instanceof Error ? error.message : String(error));
 }
 
+function AppStorageDialog({ entry, close, onChanged }: {
+  entry: StorageEntry; close(): void; onChanged(result: string): void;
+}) {
+  const [mode, setMode] = React.useState<StorageAppMode | null>(entry.installed ? 'history' : null);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const ref = React.useRef<HTMLDialogElement>(null);
+  React.useEffect(() => { ref.current?.showModal(); }, []);
+  const choices: { value: StorageAppMode; title: string; detail: string }[] = [
+    { value: 'history', title: '仅清理历史安装包', detail: '保留当前版本、使用中的版本和应用数据。清理的版本将无法直接回退。' },
+    { value: 'uninstall', title: '卸载并保留数据', detail: '移除全部安装包，重新安装后可继续使用已有数据。' },
+    { value: 'purge', title: entry.installed ? '卸载并删除数据' : '删除保留的数据', detail: '永久删除此应用的本地数据和保存的凭据。' },
+  ];
+  const selected = choices.find(choice => choice.value === mode);
+  async function apply() {
+    if (!mode || !entry.appId || busy) return;
+    setBusy(true); setError('');
+    try {
+      const result = await window.agentDesktop.storage.cleanApp({ appId: entry.appId, mode, expectedVersion: entry.version ?? null });
+      const status = mode === 'history' ? result.removed ? `已清理 ${result.removed} 个历史安装包` : '没有可清理的历史安装包'
+        : mode === 'uninstall' ? '已卸载，应用数据已保留' : '已清理安装包和应用数据';
+      onChanged(`「${entry.label}」${status}。`);
+    } catch (cause) { setError(message(cause)); setBusy(false); }
+  }
+  return <dialog ref={ref} aria-labelledby="app-storage-title" onCancel={event => { event.preventDefault(); if (!busy) close(); }}
+    className="m-auto w-[min(440px,calc(100vw-32px))] rounded-xl border border-border bg-background p-5 text-foreground shadow-xl backdrop:bg-black/35">
+    <h2 id="app-storage-title" className="break-words text-base font-semibold">管理「{entry.label}」</h2>
+    <p className="mt-1 text-xs text-muted-foreground">安装包 {bytes(entry.packageBytes ?? 0)} · 应用数据 {bytes(entry.dataBytes ?? 0)}</p>
+    <fieldset disabled={busy} className="my-5 space-y-4"><legend className="sr-only">清理方式</legend>
+      {choices.filter(choice => entry.installed || choice.value === 'purge').map(choice => <label key={choice.value} className="flex cursor-pointer items-start gap-3">
+        <input className="mt-1 accent-primary" type="radio" name="app-storage-mode" value={choice.value} checked={mode === choice.value} onChange={() => setMode(choice.value)} />
+        <span><span className="block text-sm">{choice.title}</span><span className="mt-1 block text-xs text-muted-foreground">{choice.detail}</span></span>
+      </label>)}
+    </fieldset>
+    {error && <p role="alert" className="mb-3 text-xs text-destructive">{error}</p>}
+    <div className="flex justify-end gap-2">
+      <Button size="sm" variant="outline" disabled={busy} onClick={close}>取消</Button>
+      <Button size="sm" variant={mode === 'history' ? 'default' : 'destructive'} disabled={!mode || busy} onClick={() => void apply()}>
+        {busy ? '正在处理…' : selected?.title ?? '确认删除'}
+      </Button>
+    </div>
+  </dialog>;
+}
+
 export function StorageSettings() {
+  const [managedApp, setManagedApp] = React.useState<StorageEntry | null>(null);
+  const [appResult, setAppResult] = React.useState('');
   const [overview, setOverview] = React.useState<StorageOverview | null>(null);
   const [scanning, setScanning] = React.useState(true);
   const [reviewing, setReviewing] = React.useState(false);
@@ -38,11 +84,11 @@ export function StorageSettings() {
   const dialog = React.useRef<HTMLDialogElement>(null);
   const live = React.useRef(false);
   const generation = React.useRef(0);
-  const refresh = React.useCallback(async () => {
+  const refresh = React.useCallback(async (force = false) => {
     const request = ++generation.current;
     setScanning(true); setError('');
     try {
-      const next = await window.agentDesktop.storage.getOverview();
+      const next = await window.agentDesktop.storage.getOverview({ refresh: force });
       if (live.current && request === generation.current) setOverview(next);
     } catch (error) {
       if (live.current && request === generation.current) setError(message(error));
@@ -53,7 +99,13 @@ export function StorageSettings() {
   React.useEffect(() => {
     live.current = true;
     void refresh();
-    return () => { live.current = false; generation.current++; };
+    const onFocus = () => { void refresh(); };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      live.current = false;
+      generation.current++;
+      window.removeEventListener('focus', onFocus);
+    };
   }, [refresh]);
   React.useEffect(() => {
     if (review) dialog.current?.showModal();
@@ -116,7 +168,7 @@ export function StorageSettings() {
           <p className="mt-5 text-xl font-semibold tracking-tight tabular-nums">{overview ? `${overview.complete ? '' : '已统计 '}${bytes(overview.totalBytes)}` : '—'}<span className="ml-2 text-xs font-normal text-muted-foreground">由 Moss 使用</span></p>
           <p className="mt-1 text-xs text-muted-foreground" role="status">{scanning ? '正在计算存储占用，大目录可能需要一些时间…' : overview && !overview.complete ? `${overview.errorCount} 处无法读取，受影响的分类已标记。` : ''}</p>
         </div>
-        <Button variant="outline" size="sm" className="rounded-lg" disabled={scanning || deleting} onClick={() => void refresh()}>
+        <Button variant="outline" size="sm" className="rounded-lg" disabled={scanning || deleting} onClick={() => void refresh(true)}>
           <RefreshCw className={cn('mr-2 h-3.5 w-3.5', scanning && 'animate-spin')} />刷新
         </Button>
       </div>
@@ -133,7 +185,7 @@ export function StorageSettings() {
               <div>
                 <h3 className="text-[13px] font-medium">缓存</h3>
                 <p className="mt-1 text-xl font-semibold tabular-nums">{bytes(cache.bytes)}</p>
-                <p className="mt-2 text-xs leading-5 text-muted-foreground">使用过程中产生的临时数据和可联网重建的资源，清理不会影响已保存的应用数据。</p>
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">清理临时文件和可重新下载的资源，保留已安装应用的所有版本及应用数据。</p>
               </div>
               <Button variant="outline" size="sm" className="shrink-0 rounded-lg" disabled={cacheCleaning || scanning || isWebUI()} onClick={() => void clearCaches()}>
                 {cacheCleaning ? '正在清理…' : '清理'}
@@ -143,16 +195,22 @@ export function StorageSettings() {
           </div> : null;
         })()}
         <div className="divide-y divide-border">
-          {overview.categories.filter(category => category.entries.length || !category.complete).map(category => <details key={category.id} open={category.id === 'app-data'} className="group" data-storage-category={category.id}>
+          {overview.categories.filter(category => category.entries.length || !category.complete).map(category => <details key={category.id} open={category.id === 'apps' || category.id === 'runtimes'} className="group" data-storage-category={category.id}>
             <summary className="flex cursor-pointer list-none items-center gap-2.5 py-3 text-[13px] [&::-webkit-details-marker]:hidden">
               <span aria-hidden="true" className={cn('h-2 w-2 rounded-full', colors[category.id])} />
               <span className="flex-1">{category.label}</span><span className="tabular-nums text-muted-foreground">{category.complete ? bytes(category.bytes) : category.bytes ? `已统计 ${bytes(category.bytes)}` : '未能读取'}</span>
               <ChevronRight className="h-3 w-3 text-muted-foreground transition-transform group-open:rotate-90" />
             </summary>
-            <div className="mb-3 max-h-52 space-y-2 overflow-auto pl-4.5 pr-5.5">
-              {category.entries.map(entry => <div key={entry.path} className="flex items-start justify-between gap-4 text-xs text-muted-foreground"><span className="min-w-0 break-all font-mono">{entry.path}</span><span className="shrink-0 tabular-nums">{entry.complete ? bytes(entry.bytes) : '未完整读取'}</span></div>)}
+            <div className="mb-3 max-h-72 space-y-2 overflow-auto pl-4.5 pr-2">
+              {category.entries.map(entry => entry.appId ? <div key={entry.appId} className="flex items-center gap-3 py-1 text-xs" data-storage-app={entry.appId}>
+                <span className="min-w-0 flex-1"><span className="block truncate text-[13px] font-medium" title={entry.appId}>{entry.label}</span>
+                  <span className="text-muted-foreground">安装包 {bytes(entry.packageBytes ?? 0)} · 数据 {bytes(entry.dataBytes ?? 0)}</span></span>
+                <span className="tabular-nums text-muted-foreground">{entry.complete ? bytes(entry.bytes) : '未完整读取'}</span>
+                {!isWebUI() && <Button size="sm" variant="outline" className="h-7 px-2" aria-label={`管理「${entry.label}」的存储`} onClick={() => { setManagedApp(entry); setAppResult(''); }}>管理</Button>}
+              </div> : <div key={entry.path} className="flex items-start justify-between gap-4 text-xs text-muted-foreground"><span className="min-w-0 break-all font-mono">{entry.path}</span><span className="shrink-0 tabular-nums">{entry.complete ? bytes(entry.bytes) : '未完整读取'}</span></div>)}
             </div>
           </details>)}
+          {appResult && <p role="status" className="py-2 text-xs text-muted-foreground">{appResult}</p>}
         </div>
       </>}
     </div>
@@ -192,6 +250,9 @@ export function StorageSettings() {
       <p className="mt-3 text-xs leading-5 text-muted-foreground">统计此目录下的全部数据，包含隐藏目录和缓存；展开分类可查看来源。{overview?.sizeKind === 'allocated' ? '按磁盘分配空间计算。' : '按文件大小计算。'}外部工作区与远端数据不计入。</p>
     </div>
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+    {managedApp && <AppStorageDialog entry={managedApp} close={() => setManagedApp(null)} onChanged={status => {
+      setAppResult(status); setManagedApp(null); void refresh(true);
+    }} />}
 
     <dialog ref={archiveDialog} aria-labelledby="archive-title" onCancel={event => { event.preventDefault(); if (!archiveBusy && !reviewing) setArchives(null); }}
       onClose={() => { if (!archiveBusy && !reviewing) setArchives(null); }}

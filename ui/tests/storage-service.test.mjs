@@ -42,37 +42,74 @@ test('overview accounts for managed files once, skips symlinks, marks incomplete
   assert.equal(result.complete, true);
   assert.equal(result.sizeKind, 'allocated');
   assert.equal(result.totalBytes, result.categories.reduce((sum, category) => sum + category.bytes, 0));
-  for (const id of ['sessions', 'projects', 'cache', 'history', 'logs', 'other']) assert.ok(result.categories.find(item => item.id === id).bytes > 0);
+  for (const id of ['sessions', 'projects', 'apps', 'history', 'logs', 'other']) assert.ok(result.categories.find(item => item.id === id).bytes > 0);
   const external = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-external-'));
   t.after(() => fs.rm(external, { recursive: true, force: true }));
   await fs.writeFile(path.join(external, 'large'), Buffer.alloc(1024 * 1024));
   await fs.symlink(external, path.join(f.root, 'external-link'));
-  const linked = await f.service.overview();
+  const linked = await f.service.overview({ refresh: true });
   assert.ok(linked.totalBytes - result.totalBytes < 1024 * 1024, 'must not follow symlinks');
   const absent = createStorageService({ ...f.options, root: path.join(f.root, 'absent') });
   assert.equal((await absent.overview()).complete, false);
 });
 
-test('cache cleanup keeps current App packages and removes rebuildable artifacts', async t => {
+test('overview reuses a scan for ten minutes from completion, including concurrent requests', async t => {
   const f = await fixture(t);
-  await f.write('apps/demo/current.json', JSON.stringify({ version: '2.0.0' }));
-  await f.write('apps/demo/versions/2.0.0/app.moss.json', 'current');
-  await f.write('apps/demo/versions/1.0.0/app.moss.json', 'old');
-  await f.write('apps/demo/verification/1.0.0.json', 'old');
-  await f.write('apps/demo/sources/1.0.0.tar.gz', 'old source');
-  await f.write('apps/demo/sources/2.0.0.tar.gz', 'current source');
-  await f.write('generated-apps/demo.zip', 'generated');
+  const pending = f.service.overview();
+  const concurrent = f.service.overview();
+  f.advance(30_000);
+  const first = await pending;
+  assert.equal(await concurrent, first);
+  await f.write('logs/new.log', Buffer.alloc(8192));
+  f.advance(10 * 60_000 - 1);
+  assert.equal(await f.service.overview(), first);
+  f.advance(1);
+  const expired = await f.service.overview();
+  assert.ok(expired.totalBytes > first.totalBytes);
+  const manual = await f.service.overview({ refresh: true });
+  assert.notEqual(manual, expired);
+  assert.equal(await f.service.overview(), manual);
+});
+
+test('storage changes discard cached results and older in-flight scans', async t => {
+  const f = await fixture(t);
+  const old = f.service.overview();
+  f.service.invalidateOverview();
+  const fresh = f.service.overview();
+  await old;
+  assert.equal(await f.service.overview(), await fresh);
+  await f.service.clearCaches();
+  assert.notEqual(await f.service.overview(), await fresh);
+});
+
+test('cache cleanup preserves every installed version, source archive and generated package', async t => {
+  const f = await fixture(t);
+  const appFiles = {
+    'apps/demo/current.json': JSON.stringify({ version: '2.0.0' }),
+    'apps/demo/versions/2.0.0/app.moss.json': 'current',
+    'apps/demo/versions/1.0.0/app.moss.json': 'previous',
+    'apps/demo/verification/1.0.0.json': 'verification',
+    'apps/demo/version-metadata/1.0.0.json': 'metadata',
+    'apps/demo/sources/1.0.0.tar.gz': 'previous source',
+    'apps/demo/sources/2.0.0.tar.gz': 'current source',
+    'generated-apps/demo.zip': 'generated package',
+    'app-registry.json': JSON.stringify({ version: 2, apps: [{ id: 'demo' }] }),
+    'apps-data/demo/storage.json': 'saved data',
+  };
+  for (const [name, contents] of Object.entries(appFiles)) await f.write(name, contents);
   await f.write('cloud-transfers/pending-upload.bin', 'transfer');
   await f.write('expert-hub/cache/bundles/expert.tar.gz', 'bundle');
   await f.write('server/moss-server.db', 'legacy server');
   await f.write('app-market/catalog-v1.json', 'catalog');
   const result = await f.service.clearCaches();
+  assert.equal(result.failed, 0);
   assert.ok(result.deletedBytes > 0);
-  assert.equal(await fs.readFile(path.join(f.root, 'apps/demo/versions/2.0.0/app.moss.json'), 'utf8'), 'current');
-  await assert.rejects(fs.access(path.join(f.root, 'apps/demo/versions/1.0.0')));
-  await assert.rejects(fs.access(path.join(f.root, 'apps/demo/sources/1.0.0.tar.gz')));
-  assert.equal(await fs.readFile(path.join(f.root, 'apps/demo/sources/2.0.0.tar.gz'), 'utf8'), 'current source');
-  await assert.rejects(fs.access(path.join(f.root, 'generated-apps')));
+  for (const [name, contents] of Object.entries(appFiles)) {
+    assert.equal(await fs.readFile(path.join(f.root, name), 'utf8'), contents, name);
+  }
+  const { categories } = await f.service.overview();
+  assert.deepEqual(categories.find(item => item.id === 'cache').entries, []);
+  assert.deepEqual(categories.find(item => item.id === 'apps').entries.map(item => item.path).sort(), ['demo', 'generated-apps']);
   await assert.rejects(fs.access(path.join(f.root, 'cloud-transfers')));
   await assert.rejects(fs.access(path.join(f.root, 'expert-hub')));
   await assert.rejects(fs.access(path.join(f.root, 'server')));
@@ -182,13 +219,41 @@ test('cache cleanup retains referenced App versions, user data and external link
   for (const name of ['apps/demo/versions/1.0.0/app.moss.json', 'apps/demo/sources/1.0.0.tar.gz', 'generated-app-data/demo/document.txt', 'external/python/keep.txt']) await fs.access(path.join(f.root, name));
 });
 
-test('cache cleanup refuses active sessions and linked App containers', async t => {
+test('cache cleanup refuses active sessions and skips linked App containers', async t => {
   const f = await fixture(t), record = await f.add('active', { busy: true });
   await assert.rejects(f.service.clearCaches(), /运行中的会话/);
   record.busy = false;
   await f.write('external/demo/current.json', JSON.stringify({ version: '2.0.0' }));
   await f.write('external/demo/versions/1.0.0/file', 'keep');
   await fs.symlink(path.join(f.root, 'external'), path.join(f.root, 'apps'));
-  await assert.rejects(f.service.clearCaches(), /应用目录不可用/);
+  assert.equal((await f.service.clearCaches()).failed, 0);
   await fs.access(path.join(f.root, 'external/demo/versions/1.0.0/file'));
+});
+
+test('per-App history cleanup retains other active versions and rejects linked or stale targets', async t => {
+  const { cleanAppStorage } = await import('../src/storage-apps.mjs');
+  const f = await fixture(t);
+  const id = 'demo';
+  await f.write('apps/demo/current.json', JSON.stringify({ version: '3.0.0' }));
+  for (const version of ['1.0.0', '2.0.0', '3.0.0']) await f.write(`apps/demo/versions/${version}/package`, version);
+  await f.write('apps/demo/sources/1.0.0.tar.gz', 'old');
+  await f.write('apps-data/demo/settings', 'data');
+  await f.write('apps/other/versions/1.0.0/package', 'other');
+  const registry = [{ id, displayName: 'Demo', currentVersion: '3.0.0' }];
+  const options = { root: f.root, appId: id, mode: 'history', expectedVersion: '3.0.0', registry,
+    retainedVersions: () => ['2.0.0'], updateVersions() {}, uninstall() { assert.fail('history cleanup called uninstall'); } };
+  const overview = await createStorageService({ ...f.options, getAppRegistry: () => registry }).overview();
+  const entries = overview.categories.find(item => item.id === 'apps').entries;
+  const app = entries.find(item => item.appId === id);
+  assert.equal(app.bytes, app.packageBytes + app.dataBytes);
+  assert.ok(app.packageBytes > 0 && app.dataBytes > 0);
+  assert.equal(app.label, 'Demo');
+  await assert.rejects(cleanAppStorage({ ...options, expectedVersion: '2.0.0' }), /版本已变化/);
+  await fs.symlink(path.join(f.root, 'apps-data'), path.join(f.root, 'apps/demo/verification'));
+  await assert.rejects(cleanAppStorage(options), /symbolic link/);
+  await fs.unlink(path.join(f.root, 'apps/demo/verification'));
+  assert.deepEqual(await cleanAppStorage(options), { removed: 1 });
+  assert.deepEqual(await cleanAppStorage(options), { removed: 0 });
+  await assert.rejects(fs.access(path.join(f.root, 'apps/demo/sources/1.0.0.tar.gz')), { code: 'ENOENT' });
+  for (const file of ['apps/demo/versions/2.0.0/package', 'apps/demo/versions/3.0.0/package', 'apps-data/demo/settings', 'apps/other/versions/1.0.0/package']) await fs.access(path.join(f.root, file));
 });

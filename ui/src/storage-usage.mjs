@@ -6,9 +6,8 @@ const groups = [
   { id: 'subagents', label: '子会话', roots: [] },
   { id: 'archived', label: '已归档会话', roots: [] },
   { id: 'projects', label: '项目与工作区', roots: ['projects', 'workspace', 'workspaces', 'app-authoring', 'minimal-go-agent'] },
-  // App packages are downloaded/rebuildable artifacts. Keep them in the cache
-  // category so storage users can distinguish them from App-owned data.
-  { id: 'app-data', label: '应用数据', roots: ['apps-data', 'apps-runtime', 'app-tasks', 'browser-profiles', 'db', 'dbx-mcp'] },
+  { id: 'apps', label: '应用安装包', roots: ['apps', 'generated-apps'] },
+  { id: 'app-data', label: '应用数据', roots: ['apps-data', 'generated-app-data', 'apps-runtime', 'app-tasks', 'browser-profiles', 'db', 'dbx-mcp'] },
   // App installation and policy state is small, durable Core state. It is
   // separate from App-owned data and from rebuildable package/cache content.
   // These entries are currently kept at the Moss root for compatibility; the
@@ -25,7 +24,7 @@ const groups = [
   ] },
   { id: 'runtimes', label: '运行环境', roots: ['runtimes'] },
   { id: 'resources', label: '资源与记忆', roots: ['skills', 'assistants', 'agents', 'library', 'memory', 'workflows', 'plans', 'teams', 'tasks'] },
-  { id: 'cache', label: '缓存与可重建内容', roots: ['cache', '.cache', 'caches', 'apps', 'app-authoring-previews', 'cloud-transfers', 'app-market', 'expert-hub', 'server', 'mcp', 'browser-binaries', 'whisper-models'] },
+  { id: 'cache', label: '缓存与可重建内容', roots: ['cache', '.cache', 'caches', 'app-authoring-previews', 'cloud-transfers', 'app-market', 'expert-hub', 'server', 'mcp', 'browser-binaries', 'whisper-models'] },
   { id: 'history', label: '历史版本', roots: ['workspace-versions', 'turn-observations', 'presentations', 'preview-drafts', 'backups', 'file-history'] },
   { id: 'logs', label: '日志', roots: ['logs', 'debug', 'startup-perf', 'desktop-dev.log'] },
   { id: 'other', label: '数据库与其他', roots: [] },
@@ -53,9 +52,17 @@ function classify(relative, sessionKinds) {
   // single directory never appears in multiple categories.
   if (knownGroup) {
     if (top === 'sessions' && parts[1] && sessionKinds.has(parts[1])) return { id: sessionKinds.get(parts[1]), entry: `sessions/${parts[1]}` };
+    if (['apps-data', 'apps-runtime'].includes(top) && parts[1] === 'owners' && parts[3]) {
+      return { id: knownGroup, entry: parts.slice(0, 4).join('/') };
+    }
+    if (top === 'runtimes') {
+      if (parts[1] === 'node') return { id: knownGroup, entry: 'Node.js' };
+      if (parts[1] === 'python') return { id: knownGroup, entry: 'Python' };
+      return { id: knownGroup, entry: '其他运行环境文件' };
+    }
     if (top === 'dbx-mcp') return { id: knownGroup, entry: 'moss.dbx (dbx-mcp)' };
     if (top === 'db') return { id: knownGroup, entry: 'moss.trace (legacy db)' };
-    if (['apps', 'apps-data', 'apps-runtime', 'app-tasks', 'browser-profiles'].includes(top) && parts[1]) {
+    if (['apps', 'apps-data', 'generated-app-data', 'apps-runtime', 'app-tasks', 'browser-profiles'].includes(top) && parts[1]) {
       return { id: knownGroup, entry: `${top}/${parts[1]}` };
     }
     return { id: knownGroup, entry: top || '.' };

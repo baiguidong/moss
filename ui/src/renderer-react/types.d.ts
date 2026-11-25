@@ -19,10 +19,12 @@ export type ComputerUseStatus = {
   requests: Array<{ id: string; sessionId: string; sessionTitle: string; app: { name: string; bundleId: string }; foreground: boolean }>;
 };
 
+export type StorageAppMode = 'history' | 'uninstall' | 'purge';
+export type StorageEntry = { path: string; bytes: number; complete: boolean; appId?: string; label?: string; installed?: boolean; version?: string; packageBytes?: number; dataBytes?: number };
 export type StorageOverview = {
   root: string;
   totalBytes: number;
-  categories: Array<{ id: string; label: string; bytes: number; complete: boolean; entries: Array<{ path: string; bytes: number; complete: boolean }> }>;
+  categories: Array<{ id: string; label: string; bytes: number; complete: boolean; entries: StorageEntry[] }>;
   complete: boolean;
   errorCount: number;
   sizeKind: 'allocated' | 'logical';
@@ -1437,7 +1439,8 @@ declare global {
         listArchives: () => Promise<ArchivedChat[]>;
         setArchived: (payload: { sessionId: string; archived: boolean }) => Promise<{ ok: boolean }>;
         onArchivesChanged: (callback: (payload: { ids: string[]; archived: boolean }) => void) => () => void;
-        getOverview: () => Promise<StorageOverview>;
+        getOverview: (options?: { refresh?: boolean }) => Promise<StorageOverview>;
+        cleanApp: (payload: { appId: string; mode: StorageAppMode; expectedVersion: string | null }) => Promise<{ removed: number }>;
         clearCaches: () => Promise<StorageCacheCleanupResult>;
         reviewChats: (payload: { days?: number; archivedOnly?: boolean; archivedIds?: string[] }) => Promise<StorageReview>;
         deleteChats: (payload: { token: string; ids: string[] }) => Promise<StorageCleanupResult>;

@@ -30,7 +30,7 @@ function advanceInstallationRevision(appId) {
   return revisions[appId]
 }
 
-async function queueAppInstallation(appId, operation) {
+export async function queueAppInstallation(appId, operation) {
   const previous = installationQueues.get(appId) || Promise.resolve()
   const task = previous.then(operation, operation)
   installationQueues.set(appId, task)

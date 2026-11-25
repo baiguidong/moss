@@ -1,6 +1,7 @@
 // Real renderer -> preload -> IPC -> session deletion, using an isolated profile.
 // Build the renderer first, then: electron tests/settings-storage.electron.mjs
 import { app, BrowserWindow, nativeTheme } from 'electron';
+import { createDesktopDataPaths } from '../src/desktop-data-layout.mjs';
 const originalThemeSource = nativeTheme.themeSource;
 import { DatabaseSync } from 'node:sqlite';
 import assert from 'node:assert/strict';
@@ -28,6 +29,7 @@ await fs.writeFile(path.join(root, 'settings.json'), JSON.stringify({
 const { prepareSessionStatements } = await import('../src/session-database.mjs');
 const database = new DatabaseSync(path.join(root, 'moss.db'));
 prepareSessionStatements(database);
+const fixturePaths = createDesktopDataPaths(root);
 const old = Date.now() - 100 * 86400000;
 for (const [id, title, parent, size] of [
   ['cleanup-old', '旧会话 · 已完成的调研', null, 128 * 1024],
@@ -35,17 +37,33 @@ for (const [id, title, parent, size] of [
   ['cleanup-changed', '旧会话 · 保留刚更新的文件', null, 64 * 1024],
   ['cleanup-recent', '近期会话', null, 16 * 1024],
 ]) {
-  const workspace = path.join(root, 'sessions', id, 'workspace');
+  const workspace = fixturePaths.sessionWorkspaceDir(id, parent || id);
   await fs.mkdir(workspace, { recursive: true });
   await fs.writeFile(path.join(workspace, 'result.txt'), Buffer.alloc(size, 'a'));
   database.prepare('INSERT INTO sessions (id,title,workspace,created_at,updated_at,message_count,preview,is_sub_agent,parent_session_id) VALUES (?,?,?,?,?,0,?,?,?)')
     .run(id, title, workspace, old, id === 'cleanup-recent' ? Date.now() : old, '', parent ? 1 : 0, parent);
 }
 database.close();
-for (const [folder, size] of [['projects/demo', 256000], ['apps-data/demo', 192000], ['workspace-versions/demo', 96000], ['logs', 32000]]) {
+for (const [folder, size] of [['projects/demo', 256000], ['apps-data/demo', 192000], ['workspace-versions/demo', 96000], ['logs', 32000], ['runtimes/node/versions/test', 8192], ['runtimes/python/versions/test', 16384]]) {
   await fs.mkdir(path.join(root, folder), { recursive: true });
   await fs.writeFile(path.join(root, folder, 'fixture.dat'), Buffer.alloc(size));
 }
+const { publishAppFromBuild } = await import('../src/app-platform.mjs');
+const { writePackageChecksums } = await import('../../packages/app-runtime/src/packages/index.mjs');
+const storageAppId = 'test.storage';
+for (const version of ['1.0.0', '2.0.0']) {
+  const source = path.join(root, 'fixture-build', version);
+  await fs.mkdir(source, { recursive: true });
+  await fs.writeFile(path.join(source, 'app.moss.json'), JSON.stringify({
+    schemaVersion: 2, id: storageAppId, version, displayName: '存储测试应用', hostApi: '^3.3.0', ui: { entry: 'index.html' }, permissions: [],
+  }));
+  await fs.writeFile(path.join(source, 'index.html'), '<p>storage test</p>');
+  await writePackageChecksums(source);
+  await publishAppFromBuild(source);
+}
+const storageFixtureData = path.join(root, 'apps-data', storageAppId, 'saved.txt');
+await fs.mkdir(path.dirname(storageFixtureData), { recursive: true });
+await fs.writeFile(storageFixtureData, 'keep');
 let win;
 const ready = new Promise(resolve => app.on('browser-window-created', (_event, created) => {
   created.show = () => {}; created.showInactive = () => {};
@@ -167,6 +185,41 @@ try {
   await click('[data-settings-nav="storage"]');
   await until(() => !!document.querySelector('[data-storage-settings]') && !document.body.textContent.includes('正在计算存储占用'), 'storage scan');
   assert.equal(await js(() => document.querySelector('[data-storage-settings]').textContent.includes('项目与工作区')), true);
+  const measuredAt = await js(async () => (await window.agentDesktop.storage.getOverview()).measuredAt);
+  await click('[data-settings-nav="basic"]');
+  await click('[data-settings-nav="storage"]');
+  await until(() => !!document.querySelector('[data-storage-settings] [aria-busy="false"]'), 'cached storage overview');
+  await js(() => window.dispatchEvent(new Event('focus')));
+  assert.equal(await js(async () => (await window.agentDesktop.storage.getOverview()).measuredAt), measuredAt);
+  await button('刷新');
+  await until(() => !!document.querySelector('[data-storage-settings] [aria-busy="false"]'), 'manual storage refresh');
+  assert.ok(await js(async () => (await window.agentDesktop.storage.getOverview()).measuredAt) > measuredAt);
+  assert.equal(await js(() => {
+    const section = document.querySelector('[data-storage-category="runtimes"]');
+    return section?.open && section.textContent.includes('Node.js') && section.textContent.includes('Python');
+  }), true);
+  const manageStorageApp = async () => {
+    await click('[data-storage-app="test.storage"] button');
+    await until(() => !!document.querySelector('dialog[open] input[type=radio]'), 'App storage management');
+  };
+  await manageStorageApp();
+  assert.equal(await js(() => document.querySelector('dialog[open] input:checked').value), 'history');
+  await button('仅清理历史安装包');
+  await until(() => document.body.textContent.includes('已清理 1 个历史安装包'), 'App history cleaned');
+  await assert.rejects(fs.access(path.join(root, 'apps', storageAppId, 'versions/1.0.0')), { code: 'ENOENT' });
+  await fs.access(path.join(root, 'apps', storageAppId, 'versions/2.0.0/app.moss.json'));
+  await manageStorageApp();
+  await click('dialog[open] input[value=uninstall]');
+  await button('卸载并保留数据');
+  await until(() => document.body.textContent.includes('已卸载，应用数据已保留') && !!document.querySelector('[data-storage-settings] [aria-busy="false"]'), 'uninstall and retain data');
+  assert.equal(await fs.readFile(storageFixtureData, 'utf8'), 'keep');
+  await manageStorageApp();
+  assert.equal(await js(() => !!document.querySelector('dialog[open] input:checked')), false);
+  await click('dialog[open] input[value=purge]');
+  await button('删除保留的数据');
+  await until(() => !document.querySelector('[data-storage-app="test.storage"]'), 'retained data removed');
+  await assert.rejects(fs.access(storageFixtureData), { code: 'ENOENT' });
+  await fs.access(path.join(root, 'apps-data/demo/fixture.dat'));
   await capture('storage-dark');
   await button('管理归档');
   await until(() => document.querySelector('dialog[open]')?.textContent.includes('近期会话'), 'archive manager');
@@ -189,7 +242,7 @@ try {
   await button('永久删除');
   await until(() => document.body.textContent.includes('已删除 1 个会话，跳过 1 个，失败 0 个'), 'cleanup result');
   await assert.rejects(fs.stat(path.join(root, 'sessions/cleanup-old')), { code: 'ENOENT' });
-  await assert.rejects(fs.stat(path.join(root, 'sessions/cleanup-child')), { code: 'ENOENT' });
+  await assert.rejects(fs.stat(fixturePaths.sessionRecordDir('cleanup-child', 'cleanup-old')), { code: 'ENOENT' });
   assert.equal(await fs.readFile(path.join(root, 'sessions/cleanup-changed/workspace/result.txt'), 'utf8'), 'updated after review');
   assert.equal(await fs.stat(path.join(root, 'sessions/cleanup-recent')).then(() => true), true);
   await click('[data-settings-nav="appearance"]');

@@ -27,6 +27,7 @@ import { createProjectStore } from './project-store.mjs';
 import { createSessionPaths, normalizeSessionDirName } from './session-paths.mjs';
 import { createSessionPersistence } from './session-persistence.mjs';
 import { createSessionHistoryService } from './session-history-service.mjs';
+import { cleanAppStorage } from './storage-apps.mjs';
 import { createStorageService } from './storage-service.mjs';
 import { createSessionArchives } from './session-archives.mjs';
 import { createDockAppearance } from './dock-appearance.mjs';
@@ -165,6 +166,7 @@ import {
   readAppManifestFromDir,
   readAppRegistry,
   rollbackAppInstallationIfCurrent,
+  queueAppInstallation,
   rollbackAppToVersion,
   refreshAppRegistryFromCurrent,
 } from './app-platform.mjs';
@@ -4851,6 +4853,7 @@ async function emitAppsChanged(payload = {}) {
     timestamp: Date.now(),
     ...nextPayload,
   });
+    if (nextPayload.action === 'deleted' || nextPayload.app?.currentVersion) storageService.invalidateOverview();
     // Runtime status transitions can arrive several times while an App is
     // stopping. They do not change the installed resource catalog, so avoid
     // rebuilding session snapshots during that short lifecycle window.
@@ -10522,7 +10525,13 @@ function isStorageSessionBusy(record) {
     || previewOwnership.hasSessionEdits(record.id) || workspaceVersionService.isActive(record.workspace)
     || workspaceVersionBusyReason(record.workspace));
 }
+function storageOwnerSegment() {
+  const key = appRuntime?.currentOwner().key;
+  return key && key !== 'host' ? Buffer.from(key).toString('base64url') : null;
+}
 const storageService = createStorageService({
+  getAppRegistry: () => readAppRegistry().apps,
+  getOwnerSegment: storageOwnerSegment,
   root: MOSS_HOME,
   getRecords: () => [...sessions.values(), ...subAgentSessions.values()],
   isBusy: isStorageSessionBusy,
@@ -10536,9 +10545,11 @@ ipcMain.handle('storage:list-archives', async () => {
 ipcMain.handle('storage:set-archived', async (_event, payload) => {
   assertUpdateWorkAllowed();
   await interruptedSessionRecoveryPromise;
-  return sessionArchives.set(payload);
+  const result = await sessionArchives.set(payload);
+  storageService.invalidateOverview();
+  return result;
 });
-ipcMain.handle('storage:get-overview', () => storageService.overview());
+ipcMain.handle('storage:get-overview', (_event, payload) => storageService.overview({ refresh: payload?.refresh === true }));
 ipcMain.handle('storage:clear-caches', async () => {
   assertUpdateWorkAllowed();
   await interruptedSessionRecoveryPromise;
@@ -10905,7 +10916,7 @@ updateGuardedAppIpc.handle('app:rollback', async (_event, { name, versionId }) =
   }
 });
 
-updateGuardedAppIpc.handle('app:delete', createAppUninstallHandler({
+const uninstallStoredApp = createAppUninstallHandler({
   listApps: listAllStoredApps,
   closeViews: closePublishedAppViews,
   appWindows,
@@ -10923,7 +10934,44 @@ updateGuardedAppIpc.handle('app:delete', createAppUninstallHandler({
   },
   removePackage: deleteApp,
   emitChanged: emitAppsChanged,
-}));
+});
+updateGuardedAppIpc.handle('app:delete', uninstallStoredApp);
+updateGuardedAppIpc.handle('storage:clean-app', async (event, { appId, mode, expectedVersion } = {}) => {
+  if (!appRuntime) throw new Error('应用服务正在启动。');
+  return queueAppInstallation(appId, async () => {
+    try {
+      return await cleanAppStorage({
+        root: MOSS_HOME, appId, mode, expectedVersion, registry: readAppRegistry().apps, ownerSegment: storageOwnerSegment(),
+        retainedVersions: () => [
+          ...appRuntime.installations.listAll().filter(item => item.appId === appId).map(item => item.activeVersion),
+          ...appRuntime.runtimes.listAll().filter(item => item.appId === appId).map(item => item.version),
+          ...[...appWindowStates.values()].filter(item => item.id === appId).map(item => item.version),
+          ...[...pendingEmbeddedApps.values()].filter(item => item.appEntry.id === appId).map(item => item.appEntry.version),
+        ],
+        updateVersions: id => {
+          const versions = listAppVersions(id);
+          for (const key of appRuntime.packageCache.keys()) {
+            if (key.startsWith(id + '@') && !versions.some(v => key === id + '@' + v.version)) appRuntime.packageCache.delete(key);
+          }
+          refreshAppRegistryFromCurrent(id);
+          emitToRenderer('app:changed', { action: 'versions', appId: id, timestamp: Date.now() });
+        },
+        uninstall: async (name, deleteData) => {
+          if (appRuntime.installations.listAll().some(item => item.appId === name && (item.owner?.key || 'host') !== appRuntime.currentOwner().key)) {
+            throw new Error('其他账户仍在使用此应用，请保留安装包。');
+          }
+          const retainedDataOnly = deleteData && !appRuntime.getInstallation(name);
+          const result = await uninstallStoredApp(event, { name, deleteData, deleteCredentials: deleteData });
+          if (!result.ok) throw new Error(result.error);
+          if (retainedDataOnly) {
+            await appRuntime.instances.removeForApp(name);
+            await appRuntime.credentials.removeApp(name);
+          }
+        },
+      });
+    } finally { storageService.invalidateOverview(); }
+  });
+});
 
 ipcMain.handle('app:open-debug', async (event, { name }) => {
   const parentWindow = BrowserWindow.fromWebContents(event.sender);

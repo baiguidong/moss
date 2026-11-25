@@ -21,9 +21,28 @@ test('complete allocation agrees with du, includes hidden directories, excludes 
   assert.ok(Math.abs(result.totalBytes - du) < 1024, `scan=${result.totalBytes} du=${du}`);
   assert.equal(result.complete, true);
   const caches = result.categories.find(item => item.id === 'cache');
-  assert.deepEqual(caches.entries.map(item => item.path).sort(), ['.cache', 'apps/demo']);
+  assert.deepEqual(caches.entries.map(item => item.path).sort(), ['.cache']);
+  assert.deepEqual(result.categories.find(item => item.id === 'apps').entries.map(item => item.path), ['apps/demo']);
   assert.deepEqual(result.categories.find(item => item.id === 'app-data').entries.map(item => item.path).sort(), ['apps-data/demo', 'apps-data/large', 'apps-data/small']);
   for (const id of ['cache', 'runtimes', 'sessions', 'subagents', 'archived']) assert.ok(result.categories.find(item => item.id === id).bytes >= 4096);
+});
+
+test('groups all managed runtime versions by language and counts registry files separately', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-runtime-usage-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const runtimes = path.join(root, 'runtimes');
+  for (const [name, size] of [['node/versions/a/bin/node', 8192], ['node/versions/b/bin/node', 4096], ['python/versions/c/bin/python', 16384], ['registry.json', 1024]]) {
+    const file = path.join(runtimes, name);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, Buffer.alloc(size));
+  }
+  const result = await measureStorage(root);
+  const rows = result.categories.find(category => category.id === 'runtimes').entries;
+  assert.deepEqual(rows.map(row => row.path).sort(), ['Node.js', 'Python', '其他运行环境文件']);
+  for (const [label, dir] of [['Node.js', 'node'], ['Python', 'python']]) {
+    const expected = Number(execFileSync('du', ['-sk', path.join(runtimes, dir)], { encoding: 'utf8' }).split(/\s/)[0]) * 1024;
+    assert.ok(Math.abs(rows.find(row => row.path === label).bytes - expected) < 1024);
+  }
 });
 
 test('omits empty App directories and Finder metadata from concrete entries', async t => {
@@ -66,7 +85,7 @@ test('permission errors identify only affected categories; vanished caches are n
   const result = await measureStorage('/profile', { fileSystem });
   assert.equal(result.errorCount, 1);
   assert.equal(result.complete, false);
-  assert.equal(result.categories.find(item => item.id === 'cache').complete, false);
+  assert.equal(result.categories.find(item => item.id === 'apps').complete, false);
   assert.equal(result.categories.find(item => item.id === 'logs').complete, true);
 });
 

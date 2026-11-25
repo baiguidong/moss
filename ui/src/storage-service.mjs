@@ -4,7 +4,10 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { measureStorage } from './storage-usage.mjs';
 
+import { groupAppStorage } from './storage-apps.mjs';
+
 const DAY = 86400000;
+const OVERVIEW_TTL_MS = 10 * 60_000;
 
 // Inspect metadata only. Do not follow links into user workspaces or other profiles.
 async function walk(root, visit, { maxEntries = 200000, deadline = Date.now() + 15000 } = {}) {
@@ -28,9 +31,10 @@ async function walk(root, visit, { maxEntries = 200000, deadline = Date.now() + 
   return complete;
 }
 
-export function createStorageService({ root, getRecords, isBusy, removeSession, isArchived = () => false, now = Date.now }) {
+export function createStorageService({ root, getRecords, isBusy, removeSession, isArchived = () => false, now = Date.now, getAppRegistry = () => [], getOwnerSegment = () => null }) {
   root = path.resolve(root);
   const reviews = new Map();
+  let cachedOverview;
   let scan, cleaning = false, cacheCleaning = false;
   const sessionPath = id => {
     if (!/^[a-zA-Z0-9_-]{1,160}$/.test(id)) throw new Error('无效的会话标识。');
@@ -100,10 +104,25 @@ export function createStorageService({ root, getRecords, isBusy, removeSession, 
       return [{ parent, family }];
     }).sort((a, b) => a.parent.updatedAt - b.parent.updatedAt);
   }
-  async function overview() {
+  function invalidateOverview() {
+    cachedOverview = undefined;
+    scan = undefined;
+  }
+  async function overview({ refresh = false } = {}) {
     if (scan) return scan;
-    scan = measureStorage(root, { sessionKinds: new Map(getRecords().map(record => [record.id, isArchived(record) ? 'archived' : record.isSubAgent || record.parentSessionId ? 'subagents' : 'sessions'])) }).then(result => ({ ...result, measuredAt: now() }));
-    try { return await scan; } finally { scan = null; }
+    if (!refresh && cachedOverview && now() - cachedOverview.measuredAt < OVERVIEW_TTL_MS) return cachedOverview;
+    const sessionKinds = new Map(getRecords().map(record => [
+      record.id, isArchived(record) ? 'archived' : record.isSubAgent || record.parentSessionId ? 'subagents' : 'sessions',
+    ]));
+    const request = measureStorage(root, { sessionKinds }).then(result => ({ ...groupAppStorage(result, getAppRegistry(), getOwnerSegment()), measuredAt: now() }));
+    scan = request;
+    try {
+      const result = await request;
+      if (scan === request) cachedOverview = result;
+      return result;
+    } finally {
+      if (scan === request) scan = undefined;
+    }
   }
   async function review({ days = 90, archivedOnly = true, archivedIds } = {}) {
     if (archivedIds !== undefined) {
@@ -167,7 +186,7 @@ export function createStorageService({ root, getRecords, isBusy, removeSession, 
         } catch { result.failed++; }
       }
       return result;
-    } finally { cleaning = false; }
+    } finally { cleaning = false; invalidateOverview(); }
   }
 
   async function treeBytes(target) {
@@ -199,68 +218,23 @@ export function createStorageService({ root, getRecords, isBusy, removeSession, 
     result.removed.push(path.relative(root, target));
   }
 
-  async function clearOldAppVersions(result) {
-    const appsRoot = path.join(root, 'apps');
-    const rootStat = await fs.lstat(appsRoot).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
-    if (!rootStat) return;
-    if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw new Error('应用目录不可用。');
-    const state = await fs.readFile(path.join(root, 'app-runtime-state.json'), 'utf8')
-      .then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return {}; throw error; });
-    const apps = await fs.readdir(appsRoot, { withFileTypes: true }).catch(error => {
-      if (error.code === 'ENOENT') return [];
-      throw error;
-    });
-    for (const app of apps) {
-      if (!app.isDirectory() || app.name.startsWith('.')) continue;
-      const appRoot = path.join(appsRoot, app.name);
-      let current = null;
-      try { current = JSON.parse(await fs.readFile(path.join(appRoot, 'current.json'), 'utf8')).version; } catch {}
-      if (!current) continue;
-      const retained = new Set([current]);
-      for (const record of [...Object.values(state.installations || {}), ...Object.values(state.runtimes || {})]) {
-        if (record.appId === app.name) { if (record.activeVersion) retained.add(record.activeVersion); if (record.version) retained.add(record.version); }
-      }
-      const versionsRoot = path.join(appRoot, 'versions');
-      const versions = await fs.readdir(versionsRoot, { withFileTypes: true }).catch(error => {
-        if (error.code === 'ENOENT') return [];
-        throw error;
-      });
-      for (const version of versions) {
-        if (!version.isDirectory() || retained.has(version.name)) continue;
-        await removeCachePath(path.join(versionsRoot, version.name), result);
-        await removeCachePath(path.join(appRoot, 'verification', `${version.name}.json`), result);
-        await removeCachePath(path.join(appRoot, 'version-metadata', `${version.name}.json`), result);
-      }
-      const sourcesRoot = path.join(appRoot, 'sources');
-      const sources = await fs.readdir(sourcesRoot, { withFileTypes: true }).catch(error => {
-        if (error.code === 'ENOENT') return [];
-        throw error;
-      });
-      for (const source of sources) {
-        const sourceVersion = source.name.replace(/\.tar\.gz$/, '');
-        if (source.isFile() && sourceVersion && !retained.has(sourceVersion)) await removeCachePath(path.join(sourcesRoot, source.name), result);
-      }
-    }
-  }
-
   async function clearCaches() {
     if (cacheCleaning) throw new Error('缓存清理正在进行中。');
     if (getRecords().some(record => isBusy(record))) throw new Error('请等待运行中的会话完成后再清理缓存。');
     cacheCleaning = true;
     const result = { deletedBytes: 0, removed: [], failed: 0 };
     try {
-      // These roots contain downloaded/generated material only. Current App
+      // These roots contain downloaded/generated material only. Installed App
       // packages and App-owned data are deliberately excluded.
-      await clearOldAppVersions(result);
-      for (const name of ['generated-apps', 'app-authoring-previews', 'cloud-transfers', 'expert-hub', 'server', 'cache', '.cache', 'caches', 'browser-binaries', 'whisper-models', 'mcp/python']) {
+      for (const name of ['app-authoring-previews', 'cloud-transfers', 'expert-hub', 'server', 'cache', '.cache', 'caches', 'browser-binaries', 'whisper-models', 'mcp/python']) {
         try { await removeCachePath(path.join(root, name), result); } catch { result.failed++; }
       }
       // The marketplace catalog is disposable; the bundled catalog remains in
       // the application resources and will repopulate it on the next request.
       try { await removeCachePath(path.join(root, 'app-market', 'catalog-v1.json'), result); } catch { result.failed++; }
       return result;
-    } finally { cacheCleaning = false; }
+    } finally { cacheCleaning = false; invalidateOverview(); }
   }
 
-  return { overview, review, remove, clearCaches };
+  return { overview, invalidateOverview, review, remove, clearCaches };
 }

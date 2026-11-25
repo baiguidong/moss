@@ -99,7 +99,8 @@ export function createMossClient(transport, platform = {}) {
       transport.on('storage:archives-changed', handler);
       return () => transport.off('storage:archives-changed', handler);
     },
-    getOverview: () => transport.invoke('storage:get-overview'),
+    getOverview: (options) => transport.invoke('storage:get-overview', options),
+    cleanApp: payload => transport.invoke('storage:clean-app', payload),
     clearCaches: () => transport.invoke('storage:clear-caches'),
     reviewChats: (payload) => transport.invoke('storage:review-chats', payload),
     deleteChats: (payload) => transport.invoke('storage:delete-chats', payload),
