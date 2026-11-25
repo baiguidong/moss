@@ -2792,6 +2792,7 @@ export function ChatArea({
   return (
     <div className="@container/chat-pane relative flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(58,191,129,0.08),transparent_22%),var(--background)]">
       <SessionTabBar
+        key={`toolbar:${sessionId}`}
         title={sessionTitle}
         projectName={projectName}
         onReturnToProject={onReturnToProject}
@@ -2807,7 +2808,6 @@ export function ChatArea({
         onToolDisplayModeChange={onToolDisplayModeChange}
         toolDisplaySettingBusy={toolDisplaySettingBusy}
         messages={messages}
-        key={sessionId}
         terminalSession={terminalSession}
         sessionInfo={sessionInfo}
         onSideQuestion={onInteraction && !readOnlyReason ? () => setSideOpen(true) : undefined}
@@ -2953,7 +2953,7 @@ export function ChatArea({
       ) : null}
       </AppConversationFlow>
       <OutlineDialog open={outlineOpen} outline={outline} onJump={handleJumpToOutlineItem} onClose={() => setOutlineOpen(false)} />
-      {sessionId && onInteraction && <SideQuestionPanel key={sessionId} sessionId={sessionId} items={interactions} open={sideOpen} onClose={() => setSideOpen(false)} onSend={prompt => onInteraction('side_question', prompt)} readOnlyReason={readOnlyReason} />}
+      {sessionId && onInteraction && <SideQuestionPanel key={`side-question:${sessionId}`} sessionId={sessionId} items={interactions} open={sideOpen} onClose={() => setSideOpen(false)} onSend={prompt => onInteraction('side_question', prompt)} readOnlyReason={readOnlyReason} />}
     </div>
   );
 }
