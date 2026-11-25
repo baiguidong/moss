@@ -753,7 +753,7 @@ export class QueryEngine {
           (msg.content.includes(`<${LOCAL_COMMAND_STDOUT_TAG}>`) ||
             msg.content.includes(`<${LOCAL_COMMAND_STDERR_TAG}>`))
         ) {
-          yield localCommandOutputToSDKAssistantMessage(msg.content, msg.uuid)
+          yield localCommandOutputToSDKAssistantMessage(msg.content, msg.uuid, msg.timestamp)
         }
 
         if (msg.type === 'system' && msg.subtype === 'compact_boundary') {

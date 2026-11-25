@@ -82,7 +82,7 @@ export const call: LocalCommandCall = async (args, context) => {
     }
   } catch (error) {
     if (abortController.signal.aborted) {
-      throw new Error('Compaction canceled.')
+      return { type: 'text', value: 'Compaction canceled.' }
     } else if (hasExactErrorMessage(error, ERROR_MESSAGE_NOT_ENOUGH_MESSAGES)) {
       throw new Error(ERROR_MESSAGE_NOT_ENOUGH_MESSAGES)
     } else if (hasExactErrorMessage(error, ERROR_MESSAGE_INCOMPLETE_RESPONSE)) {

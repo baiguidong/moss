@@ -233,6 +233,18 @@ function isLocalCommandText(value: string): boolean {
   return /^<local-command-(stdout|stderr)>[\s\S]*<\/local-command-\1>$/.test(value.trim());
 }
 
+function localCommandOutput(event: AgentEvent, userText: string): string | undefined {
+  if (event.type === 'system' && (event.subtype === 'local_command' || event.subtype === 'local_command_output')) {
+    const content = normalizeText(event.content);
+    if (content.startsWith('<command-name>') || content.startsWith('<local-command-caveat>')) return '';
+    return extractLocalCommandOutput(content);
+  }
+  if (event.type === 'user' && isLocalCommandText(userText)) return extractLocalCommandOutput(userText);
+  if (event.type === 'assistant' && event.subtype === 'local_command_output') {
+    return normalizeText(event.message?.content);
+  }
+}
+
 function appendText(message: MutableChatMessage, text: string) {
   const normalized = String(text || '').trim();
   if (!normalized) return;
@@ -1258,21 +1270,17 @@ export function buildTranscriptRenderMessages(
     );
     const userText = stripRepeatedScreenshotLabels(recoveredUserText, userAttachments);
 
+    const commandOutput = localCommandOutput(event, userText);
+    if (commandOutput !== undefined) {
+      finalizeAssistantTurn(state, { complete: true });
+      addSystemRenderMessage(state, timestamp, commandOutput, undefined, 'local_command');
+      continue;
+    }
+
     if (
       event?.type === 'user' &&
       (userText.trim().length > 0 || (userAttachments?.length ?? 0) > 0)
     ) {
-      if (isLocalCommandText(userText)) {
-        finalizeAssistantTurn(state, { complete: true });
-        addSystemRenderMessage(
-          state,
-          timestamp,
-          extractLocalCommandOutput(userText),
-          undefined,
-          'local_command',
-        );
-        continue;
-      }
       finalizeAssistantTurn(state, { complete: true });
       const turnId = inputOwners.get(event.uuid) || (typeof event.uuid === 'string' && event.uuid.trim()
         ? event.uuid.trim()
@@ -1479,23 +1487,20 @@ export function buildTranscriptRenderMessages(
         marker.compaction = compactions.get(id);
         continue;
       }
-      const isLocalCommand = event.subtype === 'local_command';
       const isConnectorAuth = event.subtype === 'connector_auth';
       const isAppTask = event.subtype === 'app_task';
       const isAppFlow = isAppTask && event.appId === 'moss.workflow';
       if (isAppFlow && (event.status === 'running' || (!event.status && / · 已开始/.test(event.content || '')))) continue;
-      const content = isLocalCommand
-        ? extractLocalCommandOutput(event?.content)
-        : normalizeText(event?.content);
+      const content = normalizeText(event?.content);
       if (!content) continue;
-      if (isLocalCommand || isConnectorAuth || isAppTask) {
+      if (isConnectorAuth || isAppTask) {
         if (!isAppTask) finalizeAssistantTurn(state, { complete: true });
         addSystemRenderMessage(
           state,
           timestamp,
           content,
           isConnectorAuth ? ['连接器授权'] : undefined,
-          isAppFlow ? 'app_flow_result' : isAppTask ? 'app_task' : isConnectorAuth ? 'connector_auth' : 'local_command',
+          isAppFlow ? 'app_flow_result' : isAppTask ? 'app_task' : 'connector_auth',
           isConnectorAuth && ['pending', 'success', 'failed'].includes(event.status)
             ? event.status
             : undefined,
@@ -1617,7 +1622,10 @@ export function buildTranscriptRenderMessages(
       const hasAssistantText = turn.items.some(
         (item) => item.type === 'assistant_text' && item.content.trim().length > 0,
       );
-      if (resultText && !hasAssistantText && !isIgnoredTextOutput(resultText)) {
+      const previous = state.items.at(-1);
+      const repeatsCommandOutput = previous?.type === 'system' && previous.variant === 'local_command'
+        && previous.content === resultText;
+      if (resultText && !hasAssistantText && !repeatsCommandOutput && !isIgnoredTextOutput(resultText)) {
         appendAssistantTextItem(state, turn, timestamp, resultText);
       }
 

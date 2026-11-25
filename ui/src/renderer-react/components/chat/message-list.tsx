@@ -283,11 +283,11 @@ function SystemMessage({
   status?: Extract<TranscriptRenderMessage, { type: "system" }>["status"];
 }) {
   if (variant === "app_flow_result") return <div className="mb-3 rounded-xl border border-border/60 bg-muted/20 px-4 py-3 text-sm"><div className="mb-1 text-xs text-muted-foreground">工作流结果</div><div className="whitespace-pre-wrap break-words">{content}</div></div>;
-  if (variant === "local_command" || variant === "app_task") {
+  if (variant === "app_task") {
     return (
       <div className="flex justify-start gap-2" style={{ marginBottom: "var(--chat-message-spacing, 10px)" }}>
         <div className="max-w-[760px] rounded-xl border border-border/70 bg-muted/35 px-4 py-3 text-sm text-muted-foreground">
-          <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/70">{variant === "app_task" ? "任务记录" : "本地命令"}</div>
+          <div className="mb-2 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/70">任务记录</div>
           <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">{content}</pre>
         </div>
       </div>
@@ -368,6 +368,9 @@ function renderTranscriptItem(
     return <ToolResultBlock key={message.id} result={message} />;
   }
   if (message.type === "system") {
+    if (message.variant === "local_command") {
+      return <AssistantMessage message={{ ...message, type: "assistant_text", role: "assistant" }} sessionId={sessionId} workspace={workspace} remote={remote} />;
+    }
     if (message.variant === "compact") return <CompactionMarker record={message.compaction} content={message.content} onInspect={onInspectCompaction} />;
     return <SystemMessage key={message.id} content={message.content} meta={message.meta} variant={message.variant} status={message.status} />;
   }
@@ -667,7 +670,10 @@ export const VirtualMessageList = React.forwardRef<
     const turns = new Map<string, { lastId: string; reply?: AssistantTextRenderMessage }>();
     const byItem = new Map<string, string>();
     let currentTurn: string | undefined;
-    for (const item of renderItems) {
+    let lastReplyActionIndex = -1;
+    for (const [index, item] of renderItems.entries()) {
+      if (item.kind === "message" && item.message.type === "system" && item.message.variant === "local_command") continue;
+      lastReplyActionIndex = index;
       if (item.kind === "message" && item.message.type === "user_text") currentTurn = item.message.turnId || item.message.id;
       const turnId = getRenderItemTurnId(item) || currentTurn;
       if (!turnId) continue;
@@ -676,7 +682,7 @@ export const VirtualMessageList = React.forwardRef<
       const reply = item.kind === "message" && item.message.type === "assistant_text" ? item.message : turns.get(turnId)?.reply;
       turns.set(turnId, { lastId: id, reply });
     }
-    return { turns, byItem };
+    return { turns, byItem, lastReplyActionIndex };
   }, [renderItems]);
 
   const conversationNavigationItems = React.useMemo(() => buildConversationNavigationItems(
@@ -846,7 +852,7 @@ export const VirtualMessageList = React.forwardRef<
             ? { change, rewindSupported: rewindSupport.supported, rewindDisabledReason: rewindSupport.reason } : undefined;
           const detachedReply = turn?.lastId === id && turn.reply?.id !== id ? turn.reply : undefined;
           const reply = detachedReply || (item.kind === "message" && item.message.type === "assistant_text" ? item.message : undefined);
-          const actions = index === renderItems.length - 1 && reply?.content.trim() ? latestMessageActions : undefined;
+          const actions = index === turnLayout.lastReplyActionIndex && reply?.content.trim() ? latestMessageActions : undefined;
           const renderedMessage = renderTranscriptItem(
             item,
             resultMap,

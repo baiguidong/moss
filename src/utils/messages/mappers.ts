@@ -175,6 +175,7 @@ export function toSDKMessages(messages: Message[]): SDKMessage[] {
             localCommandOutputToSDKAssistantMessage(
               message.content,
               message.uuid,
+              message.timestamp,
             ),
           ]
         }
@@ -201,6 +202,7 @@ export function toSDKMessages(messages: Message[]): SDKMessage[] {
 export function localCommandOutputToSDKAssistantMessage(
   rawContent: string,
   uuid: UUID,
+  timestamp: string,
 ): SDKAssistantMessage {
   const cleanContent = stripAnsi(rawContent)
     .replace(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/, '$1')
@@ -212,6 +214,8 @@ export function localCommandOutputToSDKAssistantMessage(
   const synthetic = createAssistantMessage({ content: cleanContent })
   return {
     type: 'assistant',
+    subtype: 'local_command_output',
+    timestamp,
     message: synthetic.message,
     parent_tool_use_id: null,
     session_id: getSessionId(),

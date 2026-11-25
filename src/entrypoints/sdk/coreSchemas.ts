@@ -1328,6 +1328,8 @@ const SDKToolSourcesSchema = lazySchema(() => z.record(z.string(), z.object({
 export const SDKAssistantMessageSchema = lazySchema(() =>
   z.object({
     type: z.literal('assistant'),
+    subtype: z.literal('local_command_output').optional(),
+    timestamp: z.string().optional(),
     tool_sources: SDKToolSourcesSchema().optional(),
     message: APIAssistantMessagePlaceholder(),
     parent_tool_use_id: z.string().nullable(),

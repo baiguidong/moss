@@ -37,6 +37,7 @@ export function isDisplayTranscriptEntry(entry) {
   if (entry.type === 'system') {
     return entry.subtype === 'compact_boundary'
       || entry.subtype === 'local_command'
+      || entry.subtype === 'local_command_output'
       || entry.subtype === 'connector_auth'
       || entry.subtype === 'app_task';
   }

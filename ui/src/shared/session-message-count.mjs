@@ -35,6 +35,9 @@ function hasAgentTextOutput(event) {
 }
 
 function hasLocalCommandTextOutput(event) {
+  if (event?.type === 'system' && event.subtype === 'local_command_output') {
+    return normalizeText(event.content).length > 0;
+  }
   if (event?.type === 'system' && event.subtype === 'local_command') {
     return extractLocalCommandOutput(event.content).length > 0;
   }

@@ -8,6 +8,25 @@ const assistant = (text: string) => ({
 
 describe('compact transcript markers', () => {
   it.each([
+    [{ type: 'system', subtype: 'local_command', content: '<local-command-stderr>Error: Compaction canceled.</local-command-stderr>' }, 'Error: Compaction canceled.'],
+    [{ type: 'system', subtype: 'local_command', content: '<local-command-stdout>Compaction canceled.</local-command-stdout>' }, 'Compaction canceled.'],
+    [{ type: 'system', subtype: 'local_command_output', content: 'Total cost: $1.00' }, 'Total cost: $1.00'],
+    [{ type: 'assistant', subtype: 'local_command_output', message: { content: [{ type: 'text', text: 'Context usage: 20%' }] } }, 'Context usage: 20%'],
+    [{ type: 'user', message: { content: '<local-command-stdout>Voice enabled</local-command-stdout>' } }, 'Voice enabled'],
+  ] as const)('preserves local command output as one dated event between replies', (event, content) => {
+    const timestamp = '2026-11-25T06:51:07.672Z';
+    const messages = render([
+      { type: 'user', uuid: 'ppt-turn', prompt: '生成 PPT' },
+      assistant('PPT 已生成'),
+      { ...event, timestamp },
+      { type: 'result', subtype: 'success', result: content },
+      { type: 'user', uuid: 'next-turn', prompt: '继续' },
+    ]);
+    expect(messages.map(message => message.type)).toEqual(['user_text', 'assistant_text', 'system', 'user_text']);
+    expect(messages[2]).toMatchObject({ variant: 'local_command', content, timestamp: new Date(timestamp) });
+  });
+
+  it.each([
     { compactMetadata: { trigger: 'auto', preTokens: 185837 }, content: 'Conversation compacted' },
     { compact_metadata: { trigger: 'auto', pre_tokens: 185837 } },
   ])('shows persisted and SDK boundaries independently of assistant metadata: %j', (event) => {
