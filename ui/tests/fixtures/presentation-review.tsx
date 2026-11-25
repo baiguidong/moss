@@ -74,8 +74,7 @@ function Example({ initialView = 'results', mode = 'collapsed' }: { initialView?
       <ToolDisplaySettingsProvider key={mode} sessionId="session" toolDisplayMode={mode}>
         <ActivityGroup steps={[{ kind: 'tool', toolCall: tool }]} toolCalls={[tool]} mergeable resultMap={new Map([['present', result]])} childToolCallsByParent={new Map()} />
       </ToolDisplaySettingsProvider>
-      <div className="mt-5"><AssistantMessage message={reply} outputFiles={files.get('final')} sessionId="session" workspace="/workspace" /></div>
-      <TurnChangeCard sessionId="session" change={observation} rewindSupported={false} initiallyExpanded />
+      <div className="mt-5"><AssistantMessage message={reply} outputFiles={files.get('final')} sessionId="session" workspace="/workspace" turnChange={{ change: observation, rewindSupported: false }} /></div>
       <MarkdownRenderer sessionId="session" content={'路径也可直接点击：/workspace/joke_bash.txt\n\n不存在的路径 /workspace/missing.txt 应保持文本。'} />
     </main>
     <aside style={{ width: 400, borderLeft: '1px solid var(--border)' }}><TaskPanel collapsed={false} searchQuery="" onSearchChange={noop} onRefresh={noop} onOpenWorkspace={noop} treeItems={names.map((name, index) => ({ name, path: paths[index], type: 'file' })) as any} expandedPaths={new Set()} selectedFilePath={null} onFocusFile={noop} onToggleFolder={noop} onSelectFile={noop}
@@ -222,7 +221,7 @@ async function reviewOpenFromTasks() {
         emit('presentation', { ...current, sessionId: 'another-session', request: { ...current.request, requestId: 'another-open' } }); await delay();
         assert(tasksVisible(), 'Another session stole the task selection');
       }
-      document.querySelector<HTMLButtonElement>('[aria-label="Moss 预览 compound-check.png"]')!.click();
+      document.querySelector<HTMLButtonElement>('[aria-label="在 Moss 中预览 compound-check.png"]')!.click();
       await until(() => {
         const img = document.querySelector<HTMLImageElement>('#task-preview img[alt="compound-check.png"]');
         return Boolean(img?.complete && img.naturalWidth > 0 && !tasksVisible());
@@ -444,6 +443,8 @@ api.runPresentationReview = async () => {
   render(<Example />);
   await until(() => document.querySelectorAll('[aria-label^="文件："]').length === 3, 'Bash/Python output cards missing');
   assert(document.body.innerText.includes('本轮改动 3 个文件') && document.body.innerText.includes('+12'), 'Turn changes disagree with the three output cards');
+  const changeHeader = [...document.querySelectorAll<HTMLButtonElement>('[aria-label="文件列表"] button')].find(button => button.textContent?.includes('本轮改动'))!;
+  changeHeader.click(); await delay();
   for (const path of paths) assert(document.querySelector(`button[title="${path}"]`), 'A verified file is missing from the change tabs');
   const readsBeforeEdit = observationReads;
   emit('presentation', { ...snapshot, resources: resources.map(resource => ({ ...resource, dirty: true })) }); await delay();

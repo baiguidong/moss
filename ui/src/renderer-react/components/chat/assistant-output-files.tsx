@@ -1,62 +1,64 @@
 "use client";
 
 import * as React from "react";
-import { ChevronRight, Files } from "lucide-react";
-import { AssistantOutputFileCard } from "@/components/chat/assistant-output-file-card";
-import { useToolDisplaySettings } from "@/components/chat/tool-display-settings";
+import { ChevronDown, Files } from "lucide-react";
+import { AssistantOutputFileCard } from "./assistant-output-file-card";
+import { TurnChangeCard } from "./turn-change-card";
+import { useToolDisplaySettings } from "./tool-display-settings";
 import type { AssistantOutputFile } from "@/lib/assistant-output-files";
-import { cn } from "@/lib/utils";
 
-const MAX_INLINE_OUTPUT_FILES = 3;
+export type TurnChangeProps = Pick<React.ComponentProps<typeof TurnChangeCard>, "change" | "rewindSupported" | "rewindDisabledReason">;
 
-export function AssistantOutputFiles({ files, messageId, sessionId, workspace, remote }: {
+export function AssistantOutputFiles({ files, messageId, sessionId, workspace, remote, turnChange }: {
   files: AssistantOutputFile[];
   messageId: string;
   sessionId?: string;
   workspace?: string;
   remote?: boolean;
+  turnChange?: TurnChangeProps;
 }) {
-  const remainingFiles = files.slice(MAX_INLINE_OUTPUT_FILES);
+  const container = React.useRef<HTMLDivElement>(null);
+  const [columns, setColumns] = React.useState(1);
   const listId = React.useId();
   const { disclosureOverrides } = useToolDisplaySettings();
   const disclosureKey = `files:${messageId}`;
   const [expanded, setExpanded] = React.useState(() => disclosureOverrides?.get(disclosureKey) ?? false);
-  const renderCard = (file: AssistantOutputFile) => (
-    <AssistantOutputFileCard key={file.path} file={file} sessionId={sessionId} workspace={workspace} remote={remote} />
-  );
+  React.useLayoutEffect(() => {
+    const element = container.current;
+    if (!element) return;
+    const measure = () => setColumns(element.clientWidth >= 520 ? 2 : 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
-  return (
-    <div role="group" aria-label="文件列表" className="w-full min-w-0 space-y-2">
-      {files.slice(0, MAX_INLINE_OUTPUT_FILES).map(renderCard)}
-      {remainingFiles.length > 0 && (
-        <>
-          <button
-            type="button"
-            aria-expanded={expanded}
-            aria-controls={listId}
-            title={expanded ? "收起文件列表" : "展开文件列表"}
-            className="flex min-h-8 w-full items-center gap-2 rounded-md border border-border/70 bg-muted/30 px-2.5 text-left text-xs font-medium text-foreground hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onClick={() => {
-              disclosureOverrides?.set(disclosureKey, !expanded);
-              setExpanded(!expanded);
-            }}
-          >
-            <Files aria-hidden="true" className="size-3.5 text-muted-foreground" />
-            {expanded ? "收起" : "展开剩余"} {remainingFiles.length} 个文件
-            <ChevronRight aria-hidden="true" className={cn("ml-auto size-3.5 text-muted-foreground transition-transform", expanded && "rotate-90")} />
-          </button>
-          <div
-            id={listId}
-            hidden={!expanded}
-            role="group"
-            aria-label="剩余文件"
-            tabIndex={0}
-            className="max-h-[min(20rem,45dvh)] w-full min-w-0 space-y-2 overflow-y-auto overscroll-y-contain rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          >
-            {expanded && remainingFiles.map(renderCard)}
-          </div>
-        </>
-      )}
+  const limit = 3 * columns;
+  const remaining = files.length - limit;
+  const toggle = remaining > 0 && (
+    <button type="button" aria-expanded={expanded} aria-controls={listId}
+      aria-label={expanded ? "收起文件列表" : `展开剩余 ${remaining} 个文件`} title={expanded ? "收起文件列表" : "展开文件列表"}
+      className="inline-flex h-7 shrink-0 items-center gap-0.5 rounded-md px-1.5 text-xs tabular-nums text-muted-foreground hover:bg-muted"
+      onClick={() => { disclosureOverrides?.set(disclosureKey, !expanded); setExpanded(!expanded); }}>
+      {!expanded && remaining}<ChevronDown className={`size-4 ${expanded ? "rotate-180" : ""}`} />
+    </button>
+  );
+  const grid = files.length > 0 && (
+    <div id={listId} className={`grid max-h-[min(24rem,45dvh)] gap-x-3 overflow-y-auto px-2 py-0.5 ${columns === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
+      {(expanded ? files : files.slice(0, limit)).map(file =>
+        <AssistantOutputFileCard key={file.path} file={file} sessionId={sessionId} workspace={workspace} remote={remote} />)}
     </div>
   );
+  return <div ref={container} role="group" aria-label="文件列表" className="w-full min-w-0">
+    {sessionId && turnChange ? (
+      <TurnChangeCard sessionId={sessionId} {...turnChange} inset={false} fileToggle={toggle}>{grid}</TurnChangeCard>
+    ) : (
+      <div className="overflow-hidden rounded-xl border border-border/70 bg-card">
+        <div className="flex min-h-10 items-center gap-2 border-b border-border/60 bg-muted/30 px-3 text-xs">
+          <Files className="size-4 text-muted-foreground" /><span className="flex-1 font-medium">输出文件 {files.length} 个</span>{toggle}
+        </div>
+        {grid}
+      </div>
+    )}
+  </div>;
 }

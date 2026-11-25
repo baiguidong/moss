@@ -6,11 +6,13 @@ import {
   ChevronDown,
   ChevronRight,
   FileDiff,
+  Ellipsis,
   LoaderCircle,
   RotateCcw,
   X,
 } from "lucide-react";
 import { DiffViewer } from "@/components/chat/diff-viewer";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type {
   TurnChangeSummary,
@@ -30,6 +32,8 @@ export function TurnChangeCard({
   rewindDisabledReason,
   initiallyExpanded = false,
   inset = true,
+  fileToggle,
+  children,
 }: {
   sessionId: string;
   change: TurnChangeSummary;
@@ -37,6 +41,8 @@ export function TurnChangeCard({
   rewindDisabledReason?: string | null;
   initiallyExpanded?: boolean;
   inset?: boolean;
+  fileToggle?: React.ReactNode;
+  children?: React.ReactNode;
 }) {
   const [reviewOpen, setReviewOpen] = React.useState(initiallyExpanded);
   const [selectedPath, setSelectedPath] = React.useState(change.files[0]?.filePath || "");
@@ -59,6 +65,10 @@ export function TurnChangeCard({
   // Only render an actionable card when at least one file change was
   // confirmed. Missing observations and zero-change turns create noise here.
   if (!verified || change.files.length === 0 || change.stats.filesChanged === 0) return null;
+
+  const notes = (change.observationNote || '').split('；').filter(note =>
+    note && note !== '统计本轮期间的文件变化，也可能包含外部程序修改');
+  if (change.excludedCount) notes.push(`${change.excludedCount} 项按观察策略排除`);
 
   const openConfirmation = async () => {
     setConfirmOpen(true);
@@ -94,12 +104,14 @@ export function TurnChangeCard({
   };
 
   return (
-    <div className={cn("mb-3 min-w-0 overflow-hidden rounded-lg border border-border/70 bg-card/75 shadow-[0_14px_40px_-34px_rgba(0,0,0,0.72)]", inset && "ml-[var(--assistant-content-inset,36px)]")}>
-      <div className="flex min-h-10 items-center gap-3 px-3 py-2">
+    <div className={cn("min-w-0 overflow-hidden rounded-xl border border-border/70 bg-card", inset && "ml-[var(--assistant-content-inset,36px)]")}>
+      {children}
+      <div className={cn("flex min-h-10 items-center gap-2 bg-muted/30 px-3 py-1", children && "border-t border-border/60")}>
         <FileDiff className="h-4 w-4 shrink-0 text-muted-foreground" />
         <button
           type="button"
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          aria-expanded={reviewOpen}
           onClick={() => setReviewOpen((value) => !value)}
         >
           <span className="truncate text-xs font-medium text-foreground">
@@ -117,19 +129,21 @@ export function TurnChangeCard({
             ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
         </button>
-        <button
-          type="button"
-          disabled={!rewindSupported || busy}
-          title={rewindSupported ? "撤销到这一轮开始之前" : rewindDisabledReason || "当前会话不支持撤销"}
-          className="flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45"
-          onClick={() => void openConfirmation()}
-        >
-          <RotateCcw className="h-3.5 w-3.5" />
-          回退已备份文件
-        </button>
+        {fileToggle}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" aria-label="改动操作" title="改动操作" className="rounded-md p-1 text-muted-foreground hover:bg-muted"><Ellipsis className="size-4" /></button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem disabled={!rewindSupported || busy} title={rewindDisabledReason || undefined} onSelect={() => void openConfirmation()}>
+              <RotateCcw />回退已备份文件
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
-
-      {(change.observationNote || change.excludedCount || !verified) ? <div role="status" className="border-t border-border/50 px-3 py-2 text-[11px] text-muted-foreground">{change.observationNote || (!verified ? '缺少本轮文件观察记录，无法确认文件变化。' : '')}{change.excludedCount ? ` · ${change.excludedCount} 项按观察策略排除` : ''}</div> : null}
+      {reviewOpen && notes.length > 0 && (
+        <div role="status" className="border-t border-border/50 px-3 py-2 text-[11px] text-muted-foreground">{notes.join('；')}</div>
+      )}
 
       {reviewOpen && verified && selectedFile ? (
         <div className="border-t border-border/60">

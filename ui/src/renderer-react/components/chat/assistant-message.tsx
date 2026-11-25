@@ -5,7 +5,7 @@ import { FilePreview } from "@/components/file-preview";
 import { MessageActionBar } from "@/components/chat/message-action-bar";
 import { MarkdownRenderer } from "@/components/markdown/markdown-renderer";
 import type { AssistantTextRenderMessage } from "@/lib/agent-transcript";
-import { AssistantOutputFiles } from "@/components/chat/assistant-output-files";
+import { AssistantOutputFiles, type TurnChangeProps } from "@/components/chat/assistant-output-files";
 import type { AssistantOutputFile } from "@/lib/assistant-output-files";
 
 function shouldUseDocumentLayout(content: string, attachmentCount: number) {
@@ -23,38 +23,46 @@ function shouldUseDocumentLayout(content: string, attachmentCount: number) {
   return paragraphs.length >= 2 || normalized.split("\n").filter((line) => line.trim()).length >= 8;
 }
 
-export const AssistantMessage = React.memo(function AssistantMessage({
-  message,
-  beforeContent,
-  actions,
-  showCopyButton = true,
-  outputFiles = [],
-  sessionId,
-  workspace,
-  remote,
-}: {
+type ReplyFooterProps = {
   message: AssistantTextRenderMessage;
-  beforeContent?: React.ReactNode;
   actions?: React.ReactNode;
   showCopyButton?: boolean;
   outputFiles?: AssistantOutputFile[];
   sessionId?: string;
   workspace?: string;
   remote?: boolean;
-}) {
+  turnChange?: TurnChangeProps;
+};
+
+export function AssistantReplyFooter({ message, actions, showCopyButton = true, outputFiles = [], sessionId, workspace, remote, turnChange }: ReplyFooterProps) {
+  const copy = showCopyButton && Boolean(message.content.trim());
+  return <>
+    {(!message.streaming && outputFiles.length > 0 || turnChange) && (
+      <AssistantOutputFiles files={outputFiles} messageId={message.id} sessionId={sessionId} workspace={workspace} remote={remote} turnChange={turnChange} />
+    )}
+    {(actions || copy) && (
+      <div className="assistant-message-actions flex min-h-7 items-center gap-1">
+        {actions}
+        {copy && <MessageActionBar copyText={message.content} copyLabel="复制回复" align="start" className="min-h-7" />}
+        {copy && message.timestamp && Number.isFinite(message.timestamp.getTime()) && (
+          <time dateTime={message.timestamp.toISOString()} title={message.timestamp.toLocaleString("zh-CN", { hour12: false })}
+            className="select-none whitespace-nowrap text-xs tabular-nums text-muted-foreground">
+            {message.timestamp.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}
+          </time>
+        )}
+      </div>
+    )}
+  </>;
+}
+
+export const AssistantMessage = React.memo(function AssistantMessage({
+  beforeContent, deferFooter, ...props
+}: ReplyFooterProps & { beforeContent?: React.ReactNode; deferFooter?: boolean }) {
+  const { message, outputFiles = [], sessionId } = props;
   const attachments = (message.attachments || []).filter((attachment) => !outputFiles.some((file) => file.path === attachment.path || file.sourcePaths.includes(attachment.path)));
   const hasText = message.content.trim().length > 0;
   const filesOnly = outputFiles.length > 0 && !hasText && attachments.length === 0 && !beforeContent;
   const documentLayout = shouldUseDocumentLayout(message.content, attachments.length + outputFiles.length);
-  const copyAction = showCopyButton && hasText ? (
-    <MessageActionBar
-      copyText={message.content}
-      copyLabel="复制回复"
-      align="start"
-      className="min-h-7"
-    />
-  ) : null;
-
   return (
     <div
       className="assistant-message group flex items-start justify-start gap-2"
@@ -121,25 +129,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
           </div>
         )}
 
-        {!message.streaming && outputFiles.length > 0 && (
-          <AssistantOutputFiles files={outputFiles} messageId={message.id} sessionId={sessionId} workspace={workspace} remote={remote} />
-        )}
-
-        {actions || copyAction ? (
-          <div className="assistant-message-actions -mt-1 flex min-h-7 items-center gap-1">
-            {actions}
-            {copyAction}
-            {copyAction && message.timestamp && Number.isFinite(message.timestamp.getTime()) ? (
-              <time
-                dateTime={message.timestamp.toISOString()}
-                title={message.timestamp.toLocaleString("zh-CN", { hour12: false })}
-                className="select-none whitespace-nowrap text-xs tabular-nums text-muted-foreground"
-              >
-                {message.timestamp.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}
-              </time>
-            ) : null}
-          </div>
-        ) : null}
+        {!deferFooter && <AssistantReplyFooter {...props} />}
       </div>
     </div>
   );

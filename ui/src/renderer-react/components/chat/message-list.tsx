@@ -8,7 +8,7 @@ import type { CompactionRecord } from "@/lib/compaction";
 import { ArrowDownToLine, ArrowUpToLine } from "lucide-react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { cn } from "@/lib/utils";
-import { AssistantMessage } from "@/components/chat/assistant-message";
+import { AssistantMessage, AssistantReplyFooter } from "@/components/chat/assistant-message";
 import {
   ActivityGroup,
   type ActivityStep,
@@ -18,6 +18,7 @@ import { ToolResultBlock } from "@/components/chat/tool-result-block";
 import { UserMessage } from "@/components/chat/user-message";
 import { copyToClipboard } from "@/components/chat/clipboard";
 import { hasChatTextSelection, useChatTextSelection } from "@/components/chat/use-chat-text-selection";
+import type { TurnChangeProps } from "./assistant-output-files";
 import { TurnChangeCard } from "@/components/chat/turn-change-card";
 import {
   buildConversationNavigationItems,
@@ -29,6 +30,7 @@ import {
 import { WorkspacePathProvider } from "@/components/workspace-path-context";
 import { extractShellResult, getToolKind } from "@/components/chat/tool-utils";
 import type {
+  AssistantTextRenderMessage,
   ToolResultRenderMessage,
   ToolUseRenderMessage,
   TranscriptRenderMessage,
@@ -333,6 +335,8 @@ function renderTranscriptItem(
   remote?: boolean,
   showCopyButton = false,
   onInspectCompaction?: (record: CompactionRecord) => void,
+  turnChange?: TurnChangeProps,
+  deferFooter = false,
 ) {
   if (item.kind === "tool_group") {
     return (
@@ -355,7 +359,7 @@ function renderTranscriptItem(
     return <UserMessage sessionId={sessionId} key={message.id} message={message} />;
   }
   if (message.type === "assistant_text") {
-    return <AssistantMessage key={message.id} message={message} actions={actions} outputFiles={outputFiles} sessionId={sessionId} workspace={workspace} remote={remote} showCopyButton={showCopyButton} />;
+    return <AssistantMessage deferFooter={deferFooter} turnChange={turnChange} key={message.id} message={message} actions={actions} outputFiles={outputFiles} sessionId={sessionId} workspace={workspace} remote={remote} showCopyButton={showCopyButton} />;
   }
   if (message.type === "thinking") {
     return <ThinkingBlock key={message.id} content={message.content} isActive={Boolean(message.streaming)} />;
@@ -659,13 +663,20 @@ export const VirtualMessageList = React.forwardRef<
     };
   }, [loading, messages, sessionId, observationVersion]);
 
-  const lastRenderItemByTurn = React.useMemo(() => {
-    const result = new Map<string, string>();
+  const turnLayout = React.useMemo(() => {
+    const turns = new Map<string, { lastId: string; reply?: AssistantTextRenderMessage }>();
+    const byItem = new Map<string, string>();
+    let currentTurn: string | undefined;
     for (const item of renderItems) {
-      const turnId = getRenderItemTurnId(item);
-      if (turnId) result.set(turnId, getRenderItemId(item));
+      if (item.kind === "message" && item.message.type === "user_text") currentTurn = item.message.turnId || item.message.id;
+      const turnId = getRenderItemTurnId(item) || currentTurn;
+      if (!turnId) continue;
+      const id = getRenderItemId(item);
+      byItem.set(id, turnId);
+      const reply = item.kind === "message" && item.message.type === "assistant_text" ? item.message : turns.get(turnId)?.reply;
+      turns.set(turnId, { lastId: id, reply });
     }
-    return result;
+    return { turns, byItem };
   }, [renderItems]);
 
   const conversationNavigationItems = React.useMemo(() => buildConversationNavigationItems(
@@ -826,11 +837,16 @@ export const VirtualMessageList = React.forwardRef<
         totalListHeightChanged={totalListHeightChanged}
         components={{ Header: VirtuosoHeader, Footer: VirtuosoFooter }}
         itemContent={(index, item) => {
-          const actions = index === renderItems.length - 1
-            && item.kind === "message"
-            && item.message.type === "assistant_text"
-            && item.message.content.trim()
-            ? latestMessageActions : undefined;
+          const id = getRenderItemId(item);
+          const turnId = turnLayout.byItem.get(id);
+          const turn = turnId ? turnLayout.turns.get(turnId) : undefined;
+          const change = sessionId && turnId && turn?.lastId === id ? turnChanges.get(turnId) : undefined;
+          const turnChange = change && (change.coverage === 'complete' || change.coverage === 'partial')
+            && change.files.length && change.stats.filesChanged
+            ? { change, rewindSupported: rewindSupport.supported, rewindDisabledReason: rewindSupport.reason } : undefined;
+          const detachedReply = turn?.lastId === id && turn.reply?.id !== id ? turn.reply : undefined;
+          const reply = detachedReply || (item.kind === "message" && item.message.type === "assistant_text" ? item.message : undefined);
+          const actions = index === renderItems.length - 1 && reply?.content.trim() ? latestMessageActions : undefined;
           const renderedMessage = renderTranscriptItem(
             item,
             resultMap,
@@ -844,14 +860,8 @@ export const VirtualMessageList = React.forwardRef<
             agentMode === 'remote-direct',
             getRenderItemId(item) === latestCopyMessageId,
             onInspectCompaction,
-          );
-          const turnId = getRenderItemTurnId(item);
-          const turnChange = turnId ? turnChanges.get(turnId) : undefined;
-          const showTurnChange = Boolean(
-            sessionId
-            && turnId
-            && turnChange
-            && lastRenderItemByTurn.get(turnId) === getRenderItemId(item),
+            turnChange,
+            turn?.reply?.id === id && turn.lastId !== id,
           );
           return (
           <div
@@ -872,14 +882,13 @@ export const VirtualMessageList = React.forwardRef<
             }}
           >
             {renderedMessage}
-            {showTurnChange && turnChange ? (
-              <TurnChangeCard
-                sessionId={sessionId}
-                change={turnChange}
-                rewindSupported={rewindSupport.supported}
-                rewindDisabledReason={rewindSupport.reason}
-              />
-            ) : null}
+            {detachedReply && (
+              <div className="ml-[var(--assistant-content-inset,36px)] flex min-w-0 flex-col gap-2">
+                <AssistantReplyFooter message={detachedReply} actions={actions} outputFiles={outputFilesByMessage.get(detachedReply.id)}
+                  sessionId={sessionId} workspace={workspace} remote={agentMode === 'remote-direct'} showCopyButton={detachedReply.id === latestCopyMessageId} turnChange={turnChange} />
+              </div>
+            )}
+            {!reply && turnChange && <TurnChangeCard sessionId={sessionId!} {...turnChange} />}
           </div>
           );
         }}

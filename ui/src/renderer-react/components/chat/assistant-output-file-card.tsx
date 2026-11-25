@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ChevronDown, Copy, ExternalLink, Eye, FileText, FolderOpen, Image, FileCode, FileSpreadsheet, Presentation } from "lucide-react";
+import { Ellipsis, Copy, ExternalLink, Eye, FileText, FolderOpen, Image, FileCode, FileSpreadsheet, Presentation } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cleanIpcErrorMessage } from "@/lib/app-notifications";
@@ -41,12 +41,12 @@ export async function openAssistantOutputFile(file: AssistantOutputFile, action:
 }
 
 function FileIcon({ type }: { type: string }) {
-  if (type === "PDF") return <PdfFileIcon className="h-9 w-9 text-red-500" />;
+  if (type === "PDF") return <PdfFileIcon className="size-5 text-red-500" />;
   const Icon = /^(PNG|JPE?G|GIF|WEBP|AVIF|SVG|BMP)$/.test(type) ? Image
     : /^(XLSX?|CSV|TSV|ODS|NUMBERS)$/.test(type) ? FileSpreadsheet
     : /^(PPTX?|ODP|KEY)$/.test(type) ? Presentation
     : /^(HTML?|TSX?|JSX?|JSON|PY|CSS)$/.test(type) ? FileCode : FileText;
-  return <Icon className="h-5 w-5" aria-hidden="true" />;
+  return <Icon className="size-4" aria-hidden="true" />;
 }
 
 export function AssistantOutputFileCard({ file, sessionId, workspace = "", remote = false }: {
@@ -66,25 +66,25 @@ export function AssistantOutputFileCard({ file, sessionId, workspace = "", remot
     } catch (err) { setError(cleanIpcErrorMessage(err)); }
     finally { setBusy(false); }
   }
+  const extensionStart = file.name.lastIndexOf(".");
+  const stem = extensionStart > 0 ? file.name.slice(0, extensionStart) : file.name;
+  const extension = extensionStart > 0 ? file.name.slice(extensionStart) : "";
+  const status = file.operation === "create" ? "已创建" : file.operation === "update" ? "已更新" : "可查看";
   return (
-    <div>
-      <section aria-label={`文件：${file.name}`} className="flex w-full items-center overflow-hidden rounded-2xl border border-border/70 bg-muted/35 shadow-sm">
+    <div className="min-w-0">
+      <section aria-label={`文件：${file.name}`} className="flex h-[38px] min-w-0 items-center gap-1 rounded-md px-1 hover:bg-muted/40">
         <button type="button" disabled={busy} onClick={() => void act("preview")} aria-label={`在 Moss 中预览 ${file.name}`}
-          className="flex min-w-0 flex-1 items-center gap-3 p-3 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-60">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background text-muted-foreground"><FileIcon type={file.type} /></span>
-          <span className="flex min-w-0 flex-col gap-1">
-            <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="truncate text-sm font-semibold" title={file.name}>{file.name}</span>
-              <span className="rounded-full border border-border/70 bg-background/50 px-2 py-0.5 text-[10px] font-medium tracking-wider text-muted-foreground">{file.type}</span>
-              <span className="text-xs text-muted-foreground">{file.operation === "create" ? "已创建" : file.operation === "update" ? "已更新" : "可查看"}</span>
-            </span>
-            {file.subtitle !== file.name && <span className="truncate text-xs text-muted-foreground" title={file.path}>{file.subtitle}</span>}
-          </span>
+          title={`${file.path}\n${file.type} · ${status}`}
+          className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-md text-left text-sm focus-visible:ring-2 focus-visible:ring-ring">
+          <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"><FileIcon type={file.type} /></span>
+          <span className="flex min-w-0"><span className="truncate">{stem}</span><span className="max-w-[45%] shrink-0 truncate">{extension}</span></span>
         </button>
-        <div className="flex shrink-0 items-center gap-1.5 pr-3">
-          <Button variant="outline" size="icon-sm" className="rounded-full" title="Moss 预览" aria-label={`Moss 预览 ${file.name}`} disabled={busy} onClick={() => void act("preview")}><Eye className="h-3.5 w-3.5" /></Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild><Button variant="outline" size="sm" className="gap-1 rounded-full px-2 sm:px-3" disabled={busy}>打开方式<ChevronDown className="h-3.5 w-3.5" /></Button></DropdownMenuTrigger>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" className="size-7 shrink-0 text-muted-foreground" title="打开方式" aria-label={`打开方式：${file.name}`} disabled={busy}>
+              <Ellipsis className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={() => void act("preview")}><Eye />Moss 预览<span className="ml-auto pl-3 text-xs text-muted-foreground">默认</span></DropdownMenuItem>
               <DropdownMenuItem disabled={remote} onSelect={() => void act("system")}><ExternalLink />{typeof window !== 'undefined' && window.mossWeb ? '打开或下载文件' : '系统方式打开'}</DropdownMenuItem>
@@ -92,8 +92,7 @@ export function AssistantOutputFileCard({ file, sessionId, workspace = "", remot
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => void act("copy")}><Copy />复制路径</DropdownMenuItem>
             </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        </DropdownMenu>
       </section>
       {error && <p role="alert" className="mt-1 text-xs text-destructive">无法打开文件：{error}</p>}
     </div>
