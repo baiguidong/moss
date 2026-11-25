@@ -1,3 +1,4 @@
+import type { SessionSummary } from '@/types';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
@@ -19,6 +20,7 @@ import { WindowChrome } from '@/components/window-chrome';
 import { PanelResizeHandle } from '@/components/panel-resize-handle';
 import { SessionPanelTabs } from '@/components/session-panel-tabs';
 import { useSessionPanelLayout, type SessionPanelLayout } from '@/lib/use-session-panel-layout';
+import { OutlineDialog } from '@/components/session-command-launcher';
 import { SessionTabBar } from '@/components/chat-area';
 import { useNavigationHistory, type NavigationEntry } from '@/lib/use-navigation-history';
 import '@/globals.css';
@@ -258,6 +260,7 @@ function WindowToolbarExample({ desktop = true, isMacOS = true, rightWidth = 440
   const [rightCollapsed, setRightCollapsed] = React.useState(false);
   const [current, setCurrent] = React.useState(snapshot);
   const [tasksActive, setTasksActive] = React.useState(false);
+  const [outlineOpen, setOutlineOpen] = React.useState(false);
   const [toolMode, setToolMode] = React.useState<'expanded' | 'collapsed' | 'merged'>('expanded');
   const history = useNavigationHistory(entry, async (next, signal) => {
     if (api.historyDelay) await delay(api.historyDelay);
@@ -280,11 +283,12 @@ function WindowToolbarExample({ desktop = true, isMacOS = true, rightWidth = 440
         </aside>
         <div className="hidden w-3 shrink-0 lg:block" />
         <main className="min-w-0 flex-1" data-test-page={`${entry.view}:${entry.sessionId || ''}`}>
-          {sessionActive && <SessionTabBar title={`会话 ${entry.sessionId} · 检查顶部导航布局`} leftCollapsed={leftCollapsed} rightCollapsed={rightCollapsed}
+          {sessionActive && <SessionTabBar onOutline={() => setOutlineOpen(true)} title={`会话 ${entry.sessionId} · 检查顶部导航布局`} leftCollapsed={leftCollapsed} rightCollapsed={rightCollapsed}
             leftPanelName="会话侧栏" rightPanelName="工作区" onToggleLeft={() => setLeftCollapsed(value => !value)} onToggleRight={() => setRightCollapsed(value => !value)}
             toolDisplayMode={toolMode} sessionToolDisplayMode={toolMode} globalToolDisplayMode="expanded" onToolDisplayModeChange={mode => setToolMode(mode || 'expanded')}
-            toolDisplaySettingBusy={false} outline={[{ messageId: 'q1', question: '检查顶部导航', answerPreview: '检查成功' }]} onJumpToOutlineItem={noop} messages={[]} childSessions={[]}
-            onOpenWorkers={noop} onSelectWorker={noop} terminalActions={<button className="h-8 w-8" aria-label="终端菜单">终</button>} sessionInfo={<button className="h-8 w-8" aria-label="查看会话信息">ⓘ</button>} />}
+            toolDisplaySettingBusy={false} messages={[]} childSessions={[]}
+            onOpenWorkers={noop} onSelectWorker={noop} terminalSession={{ id: 'one', sessionId: 'one', messageCount: 1 } as SessionSummary} sessionInfo={<button className="h-8 w-8" aria-label="查看会话信息">ⓘ</button>} />}
+          <OutlineDialog open={outlineOpen} outline={[{ messageId: 'q1', question: '检查顶部导航', answerPreview: '检查成功' }]} onJump={noop} onClose={() => setOutlineOpen(false)} />
           <div className="p-6">{sessionActive ? '会话正文' : entry.view}</div>
         </main>
         {sessionActive && <><aside data-test-workspace className="shrink-0 border-l" style={{ width: rightCollapsed ? 0 : rightWidth }}>
@@ -315,11 +319,40 @@ async function reviewWindowToolbars() {
     assert(pin.right <= button('通知').getBoundingClientRect().left, 'Workspace pin overlaps notifications');
     await clickView('会话任务'); assert(document.querySelector('[data-test-view="tasks"]'), 'Task switch broke after moving navigation');
     await clickView('结果'); assert(document.querySelector('[data-test-view="results"]'), 'Result switch broke after moving navigation');
-    await click('查看会话大纲'); assert(document.querySelector('input[placeholder="搜索对话轮次..."]'), 'Outline does not open below title bar');
-    await click('查看会话大纲');
-    await openMenu('工具展示：展开');
-    ([...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(item => item.textContent === '折叠'))!.click(); await delay();
-    assert(button('工具展示：折叠'), 'Tool display setting no longer works');
+    const selectSessionAction = async (label: string) => {
+      await openMenu('打开会话操作');
+      const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(node => node.textContent?.startsWith(label));
+      assert(item, `Missing session action: ${label}`);
+      item!.click(); await delay();
+    };
+    await selectSessionAction('会话大纲');
+    assert(document.activeElement?.getAttribute('placeholder') === '搜索对话轮次…', 'Outline search did not receive focus');
+    await click('关闭');
+    const hoverSubmenu = async (label: string) => {
+      await openMenu('打开会话操作');
+      const trigger = [...document.querySelectorAll<HTMLElement>('[role="menuitem"][aria-haspopup="menu"]')].find(node => node.textContent?.startsWith(label))!;
+      trigger.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerType: 'mouse' }));
+      const selector = `[role="menu"][aria-label="${label}"]`;
+      await until(() => Boolean(document.querySelector(selector)), `${label} submenu did not open on hover`);
+      assert(!document.querySelector('[role="dialog"]'), 'Submenu opened a dialog');
+      return document.querySelector<HTMLElement>(selector)!;
+    };
+    const tools = await hoverSubmenu('工具展示');
+    const folded = [...tools.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(node => node.textContent === '折叠')!;
+    folded.click(); await delay();
+    const updated = await hoverSubmenu('工具展示');
+    assert(updated.querySelector('[aria-checked="true"]')?.textContent === '折叠', 'Tool display setting was not selected');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await delay();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await delay();
+    const terminalActions: string[] = [];
+    api.agentDesktop.openTerminal = async ({ action }: { action: string }) => { terminalActions.push(action); };
+    const terminal = await hoverSubmenu('终端');
+    assert(!terminalActions.length, 'Hover unexpectedly launched a terminal');
+    const resume = [...terminal.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(node => node.textContent === '跟随会话')!;
+    resume.click(); await delay();
+    assert(terminalActions.join() === 'resume' && !document.querySelector('[role="menu"][data-state="open"]'), 'Terminal selection did not run and dismiss');
     await click('收起工作区'); assert(!document.querySelector('[aria-label="内容导航"]'), 'Collapsed workspace leaves its toolbar visible');
     await click('展开工作区'); assert(document.querySelector('.moss-window-chrome [aria-label="内容导航"]'), 'Expanded workspace lost its top toolbar');
     await click('收起会话侧栏'); assert(button('展开会话侧栏')?.querySelector('.lucide-panel-left-open'), 'Left collapse icon did not change');

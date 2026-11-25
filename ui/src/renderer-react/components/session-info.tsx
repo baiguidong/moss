@@ -1,10 +1,9 @@
 import * as React from 'react';
-import { Check, Copy, Info, RefreshCw } from 'lucide-react';
+import { Check, Copy, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { copyToClipboard } from '@/components/chat/clipboard';
 import { getPermissionModeLabel } from '@/components/permission-mode-selector';
-import { DraggableDialogShell } from '@/components/session-command-launcher';
 import { buildSessionInfo, formatSessionDuration } from '@/lib/session-info';
 import type { TranscriptRenderMessage } from '@/lib/agent-transcript';
 import type { BackgroundTaskInfo, SessionDetail, SessionRecordedUsage, SessionSummary } from '../types';
@@ -168,7 +167,7 @@ export function SessionInfoContent({ session, messages, childSessions = [], back
   </div>;
 }
 
-function LiveSessionInfo(props: SessionInfoProps) {
+export function LiveSessionInfo(props: SessionInfoProps) {
   const { session } = props;
   const [recordedUsage, setRecordedUsage] = React.useState<SessionRecordedUsage | null>(null);
   const [loading, setLoading] = React.useState(session.agentMode !== 'remote-direct');
@@ -199,22 +198,5 @@ function LiveSessionInfo(props: SessionInfoProps) {
       <Button variant="ghost" size="sm" className="ml-2 h-6 gap-1 px-2 text-xs" onClick={() => setRefresh((value) => value + 1)}><RefreshCw className="h-3 w-3" />重试</Button>
     </div>}
     <SessionInfoContent {...props} recordedUsage={recordedUsage} usageLoading={loading} usageError={error} />
-  </>;
-}
-
-export function SessionInfoButton({ session, ...props }: Omit<SessionInfoProps, 'session'> & { session?: SessionDetail | null }) {
-  const [open, setOpen] = React.useState(false);
-  const trigger = React.useRef<HTMLButtonElement>(null);
-  return <>
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button ref={trigger} variant="ghost" size="icon" className="h-8 w-8 rounded-full" disabled={!session}
-          aria-label="查看会话信息" aria-haspopup="dialog" onClick={() => setOpen(true)}><Info className="h-4 w-4" /></Button>
-      </TooltipTrigger>
-      <TooltipContent>会话信息</TooltipContent>
-    </Tooltip>
-    {open && session && <DraggableDialogShell title="会话信息" wide onClose={() => { setOpen(false); trigger.current?.focus({ preventScroll: true }); }}>
-      <LiveSessionInfo key={session.id} {...props} session={session} />
-    </DraggableDialogShell>}
   </>;
 }

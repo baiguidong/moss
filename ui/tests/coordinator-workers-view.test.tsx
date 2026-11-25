@@ -116,8 +116,7 @@ test("chat header renders a truncated session title alongside worker status", ()
       globalToolDisplayMode="expanded"
       onToolDisplayModeChange={() => {}}
       toolDisplaySettingBusy={false}
-      outline={[]}
-      onJumpToOutlineItem={() => {}}
+      onOutline={() => {}}
       messages={[]}
       isPinned
       onTogglePin={() => {}}
@@ -130,7 +129,7 @@ test("chat header renders a truncated session title alongside worker status", ()
   expect(markup).toContain(`aria-label="会话操作：${title}"`);
   expect(markup).toContain(`>${title}</span>`);
   expect(markup).toContain("min-w-0 flex-1 truncate text-sm font-medium");
-  expect(markup).toContain('aria-label="取消置顶会话"');
+  expect(markup).toContain('aria-label="打开会话操作"');
   expect(markup).toContain("3 个子 Agent");
   expect(markup).toContain('aria-label="Agent 协作状态"');
   expect(markup).toContain('aria-label="会话功能按钮"');

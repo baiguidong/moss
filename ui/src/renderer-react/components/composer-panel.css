@@ -66,3 +66,57 @@
     display: none;
   }
 }
+
+.session-composer-icon,
+.session-model,
+.session-permission {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  border-radius: 8px;
+  color: var(--muted-foreground);
+}
+
+.session-composer-icon {
+  width: 32px;
+}
+
+.session-model,
+.session-permission {
+  gap: 4px;
+  max-width: 80px;
+  padding-inline: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.session-permission {
+  background: var(--muted);
+  border-radius: 999px;
+}
+
+.session-composer-icon:hover,
+.session-model:hover,
+.session-permission:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.session-composer-icon:disabled,
+.session-model:disabled,
+.session-permission:disabled {
+  opacity: 0.5;
+}
+
+@container chat-composer (max-width: 440px) {
+  .composer-footer { padding-inline: 6px; }
+  .composer-toolbar,
+  .composer-toolbar-options,
+  .composer-toolbar-actions { gap: 2px; }
+  .session-composer-icon { width: 26px; }
+  .session-model { max-width: 48px; }
+  .session-permission { max-width: 72px; }
+  .composer-toolbar .composer-send { flex-basis: 30px; width: 30px; height: 30px; }
+}

@@ -1,7 +1,8 @@
 import * as React from 'react';
 import * as Slider from '@radix-ui/react-slider';
-import { Brain, ChevronDown, RotateCcw } from 'lucide-react';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Brain, RotateCcw } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { cleanIpcErrorMessage } from '@/lib/app-notifications';
 import type { EffortLevel, SessionEffortConfiguration } from '../types';
 
@@ -35,7 +36,7 @@ export function SessionEffortSelector({ sessionId, disabled = false, busy = fals
     setError('');
     try {
       const next = await window.agentDesktop.setSessionEffort({ sessionId, effort });
-      if (current === generation.current) apply(next);
+      if (current === generation.current) { apply(next); setOpen(false); }
     } catch (cause) {
       if (current === generation.current) { setError(cleanIpcErrorMessage(cause)); setDraft(config?.applied ?? null); }
     } finally { setSaving(false); }
@@ -47,14 +48,18 @@ export function SessionEffortSelector({ sessionId, disabled = false, busy = fals
   const status = saving ? '正在应用…' : config?.overridden ? '由环境变量指定' : config && levels.length === 0 ? '当前模型不支持设置推理强度' : '';
 
   return <Popover open={open} onOpenChange={setOpen}>
-    <PopoverTrigger asChild>
-      <button type="button" disabled={disabled} aria-label={`推理强度：${config?.applied ? LABELS[config.applied] : 'Auto'}`}
-        title={`推理强度：${config?.applied ? LABELS[config.applied] : 'Auto'} · 仅当前会话，后续请求生效`}
-        className="composer-control inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border/70 bg-muted/35 px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:opacity-50">
-        <Brain className="h-3.5 w-3.5 shrink-0" /><span className="composer-control-label">{config?.applied ? LABELS[config.applied] : '推理强度'}</span><ChevronDown className="composer-control-detail h-3 w-3 shrink-0" />
-      </button>
-    </PopoverTrigger>
-    <PopoverContent side="top" align="start" sideOffset={6} className="w-64 rounded-xl border-border/70 bg-card/95 px-3 py-2.5 shadow-lg backdrop-blur">
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <PopoverTrigger asChild>
+          <button type="button" disabled={disabled} aria-label={`推理强度：${config?.applied ? LABELS[config.applied] : 'Auto'}`}
+            className="session-composer-icon cursor-pointer focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default">
+            <Brain className="size-4" />
+          </button>
+        </PopoverTrigger>
+      </TooltipTrigger>
+      {!open && <TooltipContent side="top">推理强度 · {config?.applied ? LABELS[config.applied] : '自动'}</TooltipContent>}
+    </Tooltip>
+    <PopoverContent side="top" align="end" sideOffset={6} collisionPadding={8} aria-label="推理强度" className="w-64 max-w-[calc(100vw-1rem)] rounded-xl">
       <div className="flex h-6 items-center gap-2">
         <span className="shrink-0 text-sm font-medium text-primary">{label}</span>
         <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground" title={config?.model}>{config?.model || '读取中…'}</span>

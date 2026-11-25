@@ -16,7 +16,7 @@ const watchdog = setTimeout(() => app.exit(1), 60_000);
 const wait = () => new Promise(resolve => setTimeout(resolve, 100));
 app.whenReady().then(async () => {
   try {
-    server = await createServer({ root, configFile: path.join(root, 'vite.config.ts'), cacheDir: path.join(temp, 'vite'), server: { host: '127.0.0.1', port: 0, hmr: false } });
+    server = await createServer({ root, configFile: path.join(root, 'vite.config.ts'), cacheDir: path.join(temp, 'vite'), server: { host: '127.0.0.1', port: 5196, strictPort: false, hmr: false } });
     await server.listen();
     win = new BrowserWindow({ show: false, width: 850, height: 650 });
     const evaluate = code => win.webContents.executeJavaScript(code);
@@ -26,12 +26,16 @@ app.whenReady().then(async () => {
     await evaluate("document.querySelector('[aria-label=\"推理强度：Extra High\"]').click()");
     for (let i = 0; i < 50 && !await evaluate("Boolean(document.querySelector('[role=slider]'))"); i++) await wait();
     assert.equal(await evaluate("document.querySelector('[role=slider]').getAttribute('aria-valuetext')"), 'Extra High');
+    assert(await evaluate(`document.querySelector('[role="dialog"][aria-label="推理强度"]').getBoundingClientRect().bottom
+      <= document.querySelector('button[aria-label^="推理强度："]').getBoundingClientRect().top + 1`));
     await fs.writeFile('/tmp/moss-effort-selector.png', (await win.webContents.capturePage()).toPNG());
     await evaluate("document.querySelector('[role=slider]').focus()");
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Home' });
     win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Home' });
     await wait();
     assert.deepEqual(await evaluate('window.writes.at(-1)'), { sessionId: 'a', effort: 'low' });
+    assert(!await evaluate("Boolean(document.querySelector('[role=slider]'))"));
+    await evaluate("document.querySelector('[aria-label=\"推理强度：Low\"]').click()"); await wait();
     await evaluate("document.querySelector('[aria-label=\"恢复模型默认推理强度\"]').click()"); await wait();
     assert.deepEqual(await evaluate('window.writes.at(-1)'), { sessionId: 'a', effort: null });
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });

@@ -153,19 +153,17 @@ try {
     await waitFor(() => js(`Boolean(document.querySelector(${selector}))`), title);
     await js(`document.querySelector(${selector}).closest('[role="button"]').click()`);
   };
-  const modelSelect = `document.querySelector('select[aria-label="选择模型"]')`;
+  const modelSelect = `document.querySelector('button[aria-label^="选择模型："]')`;
   await openSession('Model A session');
-  await waitFor(() => js(`${modelSelect}?.value === 'fixture-secondary'`), 'original session model');
-  await js(`{
-    const select = ${modelSelect};
-    select.value = 'fixture-tertiary';
-    select.dispatchEvent(new Event('change', { bubbles: true }));
-  }`);
+  await waitFor(() => js(`${modelSelect}?.title.includes('fixture-secondary')`), 'original session model');
+  await js(`${modelSelect}.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
+  await waitFor(() => js(`Boolean(document.querySelector('[role="menuitemradio"]'))`), 'model options');
+  await js(`[...document.querySelectorAll('[role="menuitemradio"]')].find(button => button.textContent === 'fixture-tertiary').click()`);
   await waitFor(async () => (await call('getSession', { sessionId })).model === 'fixture-tertiary', 'session model change saved');
   await openSession('Model B session');
-  await waitFor(() => js(`${modelSelect}?.value === 'fixture-secondary'`), 'other session model unchanged');
+  await waitFor(() => js(`${modelSelect}?.title.includes('fixture-secondary')`), 'other session model unchanged');
   await openSession('Model A session');
-  await waitFor(() => js(`${modelSelect}?.value === 'fixture-tertiary'`), 'changed model shown on reopen');
+  await waitFor(() => js(`${modelSelect}?.title.includes('fixture-tertiary')`), 'changed model shown on reopen');
   await send(sessionId, 'Continue after switching to the third model.', 'fixture-tertiary');
   console.log('PASS session model selection survives reopening and default changes; new sessions and forks use the expected models.');
 } catch (error) {

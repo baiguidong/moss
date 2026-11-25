@@ -34,8 +34,7 @@ import { buildSessionInfo } from '@/lib/session-info';
 import { createWorkspaceDirectoryLoader } from '@/lib/workspace-directory-loader';
 import { firstMessageTitle, historyWithPendingFirstMessage, type PendingFirstMessage } from '@/lib/pending-first-message';
 import { initializeHomeResourceUsage, recordHomeResourceUse } from '@/lib/home-resource-usage';
-import { SessionTerminalActions } from '@/components/session-terminal-actions';
-import { SessionInfoButton } from '@/components/session-info';
+import { LiveSessionInfo } from '@/components/session-info';
 import { GlobalSessionSearch } from '@/components/global-session-search';
 import {
   resolveToolDisplayMode,
@@ -3330,7 +3329,7 @@ export default function App() {
                 permissionMode={activeDetail?.permissionMode ?? desktopSettings?.permissionMode ?? 'default'}
                 onPermissionModeChange={handleSessionPermissionModeChange}
                 permissionModeChanging={permissionModeSettingSessionId === activeSessionId}
-                currentModel={activeDetail?.modelOverride || modelSettings?.model || activeDetail?.model}
+                currentModel={activeDetail?.modelOverride || undefined}
                 onModelChange={activeDetail?.agentMode !== 'remote-direct' && !activeDetail?.isSubAgent ? handleSessionModelChange : undefined}
                 modelSettings={modelSettings}
                 sessionUsage={sessionUsage}
@@ -3370,13 +3369,13 @@ export default function App() {
                 onForkSession={handleForkSession}
                 forkingSession={forkingSessionId === activeSessionId}
                 forkDisabledReason={forkDisabledReason}
-                terminalActions={<SessionTerminalActions key={`terminal:${activeSessionId}`} session={activeDetail} />}
+                terminalSession={activeDetail?.id === activeSessionId ? activeDetail : null}
                 isPinned={pinnedIds.has(activeSessionId)}
                 onTogglePin={activeDetail && !activeDetail.isSubAgent ? () => handleTogglePin(activeSessionId) : undefined}
-                sessionInfo={<SessionInfoButton key={`info:${activeSessionId}`}
-                  session={activeDetail?.id === activeSessionId ? activeDetail : null}
+                sessionInfo={activeDetail && activeDetail.id === activeSessionId ? <LiveSessionInfo key={`info:${activeSessionId}`}
+                  session={activeDetail}
                   messages={chatMessages} childSessions={activeChildSessions}
-                  backgroundTasks={backgroundTasks[activeSessionId] ?? []} />}
+                  backgroundTasks={backgroundTasks[activeSessionId] ?? []} /> : undefined}
                 toolDisplayMode={activeToolDisplayMode}
                 sessionToolDisplayMode={activeDetail?.toolDisplayMode ?? null}
                 globalToolDisplayMode={globalToolDisplayMode}

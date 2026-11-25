@@ -3,7 +3,7 @@ import { SessionInteractions, SideQuestionPanel } from '@/components/chat/sessio
 import type { SessionInteraction } from '@/lib/session-interactions';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
-import { ComposerPanel } from '@/components/chat-area';
+import { ComposerPanel, SessionTabBar } from '@/components/chat-area';
 import { QueuedMessages } from '@/components/chat/queued-messages';
 import { WebComposerDraft } from '@/components/web-composer-draft';
 import { AppComposerContext } from '@/lib/app-composer';
@@ -31,13 +31,16 @@ api.agentDesktop = {
 const sends: any[] = [];
 const interactions: any[] = [];
 let mainStops = 0;
-function InteractionHarness({ text = '补充当前任务', files = [] }: { text?: string; files?: any[] }) {
+function InteractionHarness({ text = '补充当前任务', files = [], busy = true }: { text?: string; files?: any[]; busy?: boolean }) {
   const [value, setValue] = React.useState(text);
   const [items, setItems] = React.useState<SessionInteraction[]>([]);
   const [open, setOpen] = React.useState(false);
-  const anchor = React.useRef<HTMLDivElement>(null);
+
   const [attachments, setAttachments] = React.useState(files);
+  const commands = React.useRef<string[]>([]);
+  api.compactCommands = commands.current;
   api.setInteractionText = setValue;
+  api.openSideWindow = () => setOpen(true);
   api.closeSideWindow = () => setOpen(false);
   api.finishSideQuestion = () => setItems(list => list.map(item => item.kind === 'side_question' ? { ...item, status: 'truncated', response: '当前工具尚未返回结果。\n\n```json\n{"name":"Bash","input":{"command":"example only"}}\n```' } : item));
   api.agentDesktop.sessionInteraction = async ({ action, id }: any) => {
@@ -49,14 +52,23 @@ function InteractionHarness({ text = '补充当前任务', files = [] }: { text?
     setItems(list => [...list, { type: 'session_interaction', id: crypto.randomUUID(), kind, prompt, details, status: kind === 'steer' ? 'accepted' : 'running', timestamp: Date.now() }]);
   };
   return <div className="relative flex h-screen flex-col p-4">
+    <SessionTabBar title="主会话" leftCollapsed rightCollapsed leftPanelName="会话" rightPanelName="预览"
+      onToggleLeft={() => {}} onToggleRight={() => {}} toolDisplayMode="expanded" sessionToolDisplayMode={null}
+      globalToolDisplayMode="expanded" toolDisplaySettingBusy={false} messages={[]} childSessions={[]}
+      onOpenWorkers={() => {}} onSelectWorker={() => {}} onSideQuestion={() => setOpen(true)} />
     <div className="min-h-0 flex-1 p-4 text-sm text-muted-foreground">主任务正在处理文件…</div>
-    <div ref={anchor}><SessionInteractions sessionId="interactions" items={items} busy onRestore={item => setValue(item.prompt)} />
-    <ComposerPanel value={value} loading hasActiveSession sessionId="interactions" workspace="/workspace" sessionAgentMode="local"
+    <div><SessionInteractions sessionId="interactions" items={items} busy onRestore={item => setValue(item.prompt)} />
+    <ComposerPanel value={value} loading={busy} hasActiveSession sessionId="interactions" workspace="/workspace" sessionAgentMode="local"
       composerIntent="chat" onComposerIntentChange={() => {}} onChange={setValue} permissionMode="default" onPermissionModeChange={() => {}}
       attachments={attachments} onAttachmentsChange={setAttachments} onStop={() => { mainStops++; }}
-      onInteraction={send} onOpenSideQuestion={() => setOpen(true)} onAskSideQuestion={async prompt => { setOpen(true); await send('side_question', prompt); }}
+      modelSettings={{ model: 'default-model', availableModels: ['default-model', 'alternative-model'] }}
+      onModelChange={async () => {}}
+      onRunCommand={async command => { commands.current.push(command); }}
+      contextUsage={{ inputTokens: 31000, cacheRead: 0, cacheWrite: 0, outputTokens: 1000, used: 32000,
+        modelContext: { model: 'test-model', contextWindow: 100000, isDefault: false }, loadingCapacity: false }}
+      onInteraction={send} onAskSideQuestion={async prompt => { setOpen(true); await send('side_question', prompt); }}
       onSend={attachments => { sends.push({ text: value, files: attachments }); setValue(''); }} />
-    </div><SideQuestionPanel anchorRef={anchor} sessionId="interactions" items={items} open={open} onClose={() => setOpen(false)} onSend={prompt => send('side_question', prompt)} />
+    </div><SideQuestionPanel sessionId="interactions" items={items} open={open} onClose={() => setOpen(false)} onSend={prompt => send('side_question', prompt)} />
   </div>;
 }
 let latest: ComposerDraft;
@@ -242,25 +254,54 @@ function sideInput(text: string) {
   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, text);
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
+async function openSideQuestion() {
+  const more = document.querySelector<HTMLButtonElement>('[aria-label="打开会话操作"]')!;
+  more.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  await delay();
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(node => node.textContent === '侧问');
+  assert(item, 'Header menu does not include side questions');
+  item!.click();
+  await delay();
+}
 api.runSessionInteractionReview = async () => {
   const passed: string[] = [];
   render(<InteractionHarness key="live" />); await delay();
+  const toolbar = document.querySelector('.composer-toolbar')!;
+  const file = toolbar.querySelector('[aria-label="添加文件"]')!;
+  const resources = toolbar.querySelector<HTMLButtonElement>('button[aria-label^="选择资源"]')!;
+  const effort = toolbar.querySelector('[aria-label^="推理强度"]')!;
+  assert(file.nextElementSibling === resources, 'Resource picker should follow Add file');
+  const compact = toolbar.querySelector<HTMLButtonElement>('button[aria-label="压缩会话"]')!;
+  assert(document.querySelectorAll('button[aria-label^="选择资源"]').length === 1, 'Session has duplicate resource picker triggers');
+  const context = toolbar.querySelector('button[aria-label^="上下文用量"]')!;
+  assert(context.previousElementSibling?.classList.contains('session-model') && context.nextElementSibling === effort && effort.nextElementSibling === compact, 'Context, effort and compact should follow the model together');
+  compact.click(); await delay();
+  const confirm = document.querySelector<HTMLElement>('[role="dialog"][aria-label="确认压缩会话"]')!;
+  assert(confirm.getBoundingClientRect().bottom <= compact.getBoundingClientRect().top + 1 && !api.compactCommands.length, 'Compact should open a confirmation above the trigger');
+  confirm.querySelector<HTMLButtonElement>('button')!.click(); await delay();
+  assert(!api.compactCommands.length, 'Cancel dispatched a command');
+  compact.click(); await delay(); click('确认压缩'); await delay();
+  assert(api.compactCommands.join() === '/compact', 'Confirmation should dispatch exactly once');
+  resources.click(); await delay();
+  assert(document.querySelector('[role="dialog"][aria-label="选择资源"]'), 'Resource picker did not open from the footer');
+  click('确定'); await delay();
   assert(!document.querySelector('[aria-label="消息发送方式"]') && !document.body.textContent?.includes('下一轮'), 'Customer still needs to select a send mode');
   click('发送'); await delay();
   assert(interactions[0]?.kind === 'steer' && document.body.textContent?.includes('等待接收'), 'Supplement was queued or omitted');
   passed.push('主输入框只有发送，运行中自动补充当前任务');
 
-  api.setInteractionText('主任务草稿保留'); await delay(); click('打开侧问'); await delay();
-  const bounds = document.querySelector('[aria-label="侧问窗口"]')!.getBoundingClientRect();
-  assert(bounds.bottom <= document.querySelector('[aria-label="打开侧问"]')!.getBoundingClientRect().top, 'Side window covers the main send controls');
+  api.setInteractionText('主任务草稿保留'); await delay(); await openSideQuestion();
+  const bounds = document.querySelector('[role="dialog"]')!.getBoundingClientRect();
+  assert(Math.abs(bounds.y + bounds.height / 2 - innerHeight / 2) < 2, 'Side question is not centered');
+  assert(document.activeElement?.getAttribute('aria-label') === '侧问内容', 'Header menu took focus from side input');
   sideInput('当前工具完成了吗？'); await delay(); click('发送侧问'); await delay();
   assert(interactions.at(-1).kind === 'side_question' && document.body.textContent?.includes('正在回答'), 'Side question was not sent independently');
   const mainInput = [...document.querySelectorAll('textarea')].find(node => node.getAttribute('aria-label') !== '侧问内容')!;
   assert(mainInput.value === '主任务草稿保留', 'Side send erased the main draft');
-  sideInput('稍后继续问'); await delay(); click('收起侧问'); await delay(); click('打开侧问'); await delay();
+  sideInput('稍后继续问'); await delay(); click('收起侧问'); await delay(); await openSideQuestion();
   assert((document.querySelector('[aria-label="侧问内容"]') as HTMLTextAreaElement).value === '稍后继续问', 'Closing window erased side draft');
   click('取消侧问'); await delay(); assert(mainStops === 0 && document.body.textContent?.includes('已取消'), 'Cancel affected main task');
-  passed.push('底部入口打开独立侧问窗口，主草稿保留，收起保留侧问草稿，取消不影响主任务');
+  passed.push('顶部菜单打开独立侧问窗口，主草稿保留，收起保留侧问草稿，取消不影响主任务');
 
   click('收起侧问'); await delay(); api.setInteractionText('/btw 解释一下'); await delay(); click('发送'); await delay();
   assert(interactions.at(-1).prompt === '解释一下', '/btw was sent as a main prompt');
@@ -273,7 +314,7 @@ api.runSessionInteractionReview = async () => {
   click('发送'); await delay();
   assert(interactions.at(-1).kind === 'steer' && interactions.at(-1).details.files[0].path === '/workspace/report.txt', 'Attachment did not enter the current-task supplement');
   passed.push('运行中附件随同补充发送，不要求客户选择发送方式');
-  render(<InteractionHarness key="screenshot" text="主任务继续处理，保留这段草稿" />); await delay();
-  click('打开侧问'); await delay(); sideInput('这一步为什么这样处理？'); await delay(); click('发送侧问'); await delay(); api.finishSideQuestion(); await delay();
+  render(<InteractionHarness key="screenshot" busy={false} text="主任务继续处理，保留这段草稿" />); await delay();
+  await openSideQuestion(); sideInput('这一步为什么这样处理？'); await delay(); click('发送侧问'); await delay(); api.finishSideQuestion(); await delay();
   return passed;
 };

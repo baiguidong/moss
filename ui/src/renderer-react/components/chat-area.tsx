@@ -11,6 +11,9 @@ import { WindowToolbarContext } from '@/components/window-chrome';
 import {
   Activity,
   ArrowLeft,
+  Download,
+  Ellipsis,
+  ListTree,
   Bot,
   Check,
   ChevronDown,
@@ -28,6 +31,7 @@ import {
   Paperclip,
   Plus,
   Send,
+  Shrink,
   Square,
   Hammer,
   Terminal,
@@ -47,7 +51,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
+  DropdownMenuPortal,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
@@ -57,6 +61,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { MessageListPane, type VirtualMessageListHandle } from "@/components/chat/message-list";
 import { ForkSessionButton } from "@/components/chat/fork-session-button";
@@ -77,8 +82,10 @@ import {
 } from "@/components/coordinator-workers-view";
 import { FilePreview } from "@/components/file-preview";
 import { PermissionModeSelector } from "@/components/permission-mode-selector";
+import { SessionTerminalActions } from "./session-terminal-actions";
 import { SessionEffortSelector } from "@/components/session-effort-selector";
-import { ModelSelector, SessionCommandLauncher, type SessionOutlineEntry, type SessionUsageSummary } from "@/components/session-command-launcher";
+import { SessionDialog } from "./session-dialog";
+import { ModelSelector, ContextUsageDialog, OutlineDialog, type SessionOutlineEntry, type SessionUsageSummary } from "@/components/session-command-launcher";
 import { collectFileAttachments, mergeFileAttachments } from "@/lib/file-attachments";
 import type { ComposerChoices, QueuedMessage } from '@/lib/composer-queue';
 import { QueuedMessages } from '@/components/chat/queued-messages';
@@ -191,7 +198,11 @@ export function SessionTabBar({
   onToolDisplayModeChange,
   toolDisplaySettingBusy,
   messages,
-  terminalActions,
+  terminalSession,
+  sessionInfo,
+  onSideQuestion,
+  onOutline,
+  onExport,
   isPinned = false,
   onTogglePin,
   childSessions,
@@ -216,7 +227,11 @@ export function SessionTabBar({
   onToolDisplayModeChange?: (mode: ToolDisplayMode | null) => void;
   toolDisplaySettingBusy: boolean;
   messages: TranscriptRenderMessage[];
-  terminalActions?: React.ReactNode;
+  terminalSession?: SessionSummary | null;
+  sessionInfo?: React.ReactNode;
+  onSideQuestion?: () => void;
+  onOutline?: () => void;
+  onExport?: () => Promise<void>;
   isPinned?: boolean;
   onTogglePin?: () => void;
   childSessions: SessionSummary[];
@@ -236,6 +251,13 @@ export function SessionTabBar({
     setTranscriptCopied(true);
     window.setTimeout(() => setTranscriptCopied(false), 1200);
   }, [messages]);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const [statusOpen, setStatusOpen] = React.useState(false);
+  const openingPanel = React.useRef(false);
+  const openPanel = (action: () => void) => {
+    openingPanel.current = true;
+    action();
+  };
   const toolbar = (
     <div
       className={cn('@container/session-header relative z-40 shrink-0', toolbarTarget
@@ -291,92 +313,44 @@ export function SessionTabBar({
 
         <div className="flex shrink-0 items-center gap-1" role="group" aria-label="会话功能按钮">
           {appWorkbenchAction}
-          {onTogglePin ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={cn("h-8 w-8 rounded-full", isPinned && "text-primary")}
-                  onClick={onTogglePin}
-                  aria-label={isPinned ? "取消置顶会话" : "置顶会话"}
-                  aria-pressed={isPinned}
-                >
-                  <Pin className="h-4 w-4" fill={isPinned ? "currentColor" : "none"} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{isPinned ? "取消置顶会话" : "置顶会话"}</TooltipContent>
-            </Tooltip>
-          ) : null}
-          {terminalActions}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="inline-flex">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 rounded-full"
-                  onClick={handleCopyTranscript}
-                  aria-label="复制全部对话"
-                >
-                  {transcriptCopied ? (
-                    <Check className="h-4 w-4 text-emerald-500" />
-                  ) : (
-                    <Copy className="h-4 w-4" />
-                  )}
-                </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>{transcriptCopied ? "已复制全部对话" : "复制全部对话"}</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="inline-flex">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className={cn(
-                        "h-8 w-8 rounded-full",
-                        toolDisplayMode !== "expanded" && "text-primary",
-                      )}
-                      disabled={!onToolDisplayModeChange || toolDisplaySettingBusy}
-                      aria-label={`工具展示：${TOOL_DISPLAY_MODE_LABELS[toolDisplayMode]}`}
-                    >
-                      <Wrench className={cn("h-4 w-4", toolDisplaySettingBusy && "animate-pulse")} />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-48">
-                    <DropdownMenuLabel className="text-xs text-muted-foreground">当前会话工具展示</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuRadioGroup
-                      value={sessionToolDisplayMode ?? "global"}
-                      onValueChange={(value) => {
-                        onToolDisplayModeChange?.(
-                          value === "global" ? null : value as ToolDisplayMode,
-                        );
-                      }}
-                    >
-                      <DropdownMenuRadioItem value="global">
-                        跟随全局
-                        <span className="ml-auto text-[10px] text-muted-foreground">
-                          {TOOL_DISPLAY_MODE_LABELS[globalToolDisplayMode]}
-                        </span>
-                      </DropdownMenuRadioItem>
-                      <DropdownMenuRadioItem value="expanded">展开</DropdownMenuRadioItem>
-                      <DropdownMenuRadioItem value="collapsed">折叠</DropdownMenuRadioItem>
-                      <DropdownMenuRadioItem value="merged">合并</DropdownMenuRadioItem>
+          <DropdownMenu modal={false} open={menuOpen} onOpenChange={setMenuOpen}>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" aria-label="打开会话操作" title="会话操作">
+                {transcriptCopied ? <Check className="size-4 text-primary" /> : <Ellipsis className="size-4" />}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48" onCloseAutoFocus={event => {
+              if (openingPanel.current) event.preventDefault();
+              openingPanel.current = false;
+            }}>
+              <DropdownMenuItem disabled={!onSideQuestion} onSelect={() => onSideQuestion && openPanel(onSideQuestion)}><MessageSquareText />侧问</DropdownMenuItem>
+              <DropdownMenuItem disabled={!onOutline} onSelect={() => onOutline && openPanel(onOutline)}><ListTree />会话大纲</DropdownMenuItem>
+              <DropdownMenuItem disabled={!sessionInfo} onSelect={() => openPanel(() => setStatusOpen(true))}><Activity />会话状态</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger disabled={!onToolDisplayModeChange || toolDisplaySettingBusy}>
+                  <Wrench />工具展示<span className="ml-auto text-xs text-muted-foreground">{TOOL_DISPLAY_MODE_LABELS[toolDisplayMode]}</span>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuPortal>
+                  <DropdownMenuSubContent aria-label="工具展示" collisionPadding={8}>
+                    <DropdownMenuRadioGroup value={sessionToolDisplayMode ?? 'global'} onValueChange={value =>
+                      onToolDisplayModeChange?.(value === 'global' ? null : value as ToolDisplayMode)}>
+                      <DropdownMenuRadioItem value="global">跟随全局（{TOOL_DISPLAY_MODE_LABELS[globalToolDisplayMode]}）</DropdownMenuRadioItem>
+                      {(['expanded', 'collapsed', 'merged'] as const).map(mode =>
+                        <DropdownMenuRadioItem key={mode} value={mode}>{TOOL_DISPLAY_MODE_LABELS[mode]}</DropdownMenuRadioItem>)}
                     </DropdownMenuRadioGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              工具展示：{TOOL_DISPLAY_MODE_LABELS[toolDisplayMode]}
-              {sessionToolDisplayMode ? "（当前会话）" : "（跟随全局）"}
-            </TooltipContent>
-          </Tooltip>
+                  </DropdownMenuSubContent>
+                </DropdownMenuPortal>
+              </DropdownMenuSub>
+              {onTogglePin && <DropdownMenuItem onSelect={onTogglePin}><Pin />{isPinned ? '取消置顶会话' : '置顶会话'}</DropdownMenuItem>}
+              <DropdownMenuItem disabled={!messages.length} onSelect={() => void handleCopyTranscript()}><Copy />复制全部对话</DropdownMenuItem>
+              <DropdownMenuItem disabled={!onExport} onSelect={() => void onExport?.()}><Download />导出会话</DropdownMenuItem>
+              <SessionTerminalActions session={terminalSession} onOpened={() => setMenuOpen(false)} />
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {statusOpen && <SessionDialog wide title="会话状态" onClose={() => setStatusOpen(false)}>
+            {sessionInfo}
+          </SessionDialog>}
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex">
@@ -482,16 +456,11 @@ export function ComposerPanel({
   installedAssistants,
   onInteraction,
   onAskSideQuestion,
-  onOpenSideQuestion,
   onRunCommand,
-  onExport,
-  outline = [],
-  onJumpToOutlineItem,
   currentModel,
   onModelChange,
   modelSettings,
   sessionUsage,
-  sessionInfo,
   selectedAssistant,
   onSelectAssistant,
   onClearAssistant,
@@ -538,16 +507,11 @@ export function ComposerPanel({
   onStop?: () => void;
   onInteraction?: SendInteraction;
   onAskSideQuestion?: (prompt: string) => Promise<void>;
-  onOpenSideQuestion?: () => void;
   onRunCommand?: (prompt: string) => Promise<void>;
-  onExport?: () => Promise<void>;
-  outline?: SessionOutlineEntry[];
-  onJumpToOutlineItem?: (messageId: string) => void;
   currentModel?: string;
   onModelChange?: (model: string) => Promise<void>;
   modelSettings?: SessionModelSettings;
   sessionUsage?: SessionUsageSummary | null;
-  sessionInfo?: React.ReactNode;
   className?: string;
   contextUsage?: ContextUsageInfo | null;
   homeComposerMode?: 'chat' | 'project-create';
@@ -581,6 +545,8 @@ export function ComposerPanel({
   const { selection: appSelection, select: selectAppResource } = React.useContext(AppComposerContext);
   const appResources = useAppComposerResources(sessionId, workspace, (hasActiveSession ? sessionAgentMode : newSessionMode) === 'local');
   const isHomeComposer = !hasActiveSession;
+  const [contextOpen, setContextOpen] = React.useState(false);
+  React.useEffect(() => setContextOpen(false), [sessionId]);
   const latestValue = React.useRef(value); latestValue.current = value;
   const latestSelection = React.useRef(appSelection); latestSelection.current = appSelection;
   const [interactionPending, setInteractionPending] = React.useState(false);
@@ -978,7 +944,7 @@ export function ComposerPanel({
     if (submitDisabled || pendingImports.current > 0) return;
     if (delivery !== 'send' && onInteraction) {
       if (interactionLock.current) return;
-      if (delivery === 'side_question' && hasDeliveryExtras) { setAttachmentError('侧问不携带附件。请点击下方“侧问”，当前输入会保留。'); return; }
+      if (delivery === 'side_question' && hasDeliveryExtras) { setAttachmentError('侧问不携带附件。请打开顶部“···”中的“侧问”，当前输入会保留。'); return; }
       const prompt = delivery === 'side_question' ? value.trim().replace(/^\/btw(?:\s|$)/i, '').trim() : value.trim();
       if (!prompt && !attachments.length) { setAttachmentError('请输入内容。'); return; }
       interactionLock.current = true; setInteractionPending(true); setAttachmentError('');
@@ -1270,6 +1236,7 @@ export function ComposerPanel({
           }}
           disabled={Boolean(readOnlyReason)}
           ref={textareaRef}
+          data-session-composer-input={isHomeComposer ? undefined : true}
           className={cn(
             "resize-none border-0 bg-transparent px-4 pt-4 text-sm leading-6 text-foreground caret-primary placeholder:text-muted-foreground/70 focus-visible:ring-0 sm:px-5",
             isHomeComposer
@@ -1495,38 +1462,11 @@ export function ComposerPanel({
             </div>
           )}
 
-          <div className="composer-toolbar flex flex-wrap items-center justify-between gap-2">
+          <div key={sessionId} className="composer-toolbar flex flex-wrap items-center justify-between gap-2">
             <div className="composer-toolbar-options flex min-w-0 flex-wrap items-center gap-2">
-              <SessionCommandLauncher
-                onOpenSideQuestion={onOpenSideQuestion}
-                onCompact={onRunCommand ? async () => { await onRunCommand('/compact'); } : undefined}
-                onExport={onExport}
-                permissionMode={permissionMode}
-                onPermissionModeChange={onPermissionModeChange}
-                permissionModeChanging={permissionModeChanging}
-                sessionInfo={sessionInfo}
-                effortControl={sessionId ? <SessionEffortSelector key={`effort-menu:${sessionId}`} sessionId={sessionId} disabled={Boolean(readOnlyReason)} busy={loading} /> : undefined}
-                contextUsage={contextUsage}
-                currentModel={currentModel}
-                onModelChange={onModelChange}
-                modelSettings={modelSettings}
-                sessionUsage={sessionUsage}
-                outline={outline}
-                onJumpToOutlineItem={onJumpToOutlineItem}
-                disabled={Boolean(readOnlyReason) || !hasActiveSession}
-              />
-              <button
-                type="button"
-                onClick={handleSelectFile}
-                className="composer-control inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border/70 bg-muted/35 px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                title="选择文件"
-                aria-label="选择文件"
-              >
-                <Plus className="composer-control-detail h-3 w-3" />
-                <FileText className="h-3.5 w-3.5 shrink-0" />
-                <span className="composer-control-label">文件</span>
+              <button type="button" onClick={handleSelectFile} className="session-composer-icon" title="添加文件" aria-label="添加文件">
+                <Plus className="size-4" />
               </button>
-
               <ComposerResourceSelectionArea
                 appResources={appResources.items}
                 appResourcesAvailable={appResources.available}
@@ -1547,7 +1487,7 @@ export function ComposerPanel({
               />
 
               <PermissionModeSelector
-                key={sessionId || 'new-session'}
+                centered
                 value={permissionMode}
                 onChange={onPermissionModeChange}
                 disabled={loading || permissionModeChanging || Boolean(readOnlyReason)}
@@ -1555,7 +1495,6 @@ export function ComposerPanel({
             </div>
 
             <div className="composer-toolbar-actions ml-auto flex shrink-0 items-center justify-end gap-2">
-              {contextUsage && <ContextUsageRing usage={contextUsage} />}
               {loading && (
                 <Button
                   variant="outline"
@@ -1570,12 +1509,17 @@ export function ComposerPanel({
               )}
 
               <ModelSelector
+                compact
                 currentModel={currentModel}
                 onModelChange={onModelChange}
                 modelSettings={modelSettings}
                 disabled={Boolean(readOnlyReason) || loading || !hasActiveSession}
               />
 
+              {contextUsage && <ContextUsageRing usage={contextUsage} onClick={() => setContextOpen(true)} />}
+              {contextOpen && <ContextUsageDialog open usage={contextUsage} sessionUsage={sessionUsage} onClose={() => setContextOpen(false)} />}
+              {sessionId && <SessionEffortSelector sessionId={sessionId} disabled={Boolean(readOnlyReason)} busy={loading} />}
+              <CompactSessionButton onRunCommand={readOnlyReason ? undefined : onRunCommand} />
               <Button
                 className="composer-control composer-send h-9 rounded-full px-3.5 sm:px-4"
                 disabled={submitDisabled}
@@ -2176,7 +2120,46 @@ const TASK_STATUS_LABELS: Record<string, string> = {
   killed: "已停止",
 };
 
-function ContextUsageRing({ usage }: { usage: ContextUsageInfo }) {
+function CompactSessionButton({ onRunCommand }: { onRunCommand?: (command: string) => Promise<void> }) {
+  const [open, setOpen] = React.useState(false);
+  const [pending, setPending] = React.useState(false);
+  const disabled = !onRunCommand || pending;
+
+  const confirm = async () => {
+    if (disabled) return;
+    setOpen(false);
+    setPending(true);
+    try { await onRunCommand('/compact'); }
+    finally { setPending(false); }
+  };
+
+  return <Popover open={open && !disabled} onOpenChange={setOpen}>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <PopoverTrigger asChild>
+          <button type="button" disabled={disabled} aria-label="压缩会话"
+            className="session-composer-icon cursor-pointer focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default">
+            <Shrink className="size-4" />
+          </button>
+        </PopoverTrigger>
+      </TooltipTrigger>
+      {!open && <TooltipContent side="top">压缩会话</TooltipContent>}
+    </Tooltip>
+    <PopoverContent side="top" align="end" sideOffset={6} collisionPadding={8} aria-label="确认压缩会话"
+      className="w-60 max-w-[calc(100vw-1rem)] space-y-3 rounded-xl">
+      <div className="space-y-1">
+        <p className="text-sm font-medium">压缩会话？</p>
+        <p className="text-xs text-muted-foreground">将较早的对话整理成摘要，腾出上下文空间。</p>
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>取消</Button>
+        <Button size="sm" disabled={disabled} onClick={() => void confirm()}>确认压缩</Button>
+      </div>
+    </PopoverContent>
+  </Popover>;
+}
+
+function ContextUsageRing({ usage, onClick }: { usage: ContextUsageInfo; onClick: () => void }) {
   const { pct: resolvedPct, summary, details } = contextUsagePresentation(usage);
   const pct = resolvedPct ?? 0;
   const colorClass = pct >= 0.9
@@ -2189,7 +2172,7 @@ function ContextUsageRing({ usage }: { usage: ContextUsageInfo }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div className={cn("flex cursor-default items-center", colorClass)} aria-label={summary}>
+        <button type="button" onClick={onClick} className={cn("session-composer-icon", colorClass)} aria-label={`上下文用量：${summary}`} aria-haspopup="dialog">
           <svg width="18" height="18" viewBox="0 0 18 18" className="-rotate-90">
             <circle cx="9" cy="9" r={radius} fill="none" strokeWidth="2.5" className="stroke-border" />
             <circle
@@ -2203,7 +2186,7 @@ function ContextUsageRing({ usage }: { usage: ContextUsageInfo }) {
               strokeDasharray={`${circumference * pct} ${circumference}`}
             />
           </svg>
-        </div>
+        </button>
       </TooltipTrigger>
       <TooltipContent side="top" className="text-xs">
         <div>
@@ -2463,7 +2446,7 @@ export function ChatArea({
   onForkSession,
   forkingSession = false,
   forkDisabledReason,
-  terminalActions,
+  terminalSession,
   sessionInfo,
   isPinned = false,
   onTogglePin,
@@ -2556,7 +2539,7 @@ export function ChatArea({
   onForkSession?: () => void;
   forkingSession?: boolean;
   forkDisabledReason?: string | null;
-  terminalActions?: React.ReactNode;
+  terminalSession?: SessionSummary | null;
   sessionInfo?: React.ReactNode;
   isPinned?: boolean;
   onTogglePin?: () => void;
@@ -2579,12 +2562,12 @@ export function ChatArea({
   homeComposerMode?: 'chat' | 'project-create';
   homeShortcuts?: HomeShortcutOptions;
 }) {
-  const composerDock = React.useRef<HTMLDivElement>(null);
+  const [outlineOpen, setOutlineOpen] = React.useState(false);
   const toolCallDrafts = useSessionToolCallDrafts(sessionId);
   const pendingDraftTools = React.useMemo(() => new Set(toolCallDrafts.filter(d => d.status === 'draft').map(d => d.toolCall!.toolUseId)), [toolCallDrafts]);
   const [sideOpen, setSideOpen] = React.useState(false);
   const [commandNotice, setCommandNotice] = React.useState<{ title: string; message: string } | null>(null);
-  React.useEffect(() => setSideOpen(false), [sessionId]);
+  React.useEffect(() => { setSideOpen(false); setOutlineOpen(false); }, [sessionId]);
   React.useEffect(() => setCommandNotice(null), [sessionId]);
   const [attachments, setAttachments] = React.useState<Array<{ name: string; path: string }>>([]);
   const virtualListRef = React.useRef<VirtualMessageListHandle | null>(null);
@@ -2824,7 +2807,17 @@ export function ChatArea({
         onToolDisplayModeChange={onToolDisplayModeChange}
         toolDisplaySettingBusy={toolDisplaySettingBusy}
         messages={messages}
-        terminalActions={terminalActions}
+        key={sessionId}
+        terminalSession={terminalSession}
+        sessionInfo={sessionInfo}
+        onSideQuestion={onInteraction && !readOnlyReason ? () => setSideOpen(true) : undefined}
+        onOutline={() => {
+          appWorkbench.close();
+          setAgentTeamsOpen(false);
+          setCoordinatorWorkersOpen(false);
+          setOutlineOpen(true);
+        }}
+        onExport={onExport || handleExportTranscript}
         isPinned={isPinned}
         onTogglePin={onTogglePin}
         childSessions={childSessions}
@@ -2900,7 +2893,7 @@ export function ChatArea({
       {appWorkbench.open && conversationRequest && <div className="max-h-[45%] shrink-0 overflow-y-auto px-4 py-2" aria-label="会话待处理请求">{conversationRequest}</div>}
 
       {!showAgentTeamsWorkbench && !showCoordinatorWorkers ? (
-        <div ref={composerDock} className="shrink-0 min-w-0 bg-background/94 py-3 backdrop-blur">
+        <div className="shrink-0 min-w-0 bg-background/94 py-3 backdrop-blur">
           <div className={cn(
             "mx-auto w-full min-w-0",
             MAIN_CHAT_CONTENT_CLASS_NAME,
@@ -2939,17 +2932,12 @@ export function ChatArea({
             permissionModeChanging={permissionModeChanging}
             onSend={(files, skills, agent) => { appWorkbench.close(); onSend(files, undefined, skills, agent); }}
             onInteraction={onInteraction}
-            onOpenSideQuestion={onInteraction ? () => setSideOpen(true) : undefined}
             onAskSideQuestion={onInteraction ? async prompt => { setSideOpen(true); await onInteraction('side_question', prompt); } : undefined}
             onRunCommand={onRunCommand}
-            onExport={onExport || handleExportTranscript}
             currentModel={currentModel}
             onModelChange={onModelChange}
             modelSettings={modelSettings}
             sessionUsage={sessionUsage}
-            outline={outline}
-            onJumpToOutlineItem={handleJumpToOutlineItem}
-            sessionInfo={sessionInfo}
             onStop={onStop}
             installedAssistants={installedAssistants}
             selectedAssistant={selectedAssistant ?? null}
@@ -2964,7 +2952,8 @@ export function ChatArea({
         </div>
       ) : null}
       </AppConversationFlow>
-      {sessionId && onInteraction && <SideQuestionPanel anchorRef={composerDock} key={sessionId} sessionId={sessionId} items={interactions} open={sideOpen} onClose={() => setSideOpen(false)} onSend={prompt => onInteraction('side_question', prompt)} readOnlyReason={readOnlyReason} />}
+      <OutlineDialog open={outlineOpen} outline={outline} onJump={handleJumpToOutlineItem} onClose={() => setOutlineOpen(false)} />
+      {sessionId && onInteraction && <SideQuestionPanel key={sessionId} sessionId={sessionId} items={interactions} open={sideOpen} onClose={() => setSideOpen(false)} onSend={prompt => onInteraction('side_question', prompt)} readOnlyReason={readOnlyReason} />}
     </div>
   );
 }

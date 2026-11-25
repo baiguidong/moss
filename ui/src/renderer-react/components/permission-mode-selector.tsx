@@ -1,7 +1,8 @@
 import * as React from 'react';
-import { ChevronDown, ShieldCheck } from 'lucide-react';
+import { Check, ChevronDown, ShieldCheck } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 
+import { SessionDialog } from './session-dialog';
 import { cn } from '@/lib/utils';
 import {
   DropdownMenu,
@@ -34,12 +35,15 @@ export function PermissionModeSelector({
   onChange,
   disabled = false,
   compact = true,
+  centered = false,
 }: {
   value: PermissionMode;
   onChange: (mode: PermissionMode) => void | Promise<void>;
   disabled?: boolean;
   compact?: boolean;
+  centered?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
   const [confirmBypass, setConfirmBypass] = useState(false);
   const confirmation = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -78,7 +82,22 @@ export function PermissionModeSelector({
 
   return (
     <>
-    <DropdownMenu>
+    {centered ? <>
+      <button type="button" disabled={disabled} onClick={() => setOpen(true)} aria-haspopup="dialog"
+        aria-label={`权限模式：${getPermissionModeLabel(value)}`} title={getPermissionModeLabel(value)}
+        className="session-permission">
+        <ShieldCheck className="size-3.5 shrink-0" /><span className="truncate">{getPermissionModeLabel(value)}</span>
+      </button>
+      {open && <SessionDialog title="权限模式" onClose={() => setOpen(false)}>
+        <div className="p-2">{PERMISSION_MODE_OPTIONS.map(option =>
+          <button key={option.id} type="button" disabled={disabled} aria-pressed={value === option.id}
+            className="flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left hover:bg-muted"
+            onClick={() => { setOpen(false); selectMode(option.id); }}>
+            <span><span className="block text-sm">{option.label}</span><span className="text-xs text-muted-foreground">{option.description}</span></span>
+            {value === option.id && <Check className="size-4 shrink-0 text-primary" />}
+          </button>)}</div>
+      </SessionDialog>}
+    </> : <DropdownMenu>
       <DropdownMenuTrigger asChild disabled={disabled}>
         <button
           type="button"
@@ -109,7 +128,7 @@ export function PermissionModeSelector({
           ))}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
-    </DropdownMenu>
+    </DropdownMenu>}
     <dialog ref={confirmation} aria-labelledby={titleId} aria-describedby={descriptionId}
       onCancel={() => setConfirmBypass(false)} onClose={() => setConfirmBypass(false)}
       className="fixed inset-0 m-auto w-[calc(100%_-_2rem)] max-w-md rounded-xl border border-border bg-card p-6 text-foreground shadow-2xl backdrop:bg-black/45">

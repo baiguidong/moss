@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { MessageSquareText, Send, X } from 'lucide-react';
+import { Send } from 'lucide-react';
+import { SessionDialog } from '../session-dialog';
 import { MarkdownRenderer } from '../markdown/markdown-renderer';
 import type { SessionInteraction } from '@/lib/session-interactions';
 
@@ -23,34 +24,19 @@ export function SessionInteractions({ sessionId, items, busy, onRestore }: { ses
 }
 
 /** Kept mounted while closed so a side draft never replaces the main composer. */
-export function SideQuestionPanel({ sessionId, items, open, onClose, onSend, readOnlyReason, anchorRef }: {
+export function SideQuestionPanel({ sessionId, items, open, onClose, onSend, readOnlyReason }: {
   sessionId: string; items: SessionInteraction[]; open: boolean; onClose: () => void;
   onSend: (prompt: string) => Promise<void>; readOnlyReason?: string | null;
-  anchorRef?: React.RefObject<HTMLDivElement | null>;
 }) {
   const [draft, setDraft] = React.useState('');
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState('');
   const input = React.useRef<HTMLTextAreaElement>(null);
   const answerList = React.useRef<HTMLDivElement>(null);
-  const [bottom, setBottom] = React.useState(160);
   const lock = React.useRef(false);
   const draftRef = React.useRef(draft); draftRef.current = draft;
   const answers = items.filter(item => item.kind === 'side_question');
   const running = answers.some(item => item.status === 'running');
-  React.useEffect(() => {
-    if (!open) return;
-    const previous = document.activeElement as HTMLElement | null;
-    input.current?.focus();
-    return () => { if (previous?.isConnected) previous.focus(); };
-  }, [open]);
-  React.useLayoutEffect(() => {
-    if (!open || !anchorRef?.current) return;
-    const anchor = anchorRef.current;
-    const measure = () => setBottom(anchor.getBoundingClientRect().height + 12);
-    measure(); const observer = new ResizeObserver(measure); observer.observe(anchor);
-    return () => observer.disconnect();
-  }, [open, anchorRef]);
   React.useEffect(() => {
     if (open && answerList.current) answerList.current.scrollTop = answerList.current.scrollHeight;
   }, [open, answers.length, answers.at(-1)?.status]);
@@ -63,12 +49,8 @@ export function SideQuestionPanel({ sessionId, items, open, onClose, onSend, rea
     catch (error) { setError(String((error as Error).message || error)); }
     finally { lock.current = false; setPending(false); }
   };
-  return <aside hidden={!open} role="dialog" aria-modal="false" aria-label="侧问窗口" style={{ bottom, height: `min(580px, calc(100% - ${bottom + 12}px))` }} className={open ? 'absolute right-3 z-50 flex w-[min(420px,calc(100%_-_1.5rem))] min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl' : 'hidden'}
-    onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
-    <div className="flex shrink-0 items-center justify-between border-b border-border/60 px-4 py-3">
-      <span className="flex items-center gap-2 text-sm font-medium"><MessageSquareText className="h-4 w-4" />侧问</span>
-      <button type="button" aria-label="收起侧问" onClick={onClose} className="rounded p-1 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></button>
-    </div>
+  if (!open) return null;
+  return <SessionDialog title="侧问" closeLabel="收起侧问" onClose={onClose} className="flex h-[min(480px,60dvh)] flex-col">
     <div ref={answerList} className="min-h-0 flex-1 overflow-y-auto p-4">
       {!answers.length && <p className="text-sm text-muted-foreground">随时问问当前进展，主任务会继续进行。</p>}
       {answers.map((item, index) => <details key={item.id} open={item.status === 'running' || index === answers.length - 1} className="mb-3 rounded-lg border border-border/60 p-3 text-sm">
@@ -81,7 +63,7 @@ export function SideQuestionPanel({ sessionId, items, open, onClose, onSend, rea
       </details>)}
     </div>
     <form className="shrink-0 border-t border-border/60 p-3" onSubmit={event => { event.preventDefault(); void submit(); }}>
-      <textarea ref={input} aria-label="侧问内容" placeholder="想了解什么？" value={draft} disabled={Boolean(readOnlyReason)} onChange={event => setDraft(event.target.value)}
+      <textarea data-initial-focus ref={input} aria-label="侧问内容" placeholder="想了解什么？" value={draft} disabled={Boolean(readOnlyReason)} onChange={event => setDraft(event.target.value)}
         className="min-h-20 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary/60"
         onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } }} />
       <div className="mt-2 flex items-center justify-between gap-2">
@@ -90,5 +72,5 @@ export function SideQuestionPanel({ sessionId, items, open, onClose, onSend, rea
       </div>
       {(error || readOnlyReason) && <p role="alert" className="mt-2 text-xs text-destructive">{error || readOnlyReason}</p>}
     </form>
-  </aside>;
+  </SessionDialog>;
 }
