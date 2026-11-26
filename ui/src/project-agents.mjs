@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
 import { runInKeyedQueue } from './shared/keyed-queue.mjs';
 import * as fs from 'node:fs/promises';
 
@@ -39,9 +38,8 @@ export async function hasProjectAgentsFile(directory) {
 }
 
 const fileQueue = new Map();
-const projectDefaults = readFileSync(new URL('./project-session-defaults.md', import.meta.url), 'utf8');
 
-export function ensureProjectAgentsFile(directory, instructions = '', { creating = false } = {}) {
+export function ensureProjectAgentsFile(directory, instructions = '') {
   const filePath = projectAgentsPath(directory);
   return runInKeyedQueue(fileQueue, filePath, async () => {
     try {
@@ -49,11 +47,7 @@ export function ensureProjectAgentsFile(directory, instructions = '', { creating
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
-    let content = normalizeAgentsText(instructions);
-    const defaults = projectDefaults.trim();
-    if (creating && !content.includes(defaults)) {
-      content += `\n${defaults}\n`;
-    }
+    const content = normalizeAgentsText(instructions);
     try {
       await fs.writeFile(filePath, content, { encoding: 'utf8', flag: 'wx' });
     } catch (error) {

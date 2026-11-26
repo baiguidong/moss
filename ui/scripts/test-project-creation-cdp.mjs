@@ -30,6 +30,8 @@ async function until(fn, label, timeout = 120000) {
 }
 
 const instructionProbe = '核对本轮项目指令'
+const projectSessionDefaults = (await fs.readFile(new URL('../src/project-session-defaults.md', import.meta.url), 'utf8')).trim()
+const serializedProjectSessionDefaults = JSON.stringify(projectSessionDefaults).slice(1, -1)
 const probeRequests = []
 const workspaceCheckId = randomUUID()
 const previewId = randomUUID()
@@ -51,6 +53,7 @@ const server = createServer(async (request, response) => {
       assert.ok(tool, 'ProjectPlan was not included in the model request')
       assert.equal(tool.input_schema.properties?.firstTask, undefined)
       assert.match(tool.input_schema.properties?.instructions?.description || '', /真实换行/)
+      assert.ok(!JSON.stringify(body.system).includes(serializedProjectSessionDefaults), 'project creation does not receive project session instructions')
     }
     const toolResults = body.messages?.flatMap(message => Array.isArray(message.content) ? message.content : []) || []
     const workspaceCheck = toolResults.find(block => block.type === 'tool_result' && block.tool_use_id === workspaceCheckId)
@@ -173,10 +176,12 @@ try {
     for (const body of probeRequests.slice(before)) {
       const request = JSON.stringify(body)
       const text = JSON.stringify(expectedDocument.trim()).slice(1, -1)
+      const system = JSON.stringify(body.system)
       assert.equal(JSON.stringify(body.messages).split(text).length - 1, 1, 'expected the entire workspace document once')
       assert.equal(request.split(expectedDocument.includes(sharedRule) ? sharedRule : expectedDocument.trim().split('\n').at(-1)).length - 1, 1)
-      assert.ok(!JSON.stringify(body.system).includes('[Project context]'))
-      assert.ok(!JSON.stringify(body.system).includes('[Project memory:'))
+      assert.equal(system.split(serializedProjectSessionDefaults).length - 1, projectSession ? 1 : 0, 'expected the fixed prompt only for project sessions')
+      assert.ok(!system.includes('[Project context]'))
+      assert.ok(!system.includes('[Project memory:'))
       if (absentRule) assert.ok(!request.includes(absentRule), 'unexpected instructions from another workspace or revision')
       if (projectSession) {
         assert.ok(body.tools?.some(tool => tool.name === 'ProjectMemory'), 'project memory tool is available')
@@ -188,18 +193,18 @@ try {
   const chat = await page.evaluate(({ projectId, workspace }) => window.agentDesktop.createSession({ projectId, workspace, mode: 'chat' }), { projectId: project.id, workspace })
   await checkInstructions(regular.summary.id, agents)
   await checkInstructions(chat.summary.id, agents, undefined, true)
-  await checkInstructions(chat.summary.id, agents)
+  await checkInstructions(chat.summary.id, agents, undefined, true)
   const edited = agents.replace(sharedRule, '按年龄段记录观察资料。')
   await fs.writeFile(agentsPath, edited)
   await checkInstructions(regular.summary.id, edited, sharedRule)
-  await checkInstructions(chat.summary.id, edited, sharedRule)
+  await checkInstructions(chat.summary.id, edited, sharedRule, true)
   const second = path.join(root, '另一个工作目录')
   const otherDoc = '# AGENTS.md\n\n本目录用案例编号归档。\n'
   await fs.mkdir(second)
   await fs.writeFile(path.join(second, 'AGENTS.md'), otherDoc)
   await page.evaluate(({ projectId, workspaces }) => window.agentDesktop.updateProject({ projectId, updates: { workspaces } }), { projectId: project.id, workspaces: [workspace, second] })
   const otherSession = await page.evaluate(({ projectId, workspace }) => window.agentDesktop.createSession({ projectId, workspace, mode: 'chat' }), { projectId: project.id, workspace: second })
-  await checkInstructions(otherSession.summary.id, otherDoc, sharedRule)
+  await checkInstructions(otherSession.summary.id, otherDoc, sharedRule, true)
   mark('Ordinary and project chats receive the same complete directory instructions once, follow edits, and isolate other workspaces')
   const source = path.join(root, 'external attachment.txt')
   await fs.writeFile(source, 'attachment fixture')

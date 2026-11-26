@@ -1629,7 +1629,7 @@ async function createProject(payload = {}, internal = {}) {
   const appSelection = await sessionApps.validateSelection(project);
   Object.assign(project, appSelection);
   await prepareProjectWorkspaces(project.workspaces);
-  const agents = await ensureProjectAgentsFile(project.defaultWorkspace, project.instructions, { creating: true });
+  const agents = await ensureProjectAgentsFile(project.defaultWorkspace, project.instructions);
   project.instructions = agents.content;
   await ensureProjectStructure(project.id);
   await writeJsonFileAtomicAsync(getProjectAssetIndexPath(project.id), []);
@@ -1671,6 +1671,7 @@ const PROJECT_CREATION_SYSTEM_PROMPT = [
   '默认权限使用 bypassPermissions（完全访问），用户明确指定时采用指定值。用户可以直接在卡片修改配置、移除资源、选择服务、重试或取消。授权暂停时指导完成 App 设置后返回继续。',
 ].join('\n');
 const PROJECT_CREATION_TOOLS = ['ProjectPlan', 'ProjectResource', 'AskUserQuestion'];
+const PROJECT_SESSION_DEFAULTS = fs.readFileSync(new URL('./project-session-defaults.md', import.meta.url), 'utf8').trim();
 let appMarketplaceService = null;
 
 function assertProjectCreationSession(sessionId) {
@@ -3058,6 +3059,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord, runtimeSystemPrompt,
   const projectCreationPrompt = sessionRecord?.projectCreationMode ? `${PROJECT_CREATION_SYSTEM_PROMPT}\n用户在创建入口明确选择的配置（必须保留，推荐内容只能追加）：${JSON.stringify(sessionRecord.projectDefaults?.__projectCreationSelections || {})}\n当前草稿：${JSON.stringify(await projectCreationService.get({ sessionId: sessionRecord.id }))}` : '';
   const appendSystemPrompt = [
     appScoped ? undefined : desktopSettings.appendSystemPrompt,
+    !appScoped && sessionRecord?.projectId && !sessionRecord.isSubAgent ? PROJECT_SESSION_DEFAULTS : undefined,
     connectorSystemPrompt,
     runtimeSystemPrompt,
     appSessionResponseStylePrompt(sessionRecord),

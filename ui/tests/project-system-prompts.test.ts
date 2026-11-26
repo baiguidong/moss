@@ -13,8 +13,8 @@ test('project creation reuses an existing AGENTS.md without writing to it', asyn
       await utimes(file, 1000, 1000)
       const modified = (await stat(file)).mtimeMs
       const results = await Promise.all([
-        ensureProjectAgentsFile(root, '# AGENTS.md\n\n## Build\n\nUse bun.', { creating: true }),
-        ensureProjectAgentsFile(root, '', { creating: true }),
+        ensureProjectAgentsFile(root, '# AGENTS.md\n\n## Build\n\nUse bun.'),
+        ensureProjectAgentsFile(root),
       ])
       expect(results).toEqual(Array(2).fill({ path: file, content: original, created: false }))
       expect(await readFile(file)).toEqual(Buffer.from(original))
@@ -25,13 +25,12 @@ test('project creation reuses an existing AGENTS.md without writing to it', asyn
   }
 })
 
-test('project creation writes instructions and project defaults when AGENTS.md is missing', async () => {
+test('project creation writes the drafted instructions when AGENTS.md is missing', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'moss-agents-'))
   try {
     const generated = '# AGENTS.md\n\n## Build\n\nUse bun.'
-    const defaults = (await readFile(new URL('../src/project-session-defaults.md', import.meta.url), 'utf8')).trim()
-    const expected = `${generated}\n\n${defaults}\n`
-    const result = await ensureProjectAgentsFile(root, generated, { creating: true })
+    const expected = `${generated}\n`
+    const result = await ensureProjectAgentsFile(root, generated)
     expect(result.created).toBe(true)
     expect(result.content).toBe(expected)
     expect(await readFile(result.path, 'utf8')).toBe(expected)
