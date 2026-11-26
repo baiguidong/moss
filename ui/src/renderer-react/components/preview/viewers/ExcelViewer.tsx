@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { ArrowLeft, FileText, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import { documentIpc } from "@/ipc/document.ipc";
@@ -11,7 +10,6 @@ import { setAppViewGuard } from "@/lib/app-view-guard";
 import { OfficeEditRequest } from '../OfficeEditRequest';
 import { OfficePreviewToolbar } from "../OfficePreviewToolbar";
 import { LazyOpenFileViewer } from "./LazyOpenFileViewer";
-import { PDFViewer } from "./PDFViewer";
 import { SpreadsheetGrid } from "./SpreadsheetGrid";
 import { parseCellRange } from "../../../../shared/document-location.mjs";
 import { browserOfficeCapability, officeParserFileName } from "./office-file-utils";
@@ -77,12 +75,12 @@ function buildSheetLayout(sheet: { data?: any[][]; merges?: SheetMerge[]; images
   };
 }
 
-export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMenuItems, downloadMenuItems, onDownload, downloadDisabled, previewPdfPath, onReady, onError, documentLocation, locationRequest, ...annotation }: OfficeViewerProps) {
+export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMenuItems, downloadMenuItems, onDownload, downloadDisabled, onReady, onError, documentLocation, locationRequest, ...annotation }: OfficeViewerProps) {
   const [state, setState] = React.useState<{ key: string; data?: any }>();
-  const [previewMode, setPreviewMode] = React.useState<'sheets' | 'original' | 'pages'>('sheets');
-  const printPdfPath = previewMode === 'pages' ? previewPdfPath : undefined;
+  const [previewMode, setPreviewMode] = React.useState<'sheets' | 'original'>('original');
+  const originalRoot = React.useRef<HTMLDivElement>(null);
+  const [originalSheets, setOriginalSheets] = React.useState<string[]>([]);
   const showingOriginal = previewMode === 'original';
-  const [pageControls, setPageControls] = React.useState<HTMLDivElement | null>(null);
   const [zoom, setZoom] = React.useState<number | 'fit'>(100);
   const [activeSheet, setActiveSheet] = React.useState('');
   const [selectedCell, setSelectedCell] = React.useState('');
@@ -102,8 +100,8 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMe
   const locationKey = JSON.stringify([documentLocation, locationRequest]);
   const range = documentLocation?.range ? parseCellRange(documentLocation.range) : null;
   React.useEffect(() => {
-    setPreviewMode(documentLocation?.page && !documentLocation.sheet ? 'pages' : 'sheets');
-    if (documentLocation?.sheet) setActiveSheet(documentLocation.sheet);
+    setPreviewMode(documentLocation?.sheet ? 'sheets' : 'original');
+    setActiveSheet(documentLocation?.sheet || '');
   }, [filePath, locationKey]);
   const [attempt, setAttempt] = React.useState(0);
   const key = `${filePath}:${fileVersion ?? ''}:${attempt}`;
@@ -123,7 +121,7 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMe
   }, [filePath]);
   const workbook = state?.key === key ? state : undefined;
   const excelData = workbook?.data;
-  const showingSheets = !showingOriginal && !printPdfPath && Boolean(excelData?.sheets?.length);
+  const showingSheets = !showingOriginal && Boolean(excelData?.sheets?.length);
   React.useEffect(() => { if (showingSheets) onReady?.(); }, [showingSheets, excelData, onReady]);
   React.useEffect(() => { if (showingSheets) tableRoot.current?.querySelector('[data-citation-cell="true"]')?.scrollIntoView({ block: 'center', inline: 'nearest' }); }, [showingSheets, activeSheet, excelData, locationKey]);
   React.useEffect(() => {
@@ -137,6 +135,7 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMe
     <EmbeddedAppView appName="moss.spreadsheets" route={editing} sessionId={annotation.sessionId} compact onViewState={view => {
       setAppViewGuard(view.returnToPreview ? null : view);
       if (!view.returnToPreview) return;
+      setPreviewMode(view.previewMode || 'original');
       if (view.sheet) setActiveSheet(view.sheet);
       if (view.cell) setSelectedCell(view.cell);
       setReturnCell({ sheet: view.sheet, cell: view.cell });
@@ -144,34 +143,43 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMe
       setEditing('');
     }} />
   </div>;
-  const returningToSheets = showingOriginal || Boolean(printPdfPath);
-  const previewAction = returningToSheets ? '返回工作表' : '原始预览';
+  const originalTabs = () => Array.from(originalRoot.current?.querySelectorAll<HTMLButtonElement>('.ofv-tabs [role="tab"]') || []);
+  const sheetTabs = (names: string[]) => names.length > 0 && <div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-t border-border/70 px-3" aria-label="工作表列表">
+    {names.map(name => <button key={name} type="button" aria-pressed={name === (names.includes(activeSheet) ? activeSheet : names[0])}
+      className="h-full shrink-0 whitespace-nowrap border-b-2 border-transparent px-4 text-xs text-muted-foreground aria-pressed:border-primary aria-pressed:font-medium aria-pressed:text-primary"
+      onClick={() => {
+        setActiveSheet(name);
+        setSelectedCell('');
+        originalTabs().find(tab => tab.title === name)?.click();
+      }}>{name}</button>)}
+  </div>;
   const toolbar = <OfficePreviewToolbar filePath={filePath} onRefresh={() => setAttempt(value => value + 1)} container={toolbarContainer} menuItems={<>
     {showingSheets && <DropdownMenuCheckboxItem checked={showFormulaBar} onCheckedChange={setShowFormulaBar}>公式栏</DropdownMenuCheckboxItem>}
     {toolbarMenuItems}
   </>} downloadMenuItems={downloadMenuItems} onDownload={onDownload} downloadDisabled={downloadDisabled}>
-    <Button variant="ghost" size="sm" className="office-excel-preview-switch h-7 shrink-0 gap-1 rounded-md px-2 text-xs"
-      aria-label={previewAction} title={previewAction} onClick={() => setPreviewMode(returningToSheets ? 'sheets' : 'original')}>
-      {returningToSheets ? <ArrowLeft className="h-3.5 w-3.5" /> : <FileText className="h-3.5 w-3.5" />}
-      <span>{previewAction}</span>
-    </Button>
-    {printPdfPath && <div ref={setPageControls} className="flex shrink-0 items-center gap-1 empty:hidden" />}
-    {!printPdfPath && editorHref && <Button variant="ghost" size="sm" className="h-7 shrink-0 gap-1 rounded-md px-2 text-xs" onClick={() => {
-      const url = new URL(editorHref);
-      url.searchParams.set('inline', '1');
-      const sheet = activeSheet || excelData?.sheets?.[0]?.name;
-      if (sheet) url.searchParams.set('sheet', sheet);
-      if (selectedCell) url.searchParams.set('cell', selectedCell);
-      const route = appRouteLink(url.href);
-      if (route) setEditing(route.route);
-    }}><Pencil className="h-3.5 w-3.5" />编辑工作簿</Button>}
-    {!printPdfPath && <OfficeEditRequest target={annotation.resourceUri ? { resourceUri: annotation.resourceUri, sessionId: annotation.sessionId } : { artifactId: annotation.artifactId, revision: annotation.revision, sessionId: annotation.sessionId }} selection={showingSheets && selectedCell && excelData?.sheets?.length ? { kind: 'cell', sheet: (excelData.sheets.find((sheet: any) => sheet.name === activeSheet) || excelData.sheets[0]).name, range: selectedCell, selector: selectedCell, text: '', nearbyText: '', rect: { x: 0, y: 0, width: 1, height: 1 } } : undefined} selectionLabel={showingSheets ? `单元格 ${selectedCell}` : undefined} />}
+    <select aria-label="工作簿模式" className="h-7 shrink-0 rounded-md border border-border bg-background px-2 text-xs" value={previewMode}
+      onChange={event => {
+        const mode = event.target.value;
+        if (mode === 'original' || mode === 'sheets') { setPreviewMode(mode); return; }
+        if (!editorHref) return;
+        const url = new URL(editorHref);
+        url.searchParams.set('inline', '1');
+        const sheet = activeSheet || excelData?.sheets?.[0]?.name;
+        if (sheet) url.searchParams.set('sheet', sheet);
+        if (selectedCell) url.searchParams.set('cell', selectedCell);
+        const route = appRouteLink(url.href);
+        if (route) setEditing(route.route);
+      }}>
+      <option value="original">原始预览</option>
+      <option value="sheets">工作表视图</option>
+      {editorHref && <option value="edit">编辑工作簿</option>}
+    </select>
+    <OfficeEditRequest target={annotation.resourceUri ? { resourceUri: annotation.resourceUri, sessionId: annotation.sessionId } : { artifactId: annotation.artifactId, revision: annotation.revision, sessionId: annotation.sessionId }} selection={showingSheets && selectedCell && excelData?.sheets?.length ? { kind: 'cell', sheet: (excelData.sheets.find((sheet: any) => sheet.name === activeSheet) || excelData.sheets[0]).name, range: selectedCell, selector: selectedCell, text: '', nearbyText: '', rect: { x: 0, y: 0, width: 1, height: 1 } } : undefined} selectionLabel={showingSheets ? `单元格 ${selectedCell}` : undefined} />
     {showingSheets && <>
       <select aria-label="工作表缩放" className={`h-7 ${zoom === 'fit' ? 'w-24' : 'w-16'} shrink-0 rounded-md bg-transparent px-1 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`} value={zoom} onChange={event => setZoom(event.target.value === 'fit' ? 'fit' : Number(event.target.value))}><option value="fit">适合宽度</option>{[50, 75, 100, 125, 150, 200].map(value => <option key={value} value={value}>{value}%</option>)}</select>
       <Button variant="ghost" size="icon-sm" className="office-formula-toggle h-7 w-7 shrink-0 rounded-md font-serif italic aria-pressed:bg-muted" aria-label="公式栏" title={showFormulaBar ? '收起公式栏' : '展开公式栏'} aria-pressed={showFormulaBar} aria-expanded={showFormulaBar} aria-controls={formulaBarId} onClick={() => setShowFormulaBar(value => !value)}>ƒx</Button>
     </>}
   </OfficePreviewToolbar>;
-  if (printPdfPath) return <div className="flex h-full min-h-0 flex-col">{toolbar}<div className="min-h-0 flex-1"><PDFViewer key={key} {...annotation} office toolbarContainer={pageControls} documentLocation={documentLocation} locationRequest={locationRequest} sourcePath={filePath} onReady={onReady} onError={onError} filePath={printPdfPath} title={filePath} /></div></div>;
   if (showingSheets) {
     const currentSheet = excelData.sheets.find((sheet: any) => sheet.name === activeSheet) || excelData.sheets[0];
     const cited = currentSheet.name === documentLocation?.sheet && range;
@@ -190,14 +198,22 @@ export function ExcelViewer({ filePath, fileVersion, toolbarContainer, toolbarMe
       {citationError && <p role="alert" className="px-4 py-2 text-xs text-destructive">{citationError}</p>}
       {cited && <p role={focus ? "status" : "alert"} className="px-4 py-2 text-xs text-muted-foreground">{currentSheet.name}!{documentLocation?.range}{!focus && " · 引用区域超出已使用范围"}</p>}
       <SpreadsheetGrid sheet={currentSheet} layout={layout} selectedCell={selectedCell} onSelectCell={setSelectedCell} citedRange={cited ? range : undefined} scrollRef={tableRoot} zoom={zoom}/>
-      <div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-t border-border/70 px-3" aria-label="工作表列表">
-        {excelData.sheets.map((sheet: any) => <button key={sheet.name} type="button" aria-pressed={sheet.name === currentSheet.name}
-          className="h-full shrink-0 border-b-2 border-transparent px-4 text-xs text-muted-foreground aria-pressed:border-primary aria-pressed:font-medium aria-pressed:text-primary"
-          onClick={() => { setActiveSheet(sheet.name); setSelectedCell(''); }}>{sheet.name}</button>)}
-      </div>
+      {sheetTabs(excelData.sheets.map((sheet: { name: string }) => sheet.name))}
     </div>;
   }
 
   if (!showingOriginal && !workbook) return <div className="flex h-full min-h-0 flex-col">{toolbar}<p role="status" className="p-4 text-sm text-muted-foreground">正在读取工作簿…</p></div>;
-  return <div className="flex h-full min-h-0 flex-col">{toolbar}<div className="min-h-0 flex-1"><LazyOpenFileViewer key={key} filePath={filePath} fileName={officeParserFileName(filePath)} capability={browserOfficeCapability(filePath)} fit="width" onReady={onReady} onError={onError} /></div></div>;
+  return <div className="flex h-full min-h-0 flex-col">{toolbar}
+    <div ref={originalRoot} className="excel-original-preview min-h-0 flex-1">
+      <LazyOpenFileViewer key={key} filePath={filePath} fileName={officeParserFileName(filePath)} capability={browserOfficeCapability(filePath)} fit="width"
+        onReady={() => {
+          const tabs = originalTabs();
+          setOriginalSheets(tabs.map(tab => tab.title));
+          const selected = tabs.find(tab => tab.title === activeSheet);
+          if (selected && selected.getAttribute('aria-selected') !== 'true') selected.click();
+          onReady?.();
+        }} onError={onError} />
+    </div>
+    {sheetTabs(originalSheets)}
+  </div>;
 }

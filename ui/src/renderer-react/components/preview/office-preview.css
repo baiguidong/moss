@@ -6,3 +6,9 @@
 @container (max-width: 380px) {
   .office-formula-toggle { display: none; }
 }
+
+/* The spreadsheet viewer supplies the visible sheet names in its bottom tab bar. */
+.excel-original-preview .ofv-tabs,
+.excel-original-preview .ofv-sheet > h3 {
+  display: none;
+}

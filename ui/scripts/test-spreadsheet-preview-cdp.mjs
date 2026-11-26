@@ -53,6 +53,7 @@ try {
   await page.evaluate(() => localStorage.setItem('ui.panelLayout.v1', JSON.stringify({ leftWidth: 240, leftCollapsed: false, rightWidth: 650, rightCollapsed: false, rightExpanded: false })));
   await page.reload(); await page.getByText('表格样式验证', { exact: true }).first().click();
   await page.evaluate(({ sessionId, file }) => window.agentDesktop.presentation.open({ sessionId, input: { items: [{ path: file }] } }), { sessionId, file });
+  await page.getByRole('combobox', { name: '工作簿模式' }).selectOption('sheets');
   await page.locator('[data-cell="A1"]').waitFor();
   assert.equal(await page.locator('[data-cell-details]').count(), 0);
   assert.equal(await page.locator('[data-preview-header-row]').count(), 1);

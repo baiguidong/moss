@@ -16,5 +16,5 @@ export function validateAppViewState(input) {
   if (state.dirty || state.busy) throw new Error('请先处理待保存的修改。');
   const sheet = typeof input.sheet === 'string' && input.sheet.length <= 31 ? input.sheet : undefined;
   const cell = typeof input.cell === 'string' && /^[A-Z]{1,3}\d{1,5}$/.test(input.cell) ? input.cell : undefined;
-  return { ...state, returnToPreview: true, saved: input.saved === true, sheet, cell };
+  return { ...state, returnToPreview: true, saved: input.saved === true, ...(input.previewMode === 'original' || input.previewMode === 'sheets' ? { previewMode: input.previewMode } : {}), sheet, cell };
 }

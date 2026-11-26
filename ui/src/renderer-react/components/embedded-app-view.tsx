@@ -15,7 +15,7 @@ type EmbeddedAppSession = {
   app?: {id:string;name:string;displayName:string;description:string};
 };
 
-type EmbeddedViewState = { dirty: boolean; busy: boolean; returnToPreview?: boolean; saved?: boolean; sheet?: string; cell?: string };
+type EmbeddedViewState = { dirty: boolean; busy: boolean; returnToPreview?: boolean; previewMode?: 'original' | 'sheets'; saved?: boolean; sheet?: string; cell?: string };
 
 export function EmbeddedAppView({
   appName,
@@ -50,7 +50,7 @@ export function EmbeddedAppView({
       if (event.embedId === session.embedId) viewStateCallback.current?.({
         dirty: event.dirty === true, busy: event.busy === true,
         returnToPreview: event.returnToPreview === true, saved: event.saved === true,
-        sheet: event.sheet, cell: event.cell,
+        sheet: event.sheet, cell: event.cell, previewMode: event.previewMode,
       });
     });
     return () => { window.agentDesktop.ipcOff('app:embedded-state', handler); viewStateCallback.current?.({ dirty: false, busy: false }); };
