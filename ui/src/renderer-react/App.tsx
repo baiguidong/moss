@@ -578,12 +578,16 @@ export default function App() {
   const isLocalRuntimeModel = desktopSettings?.runtimeModel?.managed === false;
   const runtimeModel = hasManagedModelAuth || isLocalRuntimeModel
     ? (desktopSettings?.runtimeModel || desktopSettings)
-    : desktopSettings;
+    : desktopSettings?.localModelEnabled === false ? undefined : desktopSettings;
   const modelSettings = runtimeModel ? {
     model: runtimeModel.model,
     availableModels: runtimeModel.availableModels,
     followModelCatalog: isLocalRuntimeModel && desktopSettings?.modelListMode === 'auto' && Boolean(runtimeModel.url?.trim()),
   } : undefined;
+  const modelForCurrentSource = (model?: string | null) =>
+    desktopSettings?.localModelEnabled === undefined || runtimeModel?.availableModels?.includes(model || '') ? model : null;
+  const draftModel = modelForCurrentSource(newSessionModel) || null;
+  const draftProjectModel = modelForCurrentSource(projectCreationModel) || null;
   const [serverAccount, setServerAccount] = React.useState<{ userName: string; userEmail: string } | null>(null);
   const [serverLogoutState, setServerLogoutState] = React.useState<'idle' | 'loading'>('idle');
   const [serverLogoutError, setServerLogoutError] = React.useState('');
@@ -2184,7 +2188,7 @@ export default function App() {
           setPendingFirstMessage({ id: firstMessageId, sessionId: id, prompt, files: [], submittedAt: Date.now() });
         },
         { projectCreationMode: true, mode: 'chat', skillIds: projectCreationSkillIds },
-        projectCreationModel,
+        draftProjectModel,
       );
       setProjectCreationInput(current => current.trim() === prompt ? '' : current);
       // The choices are copied into the creation session before this point;
@@ -2208,7 +2212,7 @@ export default function App() {
       projectCreationEntryLock.current = false;
       setCreatingProjectSession(false);
     }
-  }, [createAndOpenSession, dispatchToSession, projectCreationAppIds, projectCreationAppServiceIds, projectCreationExpertIds, projectCreationModel, projectCreationSkillIds, projectCreationWorkspace, updateQueue, showPermissionNotice]);
+  }, [createAndOpenSession, dispatchToSession, projectCreationAppIds, projectCreationAppServiceIds, projectCreationExpertIds, draftProjectModel, projectCreationSkillIds, projectCreationWorkspace, updateQueue, showPermissionNotice]);
 
   // Dispatch the next queued message when a turn ends. Kept in a ref so the
   // once-registered agent:state listener always calls the latest version.
@@ -2355,7 +2359,7 @@ export default function App() {
               : homeComposerMode === 'project-create'
                 ? { projectCreationMode: true, mode: 'chat', skillIds: [] }
                 : undefined,
-            newSessionModel,
+            draftModel,
           ).finally(() => {
             creatingSessionRef.current = null;
             setPreparingNewSession(false);
@@ -2416,7 +2420,7 @@ export default function App() {
         setPendingFirstMessage(current => current?.id === pendingFirstMessageId ? null : current);
       }
     }
-  }, [draftProject, homeComposerMode, appSelection, appDraftWorkspace, activeDetail?.busy, activeDetail?.workspace, activeDetail?.agentMode, activeSessionId, createAndOpenSession, dispatchToSession, draftAppIds, draftAppServiceIds, input, newSessionAgentMode, newSessionModel, newSessionPermissionMode, pendingSendRequests, planDecisionBusy, selectedAssistant, updateQueue, handleComposerIntentChange]);
+  }, [draftProject, homeComposerMode, appSelection, appDraftWorkspace, activeDetail?.busy, activeDetail?.workspace, activeDetail?.agentMode, activeSessionId, createAndOpenSession, dispatchToSession, draftAppIds, draftAppServiceIds, input, newSessionAgentMode, draftModel, newSessionPermissionMode, pendingSendRequests, planDecisionBusy, selectedAssistant, updateQueue, handleComposerIntentChange]);
 
   const handleSend = React.useCallback(async (
     files?: ComposerAttachment[],
@@ -3329,7 +3333,7 @@ export default function App() {
                 permissionMode={activeDetail?.permissionMode ?? desktopSettings?.permissionMode ?? 'default'}
                 onPermissionModeChange={handleSessionPermissionModeChange}
                 permissionModeChanging={permissionModeSettingSessionId === activeSessionId}
-                currentModel={activeDetail?.modelOverride || undefined}
+                currentModel={modelForCurrentSource(activeDetail?.modelOverride) || undefined}
                 onModelChange={activeDetail?.agentMode !== 'remote-direct' && !activeDetail?.isSubAgent ? handleSessionModelChange : undefined}
                 modelSettings={modelSettings}
                 sessionUsage={sessionUsage}
@@ -3433,7 +3437,7 @@ export default function App() {
                   onOpenProject: handleNewProjectSession,
                 } : undefined}
                 sessionTitle=""
-                currentModel={newSessionModel || modelSettings?.model}
+                currentModel={draftModel || modelSettings?.model}
                 onModelChange={draftProject ? undefined : handleSessionModelChange}
                 modelSettings={modelSettings}
                 sessionWorkspace={undefined}
@@ -3515,7 +3519,7 @@ export default function App() {
               onCreationPromptChange={setProjectCreationInput}
               creationWorkspace={projectCreationWorkspace}
               onCreationWorkspaceChange={setProjectCreationWorkspace}
-              creationModel={projectCreationModel}
+              creationModel={draftProjectModel}
               onCreationModelChange={(model) => setProjectCreationModel(model && model !== 'default' ? model : null)}
               creationModelSettings={modelSettings}
               creationResourceSelection={projectCreationResourceSelection}

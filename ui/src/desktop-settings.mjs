@@ -252,8 +252,8 @@ function loadLocalSettingsAuthConfig(settingsPath) {
       ? parsed.env
       : {};
     const textModel = objectField(objectField(parsed, 'models'), 'text');
-    const modelBaseUrl = normalizeMossBaseUrl(stringField(textModel, 'baseUrl') || '');
-    const modelAuthToken = stringField(textModel, 'apiKey') || '';
+    const modelBaseUrl = parsed.localModelEnabled !== false && normalizeMossBaseUrl(stringField(textModel, 'baseUrl') || '');
+    const modelAuthToken = parsed.localModelEnabled !== false && stringField(textModel, 'apiKey');
     if (modelBaseUrl) {
       process.env.MOSS_MODEL_BASE_URL = modelBaseUrl;
       result.injected.push('MOSS_MODEL_BASE_URL');
@@ -332,6 +332,8 @@ export function normalizeDesktopSettings(input, existing = {}) {
   } else if (result.enterpriseEnabled === undefined) {
     result.enterpriseEnabled = DEFAULT_DESKTOP_SETTINGS.enterpriseEnabled;
   }
+
+  if (typeof source.localModelEnabled === 'boolean') result.localModelEnabled = source.localModelEnabled;
 
   result.model =
     stringField(source, 'model') ??
@@ -831,7 +833,7 @@ export function normalizeDesktopSettings(input, existing = {}) {
 }
 
 const MODEL_RUNTIME_FIELDS = [
-  'model', 'modelListMode', 'availableModels', 'fastModel', 'declaredContextByModel', 'url', 'apiKey', 'maxTurns',
+  'localModelEnabled', 'model', 'modelListMode', 'availableModels', 'fastModel', 'declaredContextByModel', 'url', 'apiKey', 'maxTurns',
   'thinkingMode', 'thinkingBudgetTokens', 'contextWindowLimit', 'image',
 ];
 
@@ -897,6 +899,21 @@ function loadDesktopSettings(settingsPath, log) {
   }
 }
 
+export function resolveDesktopModelSettings(settings, managedModel) {
+  // Existing installations keep their previous routing until the switch is used.
+  const useLocal = settings.localModelEnabled ??
+    (Boolean(settings.model?.trim() && settings.url?.trim()) || !managedModel);
+  if (useLocal) return settings;
+  return {
+    ...settings,
+    model: managedModel?.model || '',
+    fastModel: managedModel?.fastModel || '',
+    url: managedModel?.url || '',
+    apiKey: managedModel?.apiKey || '',
+    availableModels: managedModel?.availableModels || [],
+  };
+}
+
 export function buildThinkingConfig(settings) {
   if (settings?.thinkingMode === 'disabled') return { type: 'disabled' };
   if (settings?.thinkingMode === 'adaptive') return { type: 'adaptive' };
@@ -915,13 +932,13 @@ function syncDesktopThinkingEnv(settings) {
 }
 
 function syncDesktopModelEnv(settings) {
-  const modelBaseUrl = normalizeMossBaseUrl(settings?.url || '');
+  const modelBaseUrl = settings?.localModelEnabled !== false && normalizeMossBaseUrl(settings?.url || '');
   if (modelBaseUrl) {
     process.env.MOSS_MODEL_BASE_URL = modelBaseUrl;
   } else {
     delete process.env.MOSS_MODEL_BASE_URL;
   }
-  if (settings?.apiKey) {
+  if (settings?.localModelEnabled !== false && settings?.apiKey) {
     process.env.MOSS_MODEL_AUTH_TOKEN = settings.apiKey;
   } else {
     delete process.env.MOSS_MODEL_AUTH_TOKEN;

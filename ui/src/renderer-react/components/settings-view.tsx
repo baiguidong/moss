@@ -115,6 +115,7 @@ type SettingsRowProps = {
   description?: React.ReactNode;
   children: React.ReactNode;
   stacked?: boolean;
+  inline?: boolean;
   controlClassName?: string;
   className?: string;
 };
@@ -124,6 +125,7 @@ type ToggleProps = {
   onCheckedChange: (checked: boolean) => void;
   label: string;
   disabled?: boolean;
+  trackClassName?: string;
 };
 
 type NavigationGroupButtonProps = {
@@ -548,6 +550,7 @@ function SettingsRow({
   description,
   children,
   stacked = false,
+  inline = false,
   controlClassName,
   className,
 }: SettingsRowProps) {
@@ -569,20 +572,20 @@ function SettingsRow({
 
   return (
     <div className={cn('py-3.5', className)}>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+      <div className={cn('flex gap-3 sm:gap-6', inline ? 'items-center justify-between' : 'flex-col sm:flex-row sm:items-center sm:justify-between')}>
         <div className="min-w-0 flex-1">
           <div className="text-[13px] font-medium text-foreground">{title}</div>
           {description ? (
             <div className="mt-1 text-xs leading-5 text-muted-foreground">{description}</div>
           ) : null}
         </div>
-        <div className={cn('w-full sm:w-[220px] sm:max-w-[50%] sm:shrink-0', controlClassName)}>{children}</div>
+        <div className={cn(inline ? 'flex shrink-0' : 'w-full sm:w-[220px] sm:max-w-[50%] sm:shrink-0', controlClassName)}>{children}</div>
       </div>
     </div>
   );
 }
 
-function Toggle({ checked, onCheckedChange, label, disabled = false }: ToggleProps) {
+function Toggle({ checked, onCheckedChange, label, disabled = false, trackClassName }: ToggleProps) {
   return (
     <label className={cn(
       'relative inline-flex h-6 w-11 items-center',
@@ -599,6 +602,7 @@ function Toggle({ checked, onCheckedChange, label, disabled = false }: TogglePro
       <span
         className={cn(
           'h-full w-full rounded-full bg-foreground/15 transition-colors after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-background after:shadow-sm after:transition-transform peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-checked:bg-foreground peer-checked:after:translate-x-5',
+          trackClassName,
         )}
       />
     </label>
@@ -914,7 +918,8 @@ export function SettingsView({
   const localModelUrl = settingsDraft?.url?.trim() || '';
   const localModelApiKey = settingsDraft?.apiKey?.trim() || '';
   const runtimeModel = settingsDraft?.runtimeModel;
-  const managedModel = !localModelUrl && runtimeModel?.managed && (isWebUI() || settingsDraft?.enterpriseAccountAccessToken)
+  const useLocalModel = settingsDraft?.localModelEnabled ?? !runtimeModel?.managed;
+  const managedModel = !useLocalModel && runtimeModel?.managed && (isWebUI() || settingsDraft?.enterpriseAccountAccessToken)
     ? runtimeModel : undefined;
   const followsApiCatalog = settingsDraft?.modelListMode !== 'manual';
   const runtimeCatalogModels = runtimeModel?.managed === false && followsApiCatalog &&
@@ -943,13 +948,15 @@ export function SettingsView({
       ...availableModels,
       ...(runtimeCatalogModels || []),
       ...(managedModel?.availableModels || []),
+      managedModel?.model || '',
+      managedModel?.fastModel || '',
       ...(settingsDraft?.availableModels || []),
       settingsDraft?.model || '',
       settingsDraft?.fastModel || '',
       imageDraft.model || '',
     ];
     return [...new Set(values.map(value => value.trim()).filter(Boolean))];
-  }, [availableModels, runtimeCatalogModels, managedModel?.availableModels, imageDraft.model, settingsDraft?.availableModels, settingsDraft?.fastModel, settingsDraft?.model]);
+  }, [availableModels, runtimeCatalogModels, managedModel, imageDraft.model, settingsDraft?.availableModels, settingsDraft?.fastModel, settingsDraft?.model]);
 
   const sessionModelOptions = React.useMemo(() => {
     const values = [
@@ -962,7 +969,7 @@ export function SettingsView({
   }, [availableModels, settingsDraft?.availableModels, settingsDraft?.fastModel, settingsDraft?.model]);
 
   const fetchModels = React.useCallback(async (refresh: boolean) => {
-    if (!localModelUrl) return;
+    if (!useLocalModel || !localModelUrl) return;
     const request = ++modelListRequest.current;
     setModelListState('loading');
     setModelListError('');
@@ -980,20 +987,20 @@ export function SettingsView({
       setModelListState('error');
       setModelListError(cleanIpcErrorMessage(error));
     }
-  }, [localModelApiKey, localModelUrl]);
+  }, [localModelApiKey, localModelUrl, useLocalModel]);
 
   React.useEffect(() => {
     setAvailableModels([]);
     setModelListState('idle');
     setModelListError('');
     return () => { modelListRequest.current += 1; };
-  }, [localModelApiKey, localModelUrl]);
+  }, [localModelApiKey, localModelUrl, useLocalModel]);
 
   React.useEffect(() => {
-    if (!modelSectionVisible || !followsApiCatalog || !localModelUrl) return;
+    if (!modelSectionVisible || !useLocalModel || !followsApiCatalog || !localModelUrl) return;
     const timer = window.setTimeout(() => { void fetchModels(false); }, 400);
     return () => window.clearTimeout(timer);
-  }, [fetchModels, followsApiCatalog, localModelUrl, modelSectionVisible]);
+  }, [fetchModels, followsApiCatalog, localModelUrl, modelSectionVisible, useLocalModel]);
 
   React.useEffect(() => {
     if (initialAppSettingId) return;
@@ -2214,11 +2221,23 @@ export function SettingsView({
                   >
                     <SettingsGroup>
                       <SettingsRow
+                        title="使用本地模型配置"
+                        inline
+                        description={useLocalModel || managedModel?.model
+                          ? '关闭后使用 Moss Server 提供的文本模型。本地配置会保留。'
+                          : 'Moss Server 暂未提供可用的文本模型。'}
+                      >
+                        <Toggle checked={useLocalModel} label="使用本地模型配置"
+                          trackClassName="bg-[#71847a] after:bg-white peer-checked:bg-[#15803d] peer-focus-visible:ring-[#22c55e]"
+                          onCheckedChange={enabled => updateSetting('localModelEnabled', enabled)} />
+                      </SettingsRow>
+                      <SettingsRow
                         title="API URL"
                         controlClassName="sm:w-[380px]"
                       >
                         <Input
                           className={FIELD_CLASS_NAME}
+                          disabled={!useLocalModel}
                           value={settingsDraft.url || ''}
                           onChange={(event) => updateSetting('url', event.target.value)}
                           placeholder="https://model.example.com"
@@ -2233,6 +2252,7 @@ export function SettingsView({
                           <Input
                             type="password"
                             className={cn(FIELD_CLASS_NAME, 'font-mono text-xs')}
+                            disabled={!useLocalModel}
                             value={settingsDraft.apiKey || ''}
                             onChange={(event) => updateSetting('apiKey', event.target.value)}
                             placeholder="your-model-api-key"
@@ -2252,10 +2272,10 @@ export function SettingsView({
 
                       <SettingsRow
                         title="模型列表来源"
-                        description={managedModel ? '可切换模型由服务器下发。' : '自动跟随 API 的可用模型，或手动选择会话模型。'}
+                        description={!useLocalModel ? '可切换模型由服务器下发。' : '自动跟随 API 的可用模型，或手动选择会话模型。'}
                         controlClassName="sm:w-auto"
                       >
-                        {managedModel ? (
+                        {!useLocalModel ? (
                           <span className="text-sm text-muted-foreground">跟随 Moss Server</span>
                         ) : (
                           <fieldset aria-label="模型列表来源" className="inline-flex flex-wrap gap-0.5 rounded-lg border border-border/70 bg-muted/35 p-0.5">
@@ -2273,7 +2293,7 @@ export function SettingsView({
                         )}
                       </SettingsRow>
 
-                      {!managedModel && <SettingsRow title="模型列表" controlClassName="sm:w-[380px]">
+                      {useLocalModel && <SettingsRow title="模型列表" controlClassName="sm:w-[380px]">
                         <div className="flex w-full flex-col items-start gap-2 sm:items-end">
                           <Button
                             variant="outline"
@@ -2293,7 +2313,7 @@ export function SettingsView({
                         </div>
                       </SettingsRow>}
 
-                      {!managedModel && !followsApiCatalog && <SettingsRow
+                      {useLocalModel && !followsApiCatalog && <SettingsRow
                         title="允许切换的模型"
                         description="勾选可在会话中切换的模型。默认模型始终可用。"
                         stacked
@@ -2337,9 +2357,9 @@ export function SettingsView({
                       >
                         <select
                           className={SELECT_CLASS_NAME}
-                          value={managedModel?.model || settingsDraft.model || ''}
+                          value={(useLocalModel ? settingsDraft.model : managedModel?.model) || ''}
                           aria-label="默认模型"
-                          disabled={Boolean(managedModel)}
+                          disabled={!useLocalModel}
                           onChange={(event) => updateSetting('model', event.target.value)}
                         >
                           <option value="">请选择模型</option>
@@ -2354,9 +2374,9 @@ export function SettingsView({
                       >
                         <select
                           className={SELECT_CLASS_NAME}
-                          value={managedModel?.fastModel || settingsDraft.fastModel || ''}
+                          value={(useLocalModel ? settingsDraft.fastModel : managedModel?.fastModel) || ''}
                           aria-label="快速模型"
-                          disabled={Boolean(managedModel)}
+                          disabled={!useLocalModel}
                           onChange={(event) => updateSetting('fastModel', event.target.value)}
                         >
                           <option value="">留空，使用默认模型</option>
@@ -2384,7 +2404,9 @@ export function SettingsView({
                         description="用当前模型和思考设置发送一条简短请求。"
                         controlClassName="sm:w-[380px]"
                       >
-                        <ModelConnectionTest settings={settingsDraft} />
+                        <ModelConnectionTest settings={useLocalModel ? settingsDraft : {
+                          ...settingsDraft, model: managedModel?.model || '', url: managedModel?.url || '', apiKey: managedModel?.apiKey || '',
+                        }} />
                       </SettingsRow>
                     </SettingsGroup>
                   </SettingsSection>

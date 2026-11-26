@@ -800,6 +800,7 @@ export type DesktopSettings = {
   permissionMode: PermissionMode;
   bypassPermissions: boolean;
   model: string;
+  localModelEnabled?: boolean;
   modelListMode?: 'auto' | 'manual';
   availableModels?: string[];
   fastModel: string;

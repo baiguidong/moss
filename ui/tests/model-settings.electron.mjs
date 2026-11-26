@@ -19,6 +19,17 @@ const ready = new Promise(resolve => app.on('browser-window-created', (_event, c
   if (!window) { window = created; window.webContents.once('did-finish-load', resolve); }
 }));
 const server = createServer(async (req, res) => {
+  if (req.url.startsWith('/api/v1/')) {
+    const modelConfig = {
+      model: 'managed-model', availableModels: ['managed-model'], fastModel: '',
+      url: `http://127.0.0.1:${server.address().port}/managed`, apiKey: 'managed-key',
+    };
+    const response = req.url === '/api/v1/model-access' ? modelConfig
+      : { token: 'device-token', policy: { revision: 1, settings: {} }, modelConfig };
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(response));
+    return;
+  }
   if (req.method === 'GET' && req.url === '/v1/models') {
     modelListRequests.push(req.headers.authorization);
     res.setHeader('Content-Type', 'application/json');
@@ -33,6 +44,10 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET') { res.end(JSON.stringify({ data: [] })); return; }
   const chunks = []; for await (const chunk of req) chunks.push(chunk);
   const body = JSON.parse(Buffer.concat(chunks).toString()); requests.push(body);
+  if (body.model === 'managed-model') {
+    assert(req.url.startsWith('/managed/'));
+    assert.equal(req.headers.authorization, 'Bearer managed-key');
+  }
   if (body.thinking?.type === 'disabled') {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: { type: 'invalid_request_error', message: 'Unsupported reasoning effort "none"' } }));
@@ -83,6 +98,16 @@ try {
   await waitFor(() => js(`Boolean([...document.querySelectorAll('button')].find(el => el.textContent.trim() === '模型与搜索'))`), 'settings view');
   await js(`[...document.querySelectorAll('button')].find(el => el.textContent.trim() === '模型与搜索')?.click()`);
   await waitFor(() => js(`Boolean([...document.querySelectorAll('button')].find(el => el.textContent === '测试当前配置'))`), 'model settings');
+  const sourceSwitch = `document.querySelector('input[aria-label="使用本地模型配置"]')`;
+  assert(await js(`${sourceSwitch}.checked`));
+  await js(`${sourceSwitch}.click()`);
+  await waitFor(() => js(`window.agentDesktop.getSettings().then(s => s.localModelEnabled === false && !s.runtimeModel.model && s.model === 'fixture-model')`), 'saved local model disabled');
+  await waitFor(() => js(`document.querySelector('#model select[aria-label="默认模型"]').disabled && document.body.textContent.includes('Moss Server 暂未提供')`), 'server unavailable status');
+  const beforeDisabledProbe = requests.length;
+  await assert.rejects(js(`window.agentDesktop.testModel({model:'fixture-model'})`));
+  assert.equal(requests.length, beforeDisabledProbe);
+  await js(`${sourceSwitch}.click()`);
+  await waitFor(() => js(`window.agentDesktop.getSettings().then(s => s.localModelEnabled && s.runtimeModel.model === 'fixture-model' && s.runtimeModel.apiKey === 'fixture-key')`), 'saved local model restored');
   const sessionCount = await js(`window.agentDesktop.listSessions().then(value => JSON.stringify(value))`);
   await js(`window.probeSelect = document.querySelector('#conversation select[aria-label="思考模式"]'); void 0;`);
   assert(await js(`Boolean(window.probeSelect)`), 'Thinking belongs in conversation settings');
@@ -165,6 +190,17 @@ try {
   await openSession('Model A session');
   await waitFor(() => js(`${modelSelect}?.title.includes('fixture-tertiary')`), 'changed model shown on reopen');
   await send(sessionId, 'Continue after switching to the third model.', 'fixture-tertiary');
+  const claims = Buffer.from(JSON.stringify({ sub: 'test-user', org_id: 'test-org', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url');
+  await call('updateSettings', {
+    localModelEnabled: false, enterpriseEnabled: true,
+    enterpriseAccountServerUrl: `http://127.0.0.1:${server.address().port}`,
+    enterpriseAccountAccessToken: `test.${claims}.test`,
+  });
+  await waitFor(() => js(`window.agentDesktop.getSettings().then(s => s.runtimeModel.model === 'managed-model')`), 'model delivered by Moss Server');
+  assert.deepEqual((await call('listModels', { refresh: false })).models, ['managed-model']);
+  await send(sessionId, 'Continue via the server connection.', 'managed-model');
+  await call('updateSettings', { localModelEnabled: true });
+  await send(sessionId, 'Resume via the saved local connection.', 'fixture-tertiary');
   console.log('PASS session model selection survives reopening and default changes; new sessions and forks use the expected models.');
 } catch (error) {
   console.error(error.stack); process.exitCode = 1;

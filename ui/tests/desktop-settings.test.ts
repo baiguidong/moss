@@ -8,6 +8,7 @@ import {
   createDesktopSettingsStore,
   normalizeDesktopSettings,
   normalizeMossBaseUrl,
+  resolveDesktopModelSettings,
 } from '../src/desktop-settings.mjs';
 
 const temporaryRoots: string[] = [];
@@ -33,6 +34,33 @@ describe('desktop settings', () => {
     const restarted = createDesktopSettingsStore({ settingsPath });
     expect(restarted.value.modelListMode).toBe('auto');
     expect(restarted.value.availableModels).toEqual(['main', 'other']);
+  });
+
+  it('routes to the selected source and keeps local credentials across restarts', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moss-model-source-'));
+    temporaryRoots.push(root);
+    const settingsPath = path.join(root, 'settings.json');
+    const text = { model: 'local', fastModel: 'fast', baseUrl: 'https://local.test', apiKey: 'local-key' };
+    const managed = { model: 'server', url: 'https://server.test', apiKey: 'server-key', availableModels: ['server'] };
+    fs.writeFileSync(settingsPath, JSON.stringify({ models: { text } }));
+    const store = createDesktopSettingsStore({ settingsPath });
+    expect(resolveDesktopModelSettings(store.value, managed)).toBe(store.value);
+    expect(resolveDesktopModelSettings(normalizeDesktopSettings({}), managed)).toMatchObject(managed);
+    store.save({ localModelEnabled: false });
+    const restarted = createDesktopSettingsStore({ settingsPath });
+    restarted.save({ language: 'english' });
+    expect(restarted.value.localModelEnabled).toBe(false);
+    expect(process.env.MOSS_MODEL_AUTH_TOKEN).toBeUndefined();
+    expect(resolveDesktopModelSettings(restarted.value, managed)).toMatchObject({ ...managed, fastModel: '' });
+    expect(resolveDesktopModelSettings(restarted.value, null)).toMatchObject({
+      model: '', url: '', apiKey: '', fastModel: '', availableModels: [],
+    });
+    expect(fs.readFileSync(settingsPath, 'utf8')).not.toContain('server-key');
+    restarted.save({ localModelEnabled: true });
+    const local = createDesktopSettingsStore({ settingsPath }).value;
+    expect(resolveDesktopModelSettings(local, managed)).toMatchObject({
+      localModelEnabled: true, model: text.model, fastModel: text.fastModel, url: text.baseUrl, apiKey: text.apiKey,
+    });
   });
 
   it('migrates the default model’s legacy context window to a personal limit', () => {

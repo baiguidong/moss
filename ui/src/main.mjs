@@ -308,6 +308,7 @@ import {
 } from './shared/project-memory.mjs';
 import {
   createDesktopSettingsStore,
+  resolveDesktopModelSettings,
   buildThinkingConfig,
   DEFAULT_DESKTOP_SETTINGS,
   normalizeDesktopSettings,
@@ -1163,7 +1164,7 @@ function getDesktopSettingsPayload(extra = {}) {
   };
 }
 
-function getCurrentWebSearchCapabilityFingerprint(settings = desktopSettings) {
+function getCurrentWebSearchCapabilityFingerprint(settings = getRuntimeModelSettings()) {
   return getWebSearchCapabilityFingerprint({
     url: settings.url,
     model: resolveNativeWebSearchModel(settings),
@@ -1172,19 +1173,18 @@ function getCurrentWebSearchCapabilityFingerprint(settings = desktopSettings) {
 }
 
 function getRuntimeModelSettings() {
-  // A complete local model connection remains the user's explicit choice.
-  // The control plane only fills the connection when the desktop has none.
-  const hasLocalModel = Boolean(desktopSettings.model?.trim() && desktopSettings.url?.trim());
-  if (hostManagedModel && !hostAccessDenied && !hostControlPaused && !hasLocalModel) {
-    return {
-      ...desktopSettings,
-      ...hostManagedModel,
-      availableModels: Array.isArray(hostManagedModel.availableModels)
-        ? hostManagedModel.availableModels
-        : [],
-    };
+  return resolveDesktopModelSettings(desktopSettings,
+    hostAccessDenied || hostControlPaused ? null : hostManagedModel);
+}
+
+function getConfiguredRuntimeModelSettings() {
+  const settings = getRuntimeModelSettings();
+  if (settings.localModelEnabled !== undefined && (!settings.model || !settings.url)) {
+    throw new Error(settings.localModelEnabled
+      ? '请先在设置中填写本地模型名称和 API URL。'
+      : 'Moss Server 暂未提供可用的文本模型。请检查服务器连接或开启本地模型配置。');
   }
-  return desktopSettings;
+  return settings;
 }
 
 function getRuntimeAvailableModels(settings = getRuntimeModelSettings()) {
@@ -1201,6 +1201,9 @@ function resolveSessionModel(sessionRecord, settings = getRuntimeModelSettings()
   const override = typeof sessionRecord?.modelOverride === 'string'
     ? sessionRecord.modelOverride.trim()
     : '';
+  if (settings.localModelEnabled !== undefined && override && !getRuntimeAvailableModels(settings).includes(override)) {
+    return settings.model || '';
+  }
   return override || String(settings.model || '').trim();
 }
 
@@ -1215,7 +1218,7 @@ function assertSessionModelAllowed(model, settings = getRuntimeModelSettings()) 
 }
 
 function getSessionRuntimeModelSettings(sessionRecord) {
-  const settings = getRuntimeModelSettings();
+  const settings = getConfiguredRuntimeModelSettings();
   const model = assertSessionModelAllowed(resolveSessionModel(sessionRecord, settings), settings);
   if (!sessionRecord.modelOverride) {
     sessionRecord.modelOverride = model;
@@ -1251,7 +1254,7 @@ function getHostPermissionMode(value, fallback = desktopSettings.permissionMode)
   return hostPolicy.bypassPermissions === false && mode === 'bypassPermissions' ? 'default' : mode;
 }
 
-function getRuntimeWebSearchSettings(settings = desktopSettings) {
+function getRuntimeWebSearchSettings(settings = getRuntimeModelSettings()) {
   const capability = webSearchCapabilityStore.get(
     getCurrentWebSearchCapabilityFingerprint(settings),
   );
@@ -1263,7 +1266,8 @@ function getRuntimeWebSearchSettings(settings = desktopSettings) {
   };
 }
 
-function shouldDetectNativeWebSearch(settings = desktopSettings) {
+function shouldDetectNativeWebSearch(settings = getRuntimeModelSettings()) {
+  if (!settings.model || !settings.url) return false;
   if (getDesktopAgentMode(settings) !== 'local') return false;
   const webSearch = settings.webSearch || {};
   if (webSearch.mode === 'disabled') return false;
@@ -1298,10 +1302,12 @@ async function detectNativeWebSearchCapability({ force = false } = {}) {
     return webSearchProbePromise;
   }
 
+  const effective = getRuntimeModelSettings();
+  if (!effective.model || !effective.url) throw new Error('当前模型来源尚未提供模型连接。');
   const settingsSnapshot = {
-    model: resolveNativeWebSearchModel(desktopSettings),
-    url: desktopSettings.url,
-    apiKey: desktopSettings.apiKey,
+    model: resolveNativeWebSearchModel(effective),
+    url: effective.url,
+    apiKey: effective.apiKey,
   };
   webSearchProbeFingerprint = fingerprint;
 
@@ -2084,7 +2090,7 @@ async function getAgentChannelCatalog(context = null, options = {}) {
       : Promise.resolve({ tools: [] }),
   ]);
   const builtInTools = typeof runtime.listDesktopTools === 'function'
-    ? runtime.listDesktopTools(desktopSettings)
+    ? runtime.listDesktopTools(getRuntimeModelSettings())
     : [];
   const appTools = Array.isArray(contributions?.tools)
     ? contributions.tools.map((tool) => ({
@@ -2155,7 +2161,7 @@ async function getSessionPluginCatalog(sessionRecord) {
       ? resolveAppSkills(appRuntime, selectedAppIds).catch(() => ({ skills: [] }))
       : Promise.resolve({ skills: [] }),
   ]);
-  const builtInTools = typeof runtime.listDesktopTools === 'function' ? runtime.listDesktopTools(desktopSettings) : [];
+  const builtInTools = typeof runtime.listDesktopTools === 'function' ? runtime.listDesktopTools(getRuntimeModelSettings()) : [];
   const tools = [
     ...builtInTools.filter(tool => tool.enabled).map(tool => ({
       id: tool.id, name: tool.id, title: tool.id, description: tool.searchHint || '', source: 'built-in',
@@ -4377,7 +4383,7 @@ function buildProjectConversationExcerpt(history, maxChars = 60000) {
 }
 
 const queryProjectMemory = createProjectMemoryQuery({ prepareRuntime: waitForManagedRuntimesBeforeLocalSession,
-  getSessionConstructor: getClaudeSessionCtor, getSettings: () => desktopSettings,
+  getSessionConstructor: getClaudeSessionCtor, getSettings: getConfiguredRuntimeModelSettings,
   getProjectRunsDir, getProjectWorkspaceDir, mossHome: MOSS_HOME,
   onUsage: (event, context) => usageLedger.record(event, context),
 });
@@ -7824,7 +7830,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         if (record.agentMode === 'remote-direct' && !record.runtime) throw new Error('请先连接云电脑再修改会话参数');
         if (changes.some(change => change.path === 'effort')) {
           const runtime = await getClaudeRuntimeModule();
-          const current = record.runtime?.getEffort ? await record.runtime.getEffort() : runtime.getSessionEffortConfiguration(desktopSettings.model,record.effort ?? undefined);
+          const current = record.runtime?.getEffort ? await record.runtime.getEffort() : runtime.getSessionEffortConfiguration(resolveSessionModel(record),record.effort ?? undefined);
           if (current.overridden || (next.effort !== null && !current.levels.includes(next.effort))) throw new Error('推理强度由环境覆盖，或模型不支持该档位');
           context.assertCurrent?.();
           if (record.runtime?.setEffort) await record.runtime.setEffort(next.effort);
@@ -8843,7 +8849,8 @@ ipcMain.handle('agent:get-remote-identity', async () => {
 });
 ipcMain.handle('agent:get-settings', () => getDesktopSettingsPayload());
 ipcMain.handle('agent:test-model', async (_event, payload = {}) => {
-  const settings = normalizeDesktopSettings(payload, desktopSettings);
+  const effective = getRuntimeModelSettings();
+  const settings = effective === desktopSettings ? normalizeDesktopSettings(payload, desktopSettings) : effective;
   if (!settings.model || !settings.url) throw new Error('请先填写模型名称和 API URL。');
   const runtime = await getClaudeRuntimeModule();
   return runtime.probeModelConfiguration({
@@ -8854,13 +8861,8 @@ ipcMain.handle('agent:test-model', async (_event, payload = {}) => {
 ipcMain.handle('agent:list-models', async (_event, payload = {}) => {
   const settings = normalizeDesktopSettings(payload, desktopSettings);
   const runtimeModel = getRuntimeModelSettings();
-  const runtimeSettings = settings.url ? settings : runtimeModel;
-  const usingManagedModel = Boolean(
-    runtimeModel !== desktopSettings && runtimeModel.url?.trim() &&
-    runtimeSettings.url.trim() === runtimeModel.url.trim() &&
-    runtimeSettings.apiKey?.trim() === runtimeModel.apiKey?.trim(),
-  );
-  if (usingManagedModel) {
+  const runtimeSettings = runtimeModel === desktopSettings && settings.url ? settings : runtimeModel;
+  if (runtimeModel !== desktopSettings && runtimeModel.url) {
     const access = await requestAppAccount('/api/v1/model-access');
     const models = Array.isArray(access?.availableModels)
       ? [...new Set(access.availableModels.map(value => String(value).trim()).filter(Boolean))]
@@ -9453,7 +9455,7 @@ ipcMain.handle('memory:get-catalog', () => memoryCatalog.getCatalog());
 const memoryDreamService = createMemoryDreamService({
   mossHome: MOSS_HOME,
   transcriptDir: path.join(MOSS_HOME, 'sessions'),
-  getSettings: () => desktopSettings,
+  getSettings: getConfiguredRuntimeModelSettings,
   getRuntimeModule: getClaudeRuntimeModule,
   prepareRuntime: waitForManagedRuntimesBeforeLocalSession,
 });
@@ -10006,7 +10008,7 @@ ipcMain.handle('agent:get-model-context', async (_event, { sessionId }) => {
 
 registerSessionEffortIpc({
   ipcMain, getSessionRecord, getRuntimeModule: getClaudeRuntimeModule,
-  getSettings: () => desktopSettings,
+  getSettings: getRuntimeModelSettings,
   persist: record => schedulePersistSession(record, true),
   emit: emitSessionMeta,
 });
