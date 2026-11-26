@@ -24,7 +24,7 @@ test('conversation settings show a single context limit alongside thinking mode'
     initialSection="conversation"
   />);
   const settings = normalizeDesktopSettings({
-    enterpriseEnabled: true, contextWindowLimit: 800_000,
+    contextWindowLimit: 800_000,
   }) as DesktopSettings;
   const html = render(settings);
   const conversation = html.match(/<section[^>]+id="conversation"[^>]*>(.*?)<\/section>/)?.[1];

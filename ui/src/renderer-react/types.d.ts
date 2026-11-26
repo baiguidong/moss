@@ -795,7 +795,7 @@ export type DesktopSettings = {
   userAvatar?: string;
   agentMode: 'local' | 'remote-direct';
   localEnabled: boolean;
-  enterpriseEnabled: boolean;
+  serverSignedIn?: boolean;
   agentTeamsEnabled: boolean;
   permissionMode: PermissionMode;
   bypassPermissions: boolean;
@@ -903,7 +903,6 @@ export type DesktopSettings = {
     baseUrl?: string;
   };
   agentMail?: {
-    enabled?: boolean;
     sessionMode?: 'fixed' | 'new';
     consumerId?: string;
     inboxSessionId?: string;

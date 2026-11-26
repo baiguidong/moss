@@ -144,6 +144,7 @@ const CONTEXT_WINDOW_OPTIONS = [
   { label: '800k', limit: DECLARED_CONTEXT_WINDOW_CHOICES[2] },
   { label: '1M', limit: DECLARED_CONTEXT_WINDOW_CHOICES[3] },
 ];
+const GREEN_TOGGLE_TRACK = 'bg-[#71847a] after:bg-white peer-checked:bg-[#15803d] peer-focus-visible:ring-[#22c55e]';
 const MODEL_LIST_OPTION_CLASS_NAME = 'block rounded-md px-3 py-1.5 text-xs whitespace-nowrap text-muted-foreground peer-hover:text-foreground peer-checked:bg-background peer-checked:font-medium peer-checked:text-foreground peer-checked:shadow-sm peer-focus-visible:ring-2 peer-focus-visible:ring-ring';
 
 const DEFAULT_WEB_SEARCH_SETTINGS: NonNullable<DesktopSettings['webSearch']> = {
@@ -197,7 +198,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
     id: 'basic', title: '通用', icon: Monitor,
     keywords: ['通用', 'general', '基础', '基本', '常规'],
     sections: [
-      { id: 'basic-info', title: '基本信息', keywords: ['用户', '头像', 'avatar', '回复语言', '中文', 'language', '连接', 'connection', 'remote', 'server', 'workspace', '认证', '运行环境', 'runtime', 'node', 'python', 'git', 'bash', 'agent teams', '智能体团队'] },
+      { id: 'basic-info', title: '基本信息', keywords: ['用户', '头像', 'avatar', '回复语言', '中文', 'language', '连接', 'connection', 'remote', 'server', 'workspace', '认证', '运行环境', 'runtime', 'node', 'python', 'git', 'bash', '新会话默认权限', '权限模式', 'permission', 'bypass', '草稿箱', '草稿确认', 'draft', '上下文压缩策略', '主动压缩', '响应式压缩', '超限后压缩', 'compact'] },
     ],
   },
   {
@@ -218,7 +219,7 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
     id: 'agents', title: 'Agents', icon: Bot,
     keywords: ['agent', 'agents', '智能体', 'worker', 'verification', '验证'],
     sections: [
-      { id: 'agents', title: 'Agents', keywords: ['agent', 'agents', '智能体', 'worker', 'verification', '验证', '启用', '停用'] },
+      { id: 'agents', title: 'Agents', keywords: ['agent', 'agents', '智能体', 'worker', 'verification', '验证', '启用', '停用', 'agent teams', '智能体团队'] },
       { id: 'agent-execution', title: 'Agent 与执行', keywords: ['agent', 'scratchpad', 'plan', '后台', '临时工作区', '网页搜索', '最大轮次', '回收', '空闲', '运行时', '进程', 'mcp'] },
     ],
   },
@@ -226,15 +227,15 @@ const SETTINGS_NAVIGATION_GROUPS: SettingsNavigationGroup[] = [
     id: 'tools', title: '工具与性能', icon: Wrench,
     keywords: ['工具', 'tool', 'performance', '权限', 'permission', 'streaming', '结果', 'mcp', 'read'],
     sections: [
-      { id: 'tools', title: '工具', keywords: ['tool', '工具', '草稿箱', '草稿确认', 'draft', 'browser', 'app', 'connector', 'image', '常驻', '按需', 'computer', 'cua', '电脑', '控制', '权限', '截图'] },
-      { id: 'permission', title: '权限', keywords: ['permission', 'allow', '权限确认', 'bypass', 'bash', 'ast', '命令解析'] },
+      { id: 'tools', title: '工具', keywords: ['tool', '工具', 'browser', 'app', 'connector', 'image', '常驻', '按需', 'computer', 'cua', '电脑', '控制', '权限', '截图'] },
+      { id: 'permission', title: '权限', keywords: ['permission', 'allow', '权限确认', 'bash', 'ast', '命令解析'] },
       { id: 'tool-performance', title: '工具与性能', keywords: ['tool', 'performance', 'streaming', 'fallback', '禁止失败恢复', '流式工具执行', '工具结果', 'mcp', 'read', '文件读取', '闲置', '性能'] },
     ],
   },
   {
     id: 'memory', title: '记忆与上下文', icon: Bot,
-    keywords: ['memory', '记忆', 'session', 'compact', 'summary', '摘要', '上下文', '压缩', 'dream', '提取', '纠正'],
-    sections: [{ id: 'memory', title: '记忆与上下文', keywords: ['memory', 'session', 'compact', 'summary', '摘要', '上下文', '压缩', 'dream', '提取', '纠正'] }],
+    keywords: ['memory', '记忆', 'session', 'summary', '摘要', '上下文', 'dream', '提取', '纠正'],
+    sections: [{ id: 'memory', title: '记忆与上下文', keywords: ['memory', 'session', 'summary', '摘要', '上下文', 'dream', '提取', '纠正'] }],
   },
   {
     id: 'storage', title: '存储', icon: HardDrive,
@@ -675,8 +676,8 @@ function RuntimeRow({
   onEnabledChange: (enabled: boolean) => void;
 }) {
   return (
-    <div className="px-4 py-3.5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+    <div className="py-3.5">
+      <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-[13px] font-medium text-foreground">{name}</p>
@@ -684,12 +685,13 @@ function RuntimeRow({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-3">
+          {busy ? <RefreshCw className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" /> : null}
           <Toggle
+            trackClassName={GREEN_TOGGLE_TRACK}
             checked={enabled}
             onCheckedChange={onEnabledChange}
             label={name}
           />
-          {busy ? <RefreshCw className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" /> : null}
         </div>
       </div>
     </div>
@@ -776,7 +778,7 @@ function RuntimeSettings({
   return (
     <div className="space-y-3">
       <SettingsGroup>
-        <div className="grid divide-y divide-sidebar-border sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+        <div className="grid divide-y divide-sidebar-border sm:grid-cols-2 sm:divide-x sm:divide-y-0 sm:[&>:first-child]:pr-4 sm:[&>:last-child]:pl-4">
           <RuntimeRow
             name="Node.js"
             runtime={node}
@@ -1098,7 +1100,6 @@ export function SettingsView({
     firstVisibleSectionId,
     deferredSearchQuery,
     visibleSectionKey,
-    settingsDraft?.enterpriseEnabled,
     settingsDraft?.thinkingMode,
     settingsDraft?.autoMemory,
     settingsDraft?.advanced,
@@ -1473,6 +1474,45 @@ export function SettingsView({
                           <option value="german">Deutsch</option>
                         </select>
                       </SettingsRow>
+                      <SettingsRow
+                        title="新会话默认权限"
+                        description="新建会话会继承此模式，之后可在发送框中单独调整。"
+                        inline
+                      >
+                        <PermissionModeSelector
+                          value={settingsDraft.permissionMode ?? 'default'}
+                          onChange={(mode) => updateSetting('permissionMode', mode)}
+                          compact={false}
+                        />
+                      </SettingsRow>
+                      <SettingsRow
+                        title="草稿箱"
+                        description="开启后，App 或 MCP 工具可以按工具设置先生成参数草稿，等待你确认后再执行。关闭后不会拦截工具调用，工具详情中的草稿确认设置也会暂时失效；重新开启后恢复原有设置。"
+                        inline
+                      >
+                        <Toggle
+                          trackClassName={GREEN_TOGGLE_TRACK}
+                          checked={settingsDraft.toolCallDrafts?.enabled !== false}
+                          onCheckedChange={(enabled) => updateSetting('toolCallDrafts', { enabled })}
+                          label="启用草稿箱"
+                        />
+                      </SettingsRow>
+                      <SettingsRow
+                        title="上下文压缩策略"
+                        description="主动压缩更稳定；响应式压缩会尽量使用完整上下文，仅在接口返回超限后恢复。"
+                        controlClassName="sm:w-[220px]"
+                      >
+                        <select
+                          className={SELECT_CLASS_NAME}
+                          value={advancedDraft.moss_context_compaction_strategy ?? DEFAULT_ADVANCED_SETTINGS.moss_context_compaction_strategy}
+                          onChange={(event) => updateAdvancedSettings({
+                            moss_context_compaction_strategy: event.target.value as 'proactive' | 'reactive',
+                          })}
+                        >
+                          <option value="proactive">主动压缩（推荐）</option>
+                          <option value="reactive">超限后压缩</option>
+                        </select>
+                      </SettingsRow>
                     </SettingsGroup>
 
                     <div className="mb-1 mt-8 text-[13px] font-medium text-muted-foreground">
@@ -1480,66 +1520,24 @@ export function SettingsView({
                     </div>
                     {settingsDraft.managedPolicy?.useEnterpriseModel && <p className="my-3 text-sm text-muted-foreground">当前执行使用企业模型。你的个人模型设置会保留，退出企业账号后恢复使用。</p>}
                     <div className="divide-y divide-border">
-                      {/* Agent Teams */}
                       <SettingsGroup>
-                        <SettingsRow
-                          title="Agent Teams 智能体团队"
-                          description="允许本地 Agent 创建协作团队、共享任务依赖并通过消息协调。新运行时生效。"
-                          controlClassName="sm:w-[56px]"
-                        >
-                          <div className="flex justify-start sm:justify-end">
-                            <Toggle
-                              checked={settingsDraft.agentTeamsEnabled === true}
-                              disabled={settingsDraft.managedPolicy?.agentTeamsEnabled !== undefined}
-                              onCheckedChange={(checked) => updateSetting('agentTeamsEnabled', checked)}
-                              label="启用 Agent Teams"
-                            />
-                          </div>
-                        </SettingsRow>
-                      </SettingsGroup>
-
-                      <SettingsGroup>
-                        <SettingsRow title="企业账号连接" description="连接企业服务，使用云存储、协作邮箱和管理策略。工作电脑在左上角选择。" controlClassName="sm:w-[56px]">
-                          <Toggle disabled={isWebUI() && Boolean(window.mossWeb?.managed)} checked={settingsDraft.enterpriseEnabled ?? false}
-                            onCheckedChange={(checked) => updateSetting('enterpriseEnabled', checked)} label="启用企业账号连接" />
-                        </SettingsRow>
-
                         <SettingsRow
                           title="协作邮箱"
-                          description="在企业管理中指定接收电脑后，在此启用协作邮箱。每个账号只有一台电脑负责接收。"
-                          controlClassName="sm:w-[430px]"
+                          description="登录后自动开启，由企业管理中指定的电脑接收邮件。"
+                          controlClassName="sm:w-[220px]"
                         >
-                          <div className="flex flex-wrap items-center justify-start gap-3 sm:justify-end">
-                            <select
-                              className={cn(SELECT_CLASS_NAME, 'w-[160px]')}
-                              value={settingsDraft.agentMail?.sessionMode ?? 'fixed'}
-                              disabled={
-                                !(settingsDraft.enterpriseEnabled ?? false) ||
-                                settingsDraft.agentMail?.enabled !== true
-                              }
-                              aria-label="协作邮箱会话模式"
-                              onChange={(event) => updateSetting('agentMail', {
-                                ...settingsDraft.agentMail,
-                                sessionMode: event.target.value === 'new' ? 'new' : 'fixed',
-                              })}
-                            >
-                              <option value="fixed">按发件人固定会话</option>
-                              <option value="new">新会话</option>
-                            </select>
-                            <span className="hidden h-6 w-px bg-sidebar-border sm:block" />
-                            <Toggle
-                              checked={
-                                (settingsDraft.enterpriseEnabled ?? false) &&
-                                settingsDraft.agentMail?.enabled === true
-                              }
-                              disabled={!(settingsDraft.enterpriseEnabled ?? false)}
-                              onCheckedChange={(enabled) => updateSetting('agentMail', {
-                                ...settingsDraft.agentMail,
-                                enabled,
-                              })}
-                              label="启用协作邮箱"
-                            />
-                          </div>
+                          <select
+                            className={SELECT_CLASS_NAME}
+                            value={settingsDraft.agentMail?.sessionMode ?? 'fixed'}
+                            aria-label="协作邮箱会话模式"
+                            onChange={(event) => updateSetting('agentMail', {
+                              ...settingsDraft.agentMail,
+                              sessionMode: event.target.value === 'new' ? 'new' : 'fixed',
+                            })}
+                          >
+                            <option value="fixed">按发件人固定会话</option>
+                            <option value="new">新会话</option>
+                          </select>
                         </SettingsRow>
 
                         <SettingsRow
@@ -1614,38 +1612,6 @@ export function SettingsView({
                       settingsDraft={settingsDraft}
                       updateSetting={updateSetting}
                     />
-                    <SettingsGroup className="mt-3">
-                      <SettingsRow
-                        title="网页搜索"
-                        description="搜索配置集中在“模型与搜索”，这里保留当前状态，方便快速确认连接是否可用。"
-                        controlClassName="sm:w-[300px]"
-                      >
-                        <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
-                          <button
-                            type="button"
-                            className="rounded-lg px-2 py-1 text-xs text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-                            aria-label="网页搜索方式"
-                            onClick={() => {
-                              setActiveGroupId('ai');
-                              setActiveSection('web-search');
-                              window.requestAnimationFrame(() => sectionRefs.current['web-search']?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-                            }}
-                          >
-                            当前生效：{activeWebSearchProviderLabel}
-                          </button>
-                          <span className="text-xs text-muted-foreground">{nativeWebSearchStatusLabel}</span>
-                          <button
-                            type="button"
-                            className="rounded-lg border border-sidebar-border px-2.5 py-1.5 text-xs text-foreground hover:bg-sidebar-accent"
-                            aria-label="重新检测原生搜索"
-                            disabled={webSearchAction !== 'idle'}
-                            onClick={() => void probeNativeWebSearch()}
-                          >
-                            {webSearchAction === 'probe' ? '检测中…' : '重新检测'}
-                          </button>
-                        </div>
-                      </SettingsRow>
-                    </SettingsGroup>
                   </SettingsSection>
                 ) : null}
 
@@ -1658,20 +1624,6 @@ export function SettingsView({
                     }}
                   >
                     <SettingsGroup>
-                      <SettingsRow
-                        title="新会话默认权限"
-                        description="新建会话会继承此模式，之后可在发送框中单独调整。"
-                        controlClassName="sm:w-[220px]"
-                      >
-                        <div className="flex justify-start sm:justify-end">
-                          <PermissionModeSelector
-                            value={settingsDraft.permissionMode ?? 'default'}
-                            onChange={(mode) => updateSetting('permissionMode', mode)}
-                            compact={false}
-                          />
-                        </div>
-                      </SettingsRow>
-
                       <SettingsRow
                         title="实验性 Bash AST 权限解析"
                         description="使用结构化 Bash 解析器判定子命令、重定向和权限规则；复杂命令可能需要更多确认，新会话生效。"
@@ -1788,6 +1740,21 @@ export function SettingsView({
                       sectionRefs.current.agents = element;
                     }}
                   >
+                    <SettingsGroup>
+                      <SettingsRow
+                        title="Agent Teams 智能体团队"
+                        description="允许本地 Agent 创建协作团队、共享任务依赖并通过消息协调。新运行时生效。"
+                        inline
+                      >
+                        <Toggle
+                          trackClassName={GREEN_TOGGLE_TRACK}
+                          checked={settingsDraft.agentTeamsEnabled === true}
+                          disabled={settingsDraft.managedPolicy?.agentTeamsEnabled !== undefined}
+                          onCheckedChange={(checked) => updateSetting('agentTeamsEnabled', checked)}
+                          label="启用 Agent Teams"
+                        />
+                      </SettingsRow>
+                    </SettingsGroup>
                     <AgentManager workspace={workspace} />
                   </SettingsSection>
                 ) : null}
@@ -1988,63 +1955,6 @@ export function SettingsView({
                           />
                         </div>
                       </SettingsRow>
-
-                      <SettingsRow
-                        title="Dream 最短间隔"
-                        description="两次后台整理之间至少间隔的小时数。"
-                        controlClassName="sm:w-[160px]"
-                      >
-                        <Input
-                          type="number"
-                          min={0.1}
-                          max={8760}
-                          step={0.5}
-                          className={FIELD_CLASS_NAME}
-                          value={autoMemoryDraft.dreamMinHours ?? DEFAULT_AUTO_MEMORY_SETTINGS.dreamMinHours}
-                          onChange={(event) => updateAutoMemorySettings({
-                            dreamMinHours: Number(event.target.value || '0.1'),
-                          })}
-                        />
-                      </SettingsRow>
-
-                      <SettingsRow
-                        title="Dream 最少会话数"
-                        description="上次整理后至少有多少个其他会话活跃，才允许再次整理。"
-                        controlClassName="sm:w-[160px]"
-                      >
-                        <Input
-                          type="number"
-                          min={1}
-                          max={100000}
-                          className={FIELD_CLASS_NAME}
-                          value={autoMemoryDraft.dreamMinSessions ?? DEFAULT_AUTO_MEMORY_SETTINGS.dreamMinSessions}
-                          onChange={(event) => updateAutoMemorySettings({
-                            dreamMinSessions: Number.parseInt(event.target.value || '1', 10),
-                          })}
-                        />
-                      </SettingsRow>
-                    </SettingsGroup>
-                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
-                      基础设置
-                    </div>
-                    <SettingsGroup>
-                      <SettingsRow
-                        title="上下文压缩策略"
-                        description="主动压缩更稳定；响应式压缩会尽量使用完整上下文，仅在接口返回超限后恢复。"
-                        controlClassName="sm:w-[220px]"
-                      >
-                        <select
-                          className={SELECT_CLASS_NAME}
-                          value={advancedDraft.moss_context_compaction_strategy ?? DEFAULT_ADVANCED_SETTINGS.moss_context_compaction_strategy}
-                          onChange={(event) => updateAdvancedSettings({
-                            moss_context_compaction_strategy: event.target.value as 'proactive' | 'reactive',
-                          })}
-                        >
-                          <option value="proactive">主动压缩（推荐）</option>
-                          <option value="reactive">超限后压缩</option>
-                        </select>
-                      </SettingsRow>
-
                     </SettingsGroup>
 
                     <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
@@ -2100,9 +2010,14 @@ export function SettingsView({
                           <span className="shrink-0 text-xs text-muted-foreground">轮</span>
                         </div>
                       </SettingsRow>
+                    </SettingsGroup>
 
+                    <div className="mb-3 mt-6 px-1 text-[13px] font-medium text-muted-foreground">
+                      Dream 整理
+                    </div>
+                    <SettingsGroup>
                       <SettingsRow
-                        title="Dream 整理"
+                        title="自动整理长期记忆"
                         description="达到时间和会话门槛后，在后台合并、修正和精简长期记忆。"
                         controlClassName="sm:w-[56px]"
                       >
@@ -2110,10 +2025,46 @@ export function SettingsView({
                           <Toggle
                             checked={Boolean(autoMemoryDraft.dreamEnabled)}
                             onCheckedChange={(checked) => updateAutoMemorySettings({ dreamEnabled: checked })}
-                            label="Dream 整理"
+                            label="自动整理长期记忆"
                           />
                         </div>
                       </SettingsRow>
+
+                      <SettingsRow
+                        title="Dream 最短间隔"
+                        description="两次后台整理之间至少间隔的小时数。"
+                        controlClassName="sm:w-[160px]"
+                      >
+                        <Input
+                          type="number"
+                          min={0.1}
+                          max={8760}
+                          step={0.5}
+                          className={FIELD_CLASS_NAME}
+                          value={autoMemoryDraft.dreamMinHours ?? DEFAULT_AUTO_MEMORY_SETTINGS.dreamMinHours}
+                          onChange={(event) => updateAutoMemorySettings({
+                            dreamMinHours: Number(event.target.value || '0.1'),
+                          })}
+                        />
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="Dream 最少会话数"
+                        description="上次整理后至少有多少个其他会话活跃，才允许再次整理。"
+                        controlClassName="sm:w-[160px]"
+                      >
+                        <Input
+                          type="number"
+                          min={1}
+                          max={100000}
+                          className={FIELD_CLASS_NAME}
+                          value={autoMemoryDraft.dreamMinSessions ?? DEFAULT_AUTO_MEMORY_SETTINGS.dreamMinSessions}
+                          onChange={(event) => updateAutoMemorySettings({
+                            dreamMinSessions: Number.parseInt(event.target.value || '1', 10),
+                          })}
+                        />
+                      </SettingsRow>
+
                       <SettingsRow
                         title="手动整理长期记忆"
                         description="立即整理本机共享的长期记忆，不受自动整理开关、时间间隔或会话数限制。"
@@ -2141,21 +2092,6 @@ export function SettingsView({
                       value={toolLoadingDraft}
                       onChange={updateToolLoading}
                     />
-                    <SettingsGroup className="mt-3">
-                      <SettingsRow
-                        title="草稿箱"
-                        description="开启后，App 或 MCP 工具可以按工具设置先生成参数草稿，等待你确认后再执行。关闭后不会拦截工具调用，工具详情中的草稿确认设置也会暂时失效；重新开启后恢复原有设置。"
-                        controlClassName="sm:w-[56px]"
-                      >
-                        <div className="flex justify-start sm:justify-end">
-                          <Toggle
-                            checked={settingsDraft.toolCallDrafts?.enabled !== false}
-                            onCheckedChange={(enabled) => updateSetting('toolCallDrafts', { enabled })}
-                            label="启用草稿箱"
-                          />
-                        </div>
-                      </SettingsRow>
-                    </SettingsGroup>
                     <div className="mb-3 mt-8 px-1">
                       <h3 className="text-[15px] font-semibold text-foreground">App 提供的工具</h3>
                       <p className="mt-1 text-sm leading-6 text-muted-foreground">工具范围由 App 统一声明，默认需在会话中选择。选中的 App 或子服务工具常驻；未选中的全局工具按需加载。</p>
@@ -2228,7 +2164,7 @@ export function SettingsView({
                           : 'Moss Server 暂未提供可用的文本模型。'}
                       >
                         <Toggle checked={useLocalModel} label="使用本地模型配置"
-                          trackClassName="bg-[#71847a] after:bg-white peer-checked:bg-[#15803d] peer-focus-visible:ring-[#22c55e]"
+                          trackClassName={GREEN_TOGGLE_TRACK}
                           onCheckedChange={enabled => updateSetting('localModelEnabled', enabled)} />
                       </SettingsRow>
                       <SettingsRow

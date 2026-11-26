@@ -87,16 +87,14 @@ export type MainView = "chat" | "pending" | "drafts" | "projects" | "overview" |
 export type SidebarMoreView = Extract<MainView, "overview" | "mail" | "cron" | "drafts">;
 
 export function getSidebarMoreViews({
-  enterpriseEnabled,
   agentMailEnabled,
 }: {
-  enterpriseEnabled: boolean;
   agentMailEnabled: boolean;
 }): SidebarMoreView[] {
   return [
     "overview",
     "drafts",
-    ...(enterpriseEnabled && agentMailEnabled ? ["mail" as const] : []),
+    ...(agentMailEnabled ? ["mail" as const] : []),
     "cron",
   ];
 }
@@ -140,7 +138,6 @@ interface AppSidebarProps {
   collapsed: boolean;
   searchQuery: string;
   localEnabled?: boolean;
-  enterpriseEnabled?: boolean;
   agentMailEnabled?: boolean;
   onChangeView: (view: MainView) => void;
   onChangeTheme: (theme: "dark" | "light" | "system") => void;
@@ -332,7 +329,6 @@ export function AppSidebar({
   collapsed,
   searchQuery,
   localEnabled = true,
-  enterpriseEnabled = false,
   agentMailEnabled = false,
   onChangeView,
   onChangeTheme,
@@ -384,19 +380,18 @@ export function AppSidebar({
     : sessionListState === 'loading' ? '正在加载会话列表…'
     : restoringApps ? '正在恢复后台应用…' : '';
   const filteredSessions = filterSidebarSessionsByQuery(historySessions, searchQuery).filter((session) => (
-    session.sessionKind !== 'agent-mail' || (enterpriseEnabled && agentMailEnabled)
+    session.sessionKind !== 'agent-mail' || agentMailEnabled
   ));
   const pinnedSessions = filteredSessions.filter((session) => session.isPinned);
   const unpinnedSessions = filteredSessions.filter((session) => !session.isPinned);
   const sessionGroups = groupSidebarSessions(unpinnedSessions).filter((group) => (
     group.id !== 'project' && (
-      group.id !== 'agent-mail' || (enterpriseEnabled && agentMailEnabled)
+      group.id !== 'agent-mail' || agentMailEnabled
     )
   ));
   const projectTrees = groupProjectSessionTrees(unpinnedSessions);
   const projectsById = React.useMemo(() => new Map(projects.map(project => [project.id, project])), [projects]);
   const moreViews = getSidebarMoreViews({
-    enterpriseEnabled,
     agentMailEnabled,
   });
   const moreApps = getSidebarMoreApps(apps);

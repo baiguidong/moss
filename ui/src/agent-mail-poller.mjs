@@ -48,7 +48,9 @@ export function createAgentMailPoller({
 
   const resolveConnection = async () => {
     if (connection) return connection;
+    const signal = controller?.signal;
     const resolved = await getConnection();
+    signal?.throwIfAborted();
     connection = {
       ...resolved,
       serverUrl: normalizeServerUrl(resolved?.serverUrl),
@@ -198,7 +200,7 @@ export function createAgentMailPoller({
           limit: 5,
         }, { signal: controller.signal });
         backoffMs = 1_000;
-        await handlePulled(resolved, result);
+        if (!controller.signal.aborted && getEnabled()) await handlePulled(resolved, result);
       } catch (error) {
         if (controller?.signal.aborted || error?.name === 'AbortError') break;
         const standby = error instanceof AgentMailApiError && error.code === 'AGENT_MAIL_CONSUMER_ACTIVE';

@@ -40,7 +40,6 @@ const named = {
   'agentTeamsEnabled':['多助手协作','允许多个助手协同完成任务。'],
   'agentMode':['运行位置','选择使用本机或远端的 Agent。'],
   'localEnabled':['本机运行','启用本机 Agent。'],
-  'enterpriseEnabled':['远端连接','启用远端 Agent 连接。'],
   'cleanupPeriodDays':['历史保留天数','设置会话历史的自动清理周期。'],
   'userAvatar':['个人头像','设置聊天中显示的头像。'],
   'hooks':['自动执行规则','在工具调用、会话等事件发生时执行指定动作。'],
@@ -58,7 +57,6 @@ const named = {
   'url':['模型服务地址','设置模型 API 的服务地址。'],
   'webSearch.mode':['联网搜索方式','选择搜索服务的使用方式。'],
   'image.model':['图片模型',''],
-  'agentMail.enabled':['Agent 消息接收','接收发给 Agent 的消息。'],
   'logRotationMaxSize':['单个日志文件大小','达到此大小后切换新的日志文件，单位为字节。'],
   'logRotationMaxFiles':['日志文件保留数','保留多少个轮换日志文件。'],
 }

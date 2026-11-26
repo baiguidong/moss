@@ -17,7 +17,7 @@ try {
     server: { host: '127.0.0.1', port: 0, strictPort: false, hmr: false },
     optimizeDeps: { entries: ['tests/fixtures/server-login.html'] },
     plugins: [{ name: 'login-fixture', configureServer(vite) { vite.middlewares.use('/login-fixture-settings', (_req, res) => {
-      res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(normalizeDesktopSettings({ enterpriseEnabled: true, enterpriseAccountServerUrl: '' })));
+      res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(normalizeDesktopSettings({ enterpriseAccountServerUrl: '' })));
     }); } }],
   });
   await server.listen();

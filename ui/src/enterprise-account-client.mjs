@@ -472,8 +472,7 @@ export function createEnterpriseAccountClient({ getSettings, onCredentials }) {
     getCloudUsageOverview: async (settings) => {
       const resolvedSettings = currentSettings(settings);
       const remote = getEnterpriseAccountSettings(resolvedSettings);
-      const hasCredentials = Boolean(remote.accessToken || remote.refreshToken || (remote.userEmail && remote.userPassword));
-      if (!resolvedSettings?.enterpriseEnabled || !remote.serverUrl || !hasCredentials) return null;
+      if (!remote.serverUrl || !remote.accessToken) return null;
       const signal = AbortSignal.timeout(20_000);
       const connection = await resolveConnection(resolvedSettings, { signal });
       return fetchRemoteUsageOverview({ ...connection, signal });

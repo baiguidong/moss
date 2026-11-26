@@ -6,7 +6,6 @@ import { AppSidebar, getSidebarMoreApps, getSidebarMoreViews } from '../src/rend
 import type { StoredApp } from '../src/renderer-react/types';
 
 function renderSidebar({
-  enterpriseEnabled = false,
   agentMailEnabled = false,
   sessions = [],
   sessionListState,
@@ -20,7 +19,6 @@ function renderSidebar({
   serverAccount = null,
   pendingCount = 0,
 }: {
-  enterpriseEnabled?: boolean;
   agentMailEnabled?: boolean;
   sessions?: any[];
   sessionListState?: 'loading' | 'ready' | 'error';
@@ -49,7 +47,6 @@ function renderSidebar({
       themeMode="system"
       collapsed={collapsed}
       searchQuery={searchQuery}
-      enterpriseEnabled={enterpriseEnabled}
       agentMailEnabled={agentMailEnabled}
       onChangeView={() => {}}
       onChangeTheme={() => {}}
@@ -93,7 +90,7 @@ describe('app sidebar more menu', () => {
   });
 
   test('keeps secondary destinations behind one compact trigger', () => {
-    const html = renderSidebar({ enterpriseEnabled: true, agentMailEnabled: true });
+    const html = renderSidebar({ agentMailEnabled: true });
     expect(html).toContain('title="更多"');
     expect(html).not.toContain('title="资料库"');
     expect(html).not.toContain('title="协作邮箱"');
@@ -104,15 +101,10 @@ describe('app sidebar more menu', () => {
   });
 
   test('builds menu entries from feature availability', () => {
-    expect(getSidebarMoreViews({ enterpriseEnabled: false, agentMailEnabled: false }))
+    expect(getSidebarMoreViews({ agentMailEnabled: false }))
       .toEqual(['overview', 'drafts', 'cron']);
-    expect(getSidebarMoreViews({ enterpriseEnabled: true, agentMailEnabled: true }))
+    expect(getSidebarMoreViews({ agentMailEnabled: true }))
       .toEqual(['overview', 'drafts', 'mail', 'cron']);
-  });
-
-  test('stays hidden unless cloud mode and the mailbox are enabled', () => {
-    expect(getSidebarMoreViews({ enterpriseEnabled: false, agentMailEnabled: true })).not.toContain('mail');
-    expect(getSidebarMoreViews({ enterpriseEnabled: true, agentMailEnabled: false })).not.toContain('mail');
   });
 
   test('applies the same dependency to collaborative mailbox sessions', () => {
@@ -127,7 +119,6 @@ describe('app sidebar more menu', () => {
     };
     expect(renderSidebar({ sessions: [mailSession] })).not.toContain('邮件处理会话');
     expect(renderSidebar({
-      enterpriseEnabled: true,
       agentMailEnabled: true,
       sessions: [mailSession],
     })).toContain('邮件处理会话');
@@ -270,7 +261,6 @@ describe('app sidebar session controls', () => {
 
   test('shows local and cloud history together with distinct icons', () => {
     const html = renderSidebar({
-      enterpriseEnabled: true,
       sessions: [localSession, remoteSession],
     });
     expect(html).toContain('本地会话标题');

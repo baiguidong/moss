@@ -13,19 +13,30 @@ app.setAppPath(fileURLToPath(new URL('..', import.meta.url))); app.setPath('user
 let window;
 const requests = [];
 const modelListRequests = [];
+let mailboxPulls = 0;
 let modelListAuthorized = false;
 const ready = new Promise(resolve => app.on('browser-window-created', (_event, created) => {
   created.show = () => {}; created.showInactive = () => {};
   if (!window) { window = created; window.webContents.once('did-finish-load', resolve); }
 }));
 const server = createServer(async (req, res) => {
+  if (req.url === '/api/v1/bootstrap') {
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ capabilities: { agent_mail: { version: 1 } } }));
+    return;
+  }
+  if (req.url === '/api/v1/agent-mail/pull') {
+    mailboxPulls++;
+    // Hold the long poll until the desktop disconnects.
+    return;
+  }
   if (req.url.startsWith('/api/v1/')) {
     const modelConfig = {
       model: 'managed-model', availableModels: ['managed-model'], fastModel: '',
       url: `http://127.0.0.1:${server.address().port}/managed`, apiKey: 'managed-key',
     };
     const response = req.url === '/api/v1/model-access' ? modelConfig
-      : { token: 'device-token', policy: { revision: 1, settings: {} }, modelConfig };
+      : { token: 'device-token', mailbox: true, policy: { revision: 1, settings: {} }, modelConfig };
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify(response));
     return;
@@ -192,15 +203,21 @@ try {
   await send(sessionId, 'Continue after switching to the third model.', 'fixture-tertiary');
   const claims = Buffer.from(JSON.stringify({ sub: 'test-user', org_id: 'test-org', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url');
   await call('updateSettings', {
-    localModelEnabled: false, enterpriseEnabled: true,
+    localModelEnabled: false,
     enterpriseAccountServerUrl: `http://127.0.0.1:${server.address().port}`,
     enterpriseAccountAccessToken: `test.${claims}.test`,
   });
   await waitFor(() => js(`window.agentDesktop.getSettings().then(s => s.runtimeModel.model === 'managed-model')`), 'model delivered by Moss Server');
+  await waitFor(() => mailboxPulls > 0, 'assigned mailbox starts polling after login');
+  assert.deepEqual(await js(`window.agentDesktop.agentMail.list('inbox', 1)`), { messages: [] });
   assert.deepEqual((await call('listModels', { refresh: false })).models, ['managed-model']);
   await send(sessionId, 'Continue via the server connection.', 'managed-model');
   await call('updateSettings', { localModelEnabled: true });
   await send(sessionId, 'Resume via the saved local connection.', 'fixture-tertiary');
+  const signedOut = await call('updateSettings', { enterpriseAccountAccessToken: '', localModelEnabled: false });
+  assert.equal(signedOut.serverSignedIn, false);
+  assert.equal(signedOut.runtimeModel.model, '');
+  await assert.rejects(js(`window.agentDesktop.agentMail.list('inbox', 1)`), /登录 Moss Server/);
   console.log('PASS session model selection survives reopening and default changes; new sessions and forks use the expected models.');
 } catch (error) {
   console.error(error.stack); process.exitCode = 1;

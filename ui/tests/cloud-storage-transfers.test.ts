@@ -11,7 +11,7 @@ const unsupportedLink = async () => { throw Object.assign(new Error('No hard lin
 
 async function fixture(overrides: Record<string, any> = {}) {
   const root = await mkdtemp(join(tmpdir(), 'moss-cloud-regression-'))
-  const settings = { enterpriseEnabled: true, enterpriseAccount: { serverUrl: 'http://server.test', credentialMode: 'password', accessToken: 'old-token' } }
+  const settings = { enterpriseAccount: { serverUrl: 'http://server.test', credentialMode: 'password', accessToken: 'old-token' } }
   const identity = { serverUrl: 'http://server.test', orgId: 'org', userId: 'alice' }
   const options = {
     directory: join(root, 'transfers'), getSettings: () => settings,
@@ -226,13 +226,14 @@ test('interrupted fallback copy can resume, and a replaced destination is never 
   } finally { await f.close() }
 })
 
-test('cancelling an unfinished fallback copy cleans only its own local files while remote is disabled', async () => {
+test('cancelling an unfinished fallback copy cleans only its own local files while the server is offline', async () => {
   const f = await fixture({ linkFile: unsupportedLink })
   try {
     const t = await downloadTask(f), controller = new AbortController()
     controller.abort()
     await expect(f.host.publishDownload(t, controller.signal)).rejects.toThrow()
-    f.settings.enterpriseEnabled = false
+    f.host.resolveConnection = async () => { throw new Error('offline') }
+    f.host.invalidate()
     await f.host.handle('transfers.cancel', { transferId: t.id }, context)
     await f.host.cancellations.get(t.id)?.done
     expect(t.state).toBe('cancelled')

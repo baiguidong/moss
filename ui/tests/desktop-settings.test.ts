@@ -303,18 +303,15 @@ describe('desktop settings', () => {
     }
   });
 
-  it('normalizes Agent Mail as opt-in and preserves its stable local identity', () => {
+  it('normalizes Agent Mail preferences and preserves its stable local identity', () => {
     expect(normalizeDesktopSettings({}).agentMail).toEqual({
-      enabled: false,
       sessionMode: 'fixed',
       consumerId: '',
       inboxSessionId: '',
       inboxSessionIds: {},
     });
     expect(normalizeDesktopSettings({
-      enterpriseEnabled: true,
       agentMail: {
-        enabled: true,
         sessionMode: 'new',
         consumerId: `  ${'x'.repeat(140)}  `,
         inboxSessionId: ' inbox-session ',
@@ -326,7 +323,6 @@ describe('desktop settings', () => {
         },
       },
     }).agentMail).toEqual({
-      enabled: true,
       sessionMode: 'new',
       consumerId: 'x'.repeat(128),
       inboxSessionId: 'inbox-session',
@@ -337,15 +333,6 @@ describe('desktop settings', () => {
       },
     });
     expect(normalizeDesktopSettings({
-      enterpriseEnabled: false,
-      agentMail: { enabled: true },
-    }).agentMail.enabled).toBe(false);
-    expect(normalizeDesktopSettings(
-      { enterpriseEnabled: false },
-      { enterpriseEnabled: true, agentMail: { enabled: true } },
-    ).agentMail.enabled).toBe(false);
-    expect(normalizeDesktopSettings({
-      enterpriseEnabled: true,
       agentMail: { sessionMode: 'unsupported' },
     }).agentMail.sessionMode).toBe('fixed');
   });
@@ -763,7 +750,7 @@ describe('desktop settings', () => {
 
 it('reads legacy enterprise credentials without creating or moving any sessions', () => {
   const settings = normalizeDesktopSettings({ remoteEnabled: true, remoteDirect: { serverUrl: 'https://enterprise.test', userEmail: 'alice', apiKey: 'key' } });
-  expect(settings.enterpriseEnabled).toBe(true);
+  expect(settings.enterpriseEnabled).toBeUndefined();
   expect(settings.enterpriseAccountServerUrl).toBe('https://enterprise.test');
   expect(settings.enterpriseAccountAccessToken).toBe('');
   expect(settings.remoteDirect).toBeUndefined();

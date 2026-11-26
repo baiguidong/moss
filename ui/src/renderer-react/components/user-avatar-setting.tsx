@@ -41,7 +41,7 @@ export function UserAvatarSetting({ value = '', onChange }: {
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center justify-end gap-3">
         <UserAvatar src={value} className="self-center" />
         <input
           ref={inputRef}

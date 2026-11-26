@@ -676,7 +676,6 @@ try {
   await src.write(Buffer.from('moss-large-file-check'), 0, 21, sourceSize - 21)
   await src.close()
   let settings: any = {
-    enterpriseEnabled: true,
     enterpriseAccount: {
       serverUrl: base,
       credentialMode: 'password',
@@ -861,17 +860,16 @@ try {
     ).state,
     'completed',
   )
-  settings = { ...settings, enterpriseEnabled: false }
+  settings = { enterpriseAccount: { ...settings.enterpriseAccount, accessToken: '' } }
   host.invalidate()
   const before = fetches
   assert.equal(
     (await host.handle('status.get', {}, context)).state,
-    'remote_disabled',
+    'unauthenticated',
   )
   assert.equal(fetches, before)
   settings = {
     ...settings,
-    enterpriseEnabled: true,
     enterpriseAccount: { ...settings.enterpriseAccount, accessToken: 'different' },
   }
   host.invalidate()

@@ -607,8 +607,7 @@ export default function App() {
   const desktopSettingsRef = React.useRef<DesktopSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = React.useState<DesktopSettings | null>(null);
   const [settingsNotice, setSettingsNotice] = React.useState('');
-  const agentMailEnabled =
-    desktopSettings?.enterpriseEnabled === true && desktopSettings?.agentMail?.enabled === true;
+  const agentMailEnabled = desktopSettings?.serverSignedIn === true;
   const [planDecisionBusy, setPlanDecisionBusy] = React.useState(false);
   const workspaceRefreshRequestIdRef = React.useRef(0);
   const layoutRef = React.useRef(layout);
@@ -1401,14 +1400,6 @@ export default function App() {
     window.addEventListener('moss:reconnected', restore);
     return () => window.removeEventListener('moss:reconnected', restore);
   }, [refreshSummaries, openSession]);
-
-  React.useEffect(() => {
-    if (!desktopSettings?.enterpriseEnabled || desktopSettings.agentMode !== 'remote-direct' || activeView !== 'chat') return;
-    const timer = window.setInterval(() => {
-      void window.agentDesktop.syncRemoteSessions().catch(() => {});
-    }, 5_000);
-    return () => window.clearInterval(timer);
-  }, [desktopSettings?.enterpriseEnabled, desktopSettings?.agentMode, activeView]);
 
   React.useEffect(() => {
     if (activeView !== 'chat' || !activeSessionId || activeDetail?.id !== activeSessionId || activeDetail.agentMode !== 'remote-direct') return;
@@ -3200,7 +3191,6 @@ export default function App() {
             collapsed={effectiveLeftCollapsed}
             searchQuery={sessionSearchQuery}
             localEnabled={true}
-            enterpriseEnabled={desktopSettings?.enterpriseEnabled ?? false}
             agentMailEnabled={agentMailEnabled}
             serverConfigured={Boolean(desktopSettings?.enterpriseAccountServerUrl?.trim())}
             serverAuthState={serverAuthState}

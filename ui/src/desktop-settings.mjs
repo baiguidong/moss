@@ -32,7 +32,6 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   userAvatar: '',
   agentMode: 'local',
   localEnabled: true,
-  enterpriseEnabled: false,
   agentTeamsEnabled: false,
   permissionMode: DEFAULT_PERMISSION_MODE,
   bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
@@ -115,7 +114,6 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
     baseUrl: 'https://acc-1258344699.cos.accelerate.myqcloud.com/workbuddy/expert-marketplace',
   },
   agentMail: {
-    enabled: false,
     sessionMode: 'fixed',
     consumerId: '',
     inboxSessionId: '',
@@ -217,6 +215,8 @@ function deleteManagedEndpointEnvKeys(env) {
 }
 
 function deleteLegacyServerSettings(target) {
+  delete target.enterpriseEnabled;
+  delete target.remoteEnabled;
   delete target.reporting;
   delete target.reportingServerUrl;
   delete target.reportingApiKey;
@@ -289,7 +289,6 @@ function loadLocalSettingsAuthConfig(settingsPath) {
 function readEnterpriseAccountSettings(value = {}) {
   value = value && typeof value === 'object' ? value : {};
   const result = { ...value };
-  if (result.enterpriseEnabled === undefined && result.remoteEnabled !== undefined) result.enterpriseEnabled = result.remoteEnabled;
   for (const [key, item] of Object.entries(value)) if (key.startsWith('remoteDirect')) {
     const next = key.replace('remoteDirect', 'enterpriseAccount');
     if (result[next] === undefined) result[next] = item;
@@ -326,12 +325,6 @@ export function normalizeDesktopSettings(input, existing = {}) {
   // configure the enterprise account connection; they cannot select a runner.
   result.agentMode = 'local';
   result.localEnabled = true;
-
-  if (source.enterpriseEnabled !== undefined) {
-    result.enterpriseEnabled = Boolean(source.enterpriseEnabled);
-  } else if (result.enterpriseEnabled === undefined) {
-    result.enterpriseEnabled = DEFAULT_DESKTOP_SETTINGS.enterpriseEnabled;
-  }
 
   if (typeof source.localModelEnabled === 'boolean') result.localModelEnabled = source.localModelEnabled;
 
@@ -722,14 +715,6 @@ export function normalizeDesktopSettings(input, existing = {}) {
     ? result.agentMail
     : {};
   result.agentMail = {
-    enabled:
-      result.enterpriseEnabled === true && (
-        sourceAgentMail.enabled !== undefined
-          ? Boolean(sourceAgentMail.enabled)
-          : existingAgentMail.enabled !== undefined
-            ? Boolean(existingAgentMail.enabled)
-            : DEFAULT_DESKTOP_SETTINGS.agentMail.enabled
-      ),
     sessionMode: normalizeAgentMailSessionMode(
       sourceAgentMail.sessionMode ?? existingAgentMail.sessionMode,
     ),
@@ -1046,7 +1031,6 @@ function saveDesktopSettingsFile(settingsPath, nextSettings, currentSettings) {
     env,
   };
   deleteLegacyServerSettings(toSave);
-  delete toSave.remoteEnabled;
   for (const key of Object.keys(toSave)) if (key.startsWith('remoteDirect')) delete toSave[key];
   delete toSave.enterpriseAccountServerUrl;
   delete toSave.enterpriseAccountCredentialMode;

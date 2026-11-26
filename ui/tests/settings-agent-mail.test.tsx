@@ -9,7 +9,6 @@ test('desktop settings binds Agent Mail session mode and shows the OAuth user', 
   const settings = {
     agentMode: 'local',
     localEnabled: true,
-    enterpriseEnabled: true,
     agentTeamsEnabled: true,
     bypassPermissions: false,
     model: 'gpt-5.5',
@@ -41,7 +40,7 @@ test('desktop settings binds Agent Mail session mode and shows the OAuth user', 
       chatLineHeight: 1.55,
       chatMessageSpacing: 10,
     },
-    agentMail: { enabled: true, sessionMode: 'fixed' },
+    agentMail: { sessionMode: 'fixed' },
     enterpriseAccount: {
       serverUrl: '',
       credentialMode: 'password',
@@ -86,14 +85,18 @@ test('desktop settings binds Agent Mail session mode and shows the OAuth user', 
   expect(html).toContain('按发件人固定会话');
   expect(html).toContain('新会话');
   expect(html).toContain('aria-label="协作邮箱会话模式"');
+  expect(html).not.toContain('启用协作邮箱');
+  expect(html).not.toContain('启用企业账号连接');
   expect(html).toContain('Moss User');
-  expect(html).toContain('Agent Teams 智能体团队');
-  expect(html).toContain('aria-label="启用 Agent Teams"');
+  expect(html).not.toContain('aria-label="启用 Agent Teams"');
+  const agentsHtml = renderToStaticMarkup(React.cloneElement(view, { initialSection: 'agents' }));
+  expect(agentsHtml).toContain('Agent Teams 智能体团队');
+  expect(agentsHtml).toContain('aria-label="启用 Agent Teams"');
   expect(html).toContain('aria-label="回复语言"');
-  expect(html).toContain('aria-label="网页搜索方式"');
-  expect(html).toContain('当前生效：Tavily');
-  expect(html).toContain('已检测到当前 endpoint 原生搜索可用');
-  expect(html).toContain('aria-label="重新检测原生搜索"');
+  expect(html).not.toContain('aria-label="网页搜索方式"');
+  expect(html).not.toContain('当前生效：Tavily');
+  expect(html).not.toContain('已检测到当前 endpoint 原生搜索可用');
+  expect(html).not.toContain('aria-label="重新检测原生搜索"');
   expect(html).toContain('<option value="chinese" selected="">中文</option>');
   const modelHtml = renderToStaticMarkup(React.cloneElement(view, { initialSection: 'model' }));
   expect(modelHtml).toContain('type="password"');

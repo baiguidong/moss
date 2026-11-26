@@ -901,7 +901,10 @@ const localSettingsAuthConfig = desktopSettingsStore.authConfig;
 let hostControl;
 let desktopSettingsState = desktopSettingsStore.state;
 let desktopSettings = desktopSettingsStore.value;
-if (isWebHost && process.env.MOSS_WEB_OWNER_ID) desktopSettings = normalizeDesktopSettings({ enterpriseEnabled: true }, desktopSettings);
+function isServerSignedIn() {
+  return Boolean(isWebHost && process.env.MOSS_WEB_OWNER_ID ||
+    desktopSettings.enterpriseAccountServerUrl && desktopSettings.enterpriseAccountAccessToken);
+}
 // WebUI requests are handled concurrently. A late get-settings response must
 // not overwrite a newer settings save, so every persisted snapshot gets a
 // process-local monotonic revision.
@@ -1143,7 +1146,7 @@ function getDesktopSettingsPayload(extra = {}) {
   return {
     ...desktopSettingsStore.getPayload(extra),
     settingsRevision: desktopSettingsRevision,
-    ...(isWebHost && process.env.MOSS_WEB_OWNER_ID ? { enterpriseEnabled: true } : {}),
+    serverSignedIn: isServerSignedIn(),
     // The renderer uses this effective configuration for model selection. Keep
     // it separate from persisted settings so a server-issued key is never
     // written back as a local model configuration.
@@ -3199,7 +3202,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord, runtimeSystemPrompt,
       ? (event) => recordUsageForSession(event, sessionRecord)
       : undefined,
     agentMailEnabled:
-      !appScoped && (isWebHost || desktopSettings.enterpriseEnabled === true) && desktopSettings.agentMail?.enabled === true,
+      !appScoped && isServerSignedIn(),
   };
 }
 
@@ -3211,7 +3214,6 @@ function refreshDesktopSettings(payload = {}, { policyUpdate = false } = {}) {
     if (hostPolicy.bypassPermissions === false && payload.permissionMode === 'bypassPermissions') throw new Error('企业策略禁止自动批准工具权限。');
   }
   const sourcePayload = payload && typeof payload === 'object' ? { ...payload } : {};
-  if (isWebHost && process.env.MOSS_WEB_OWNER_ID) sourcePayload.enterpriseEnabled = true;
   const previousWebSearchFingerprint = getCurrentWebSearchCapabilityFingerprint();
   const webSearchPayload = sourcePayload.webSearch
     && typeof sourcePayload.webSearch === 'object'
@@ -3311,8 +3313,6 @@ function refreshDesktopSettings(payload = {}, { policyUpdate = false } = {}) {
   saveDesktopSettings(nextSettings);
   desktopSettingsRevision += 1;
   if (
-    Object.prototype.hasOwnProperty.call(payload, 'agentMail') ||
-    Object.prototype.hasOwnProperty.call(payload, 'enterpriseEnabled') ||
     Object.prototype.hasOwnProperty.call(payload, 'enterpriseAccount') ||
     Object.keys(payload).some((key) => key.startsWith('enterpriseAccount'))
   ) {
@@ -3321,7 +3321,8 @@ function refreshDesktopSettings(payload = {}, { policyUpdate = false } = {}) {
     void managedResourceClient.refresh().catch(error => mossLog('warn', 'resources', error.message));
     enterpriseAccountNetFetch.reset(nextServerUrl);
     void hostControl.refresh();
-    agentMailPoller?.refresh();
+    if (agentMailPoller) agentMailPoller.refresh();
+    else initializeAgentMail();
     cloudStorageHost?.invalidate();
   }
   invalidateEmbeddedSettingsCache();
@@ -6306,8 +6307,8 @@ const mossAppEventHandler = createMossAppEventHandler(
 )
 
 async function resolveAgentMailConnection() {
-  if ((!isWebHost && desktopSettings.enterpriseEnabled !== true) || desktopSettings.agentMail?.enabled !== true) {
-    throw new Error('协作邮箱尚未在 Moss 设置中启用。');
+  if (!isServerSignedIn()) {
+    throw new Error('请先登录 Moss Server 以使用协作邮箱。');
   }
   const connection = hostControl.getServiceConnection();
   if (!connection) throw new Error('电脑正在连接企业服务，请稍后重试。');
@@ -6840,13 +6841,13 @@ function createAgentMailApproval(message, context = {}) {
 
 function initializeAgentMail() {
   if (agentMailPoller) return;
-  if (webAutomationsPaused || hostControlPaused || hostAccessDenied || (!isWebHost && desktopSettings.enterpriseEnabled !== true) || desktopSettings.agentMail?.enabled !== true) return;
+  if (webAutomationsPaused || hostControlPaused || hostAccessDenied || !isServerSignedIn()) return;
   const consumerId = ensureAgentMailConsumerId();
   agentMailPoller = createAgentMailPoller({
     consumerId,
     store: agentMailStore,
     getEnabled: () => (
-      !webAutomationsPaused && !hostControlPaused && !hostAccessDenied && (isWebHost || desktopSettings.enterpriseEnabled === true) && desktopSettings.agentMail?.enabled === true
+      !webAutomationsPaused && !hostControlPaused && !hostAccessDenied && isServerSignedIn() && hostControl.isMailboxAssigned()
     ),
     getConnection: async () => {
       const connection = await resolveAgentMailConnection();
@@ -7234,7 +7235,7 @@ hostControl = createHostControlClient({ home: MOSS_HOME, db: sessionDb, kind: is
       userId: process.env.MOSS_WEB_OWNER_ID, orgId: process.env.MOSS_WEB_OWNER_ORG_ID,
       headers: { 'X-Moss-Environment': process.env.MOSS_ENVIRONMENT_ID, 'X-Moss-Host-Token': process.env.MOSS_WEB_CONTROL_TOKEN },
     } : null;
-    if (!desktopSettings.enterpriseEnabled || !getEnterpriseAccountSettings().serverUrl) return null;
+    if (!isServerSignedIn()) return null;
     const connection = await resolveEnterpriseAccountConnection(undefined, { allowRefresh: false });
     const identity = JSON.parse(Buffer.from(connection.authToken.split('.')[1], 'base64url').toString('utf8'));
     return { ...connection, accountId: `${identity.org_id}:${identity.sub}` };
@@ -9058,10 +9059,6 @@ ipcMain.handle('agent:remote-authenticate', async (_event, payload = {}) => {
     const authenticated = await promise;
     controller.signal.throwIfAborted();
     await refreshDesktopSettings({
-      // A successful Server login also enables the control-plane heartbeat.
-      // Without this flag the access token is stored, but the Desktop never
-      // enrolls and therefore never receives the user's New API model key.
-      enterpriseEnabled: true,
       enterpriseAccountServerUrl: rawServerUrl,
       enterpriseAccountCredentialMode: 'password',
       enterpriseAccountUserName: typeof authenticated.user?.name === 'string' ? authenticated.user.name.trim() : '',

@@ -278,8 +278,8 @@ export function AgentMailView({ enabled, onOpenSettings }: AgentMailViewProps) {
             <Mail className="h-5 w-5 text-muted-foreground" />
           </div>
           <div>
-            <div className="text-sm font-medium">协作邮箱尚未启用</div>
-            <div className="mt-1 text-xs text-muted-foreground">开启云端模式并启用协作邮箱后可查看邮件。</div>
+            <div className="text-sm font-medium">请先登录 Moss Server</div>
+            <div className="mt-1 text-xs text-muted-foreground">登录后即可查看协作邮件。</div>
           </div>
           <Button variant="outline" size="sm" onClick={onOpenSettings}>
             <Settings className="h-4 w-4" />

@@ -46,19 +46,19 @@ describe('enterprise login requirements', () => {
 });
 
 describe('cloud usage', () => {
-  it('does not request usage when cloud is disabled, unconfigured or not signed in', async () => {
+  it('does not request usage when the server is unconfigured or signed out', async () => {
     globalThis.fetch = async () => { throw new Error('Unexpected request'); };
     for (const settings of [
-      { enterpriseEnabled: false, enterpriseAccountServerUrl: 'https://moss.example.com', enterpriseAccountAccessToken: 'token' },
-      { enterpriseEnabled: true },
-      { enterpriseEnabled: true, enterpriseAccountServerUrl: 'https://moss.example.com' },
+      { enterpriseAccountAccessToken: 'token' },
+      {},
+      { enterpriseAccountServerUrl: 'https://moss.example.com' },
     ]) {
       const client = createEnterpriseAccountClient({ getSettings: () => settings });
       expect(await client.getCloudUsageOverview()).toBeNull();
     }
   });
 
-  it('uses the current cloud account and shares a timeout across authentication and usage', async () => {
+  it('uses the current cloud account to fetch usage', async () => {
     const requests: any[] = [];
     const overview = {
       generatedAt: Date.now(), timezone: 'Asia/Shanghai', today: '2026-09-24',
@@ -68,22 +68,19 @@ describe('cloud usage', () => {
     };
     globalThis.fetch = async (input, init = {}) => {
       requests.push({ url: String(input), init });
-      return Response.json(String(input).endsWith('/auth/token') ? { access_token: 'current-account-token' } : overview);
+      return Response.json(overview);
     };
     const client = createEnterpriseAccountClient({ getSettings: () => ({
-      enterpriseEnabled: true,
       agentMode: 'local',
-      enterpriseAccount: { serverUrl: 'https://moss.example.com/', credentialMode: 'password', userEmail: 'alice@example.com', userPassword: 'current-account-password' },
+      enterpriseAccount: { serverUrl: 'https://moss.example.com/', credentialMode: 'password', accessToken: 'current-account-token' },
     }) });
 
     expect(await client.getCloudUsageOverview()).toEqual(overview);
     expect(requests.map(request => request.url)).toEqual([
-      'https://moss.example.com/api/v1/auth/token', 'https://moss.example.com/api/v1/usage?host_kind=cloud',
+      'https://moss.example.com/api/v1/usage?host_kind=cloud',
     ]);
-    expect(JSON.parse(requests[0].init.body)).toEqual({ grant_type: 'password', email: 'alice@example.com', password: 'current-account-password' });
-    expect(requests[1].init.headers.authorization).toBe('Bearer current-account-token');
-    expect(requests[1].init.signal).toBeInstanceOf(AbortSignal);
-    expect(requests[1].init.signal).toBe(requests[0].init.signal);
+    expect(requests[0].init.headers.authorization).toBe('Bearer current-account-token');
+    expect(requests[0].init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('reports unavailable or invalid cloud data instead of treating it as zero usage', async () => {
