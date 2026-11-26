@@ -52,6 +52,12 @@ export function ProjectCreationDraftCard({ draft, busy = false, onConfirm, onCan
   const completed = draft.status === 'completed';
   const locked = busy || saving;
   const resources = editing ? candidates : draft.resources;
+  const existingInstructions = <div className="grid min-w-0 gap-2">
+    {typeof draft.existingAgentsContent === 'string' ? <>
+      <p className="text-xs text-muted-foreground">沿用默认工作目录已有的 AGENTS.md</p>
+      <ProjectInstructionsPreview value={draft.existingAgentsContent} plainText />
+    </> : <p className="text-xs text-muted-foreground">无法预览默认工作目录的 AGENTS.md</p>}
+  </div>;
   return (
     <section className="my-4 overflow-hidden rounded-xl border border-primary/30 bg-card text-sm" aria-label="项目创建方案" aria-busy={locked}>
       <header className="flex items-center gap-3 border-b border-border/70 px-4 py-3">
@@ -62,7 +68,9 @@ export function ProjectCreationDraftCard({ draft, busy = false, onConfirm, onCan
         {editing ? <fieldset disabled={locked} className="space-y-4 disabled:opacity-60">
           <ProjectIconPicker value={project.icon} onChange={icon => setProject({ ...project, icon })} disabled={locked} />
           <label className="grid gap-1.5">项目名称<Input value={project.name} maxLength={80} onChange={event => setProject({ ...project, name: event.target.value })} /></label>
-          <ProjectInstructionsField value={project.instructions} disabled={locked} onChange={instructions => setProject({ ...project, instructions })} />
+          {draft.usesExistingAgents && project.workspace === draft.project.workspace
+            ? existingInstructions
+            : <ProjectInstructionsField value={project.instructions} disabled={locked} onChange={instructions => setProject({ ...project, instructions })} />}
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="grid gap-1.5">默认模式<select className="rounded-md border bg-background p-2" value={project.mode || 'boss'} onChange={event => setProject({ ...project, mode: event.target.value as 'chat' | 'boss' })}><option value="boss">Boss</option><option value="chat">Chat</option></select></label>
             <label className="grid gap-1.5">默认权限<select className="rounded-md border bg-background p-2" value={project.permissionMode || 'bypassPermissions'} onChange={event => setProject({ ...project, permissionMode: event.target.value as PermissionMode })}>{Object.entries(PERMISSION_LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
@@ -73,7 +81,7 @@ export function ProjectCreationDraftCard({ draft, busy = false, onConfirm, onCan
         </fieldset> : <>
           <div className="flex items-center gap-3"><ProjectIcon icon={draft.project.icon} className="h-12 w-12" /><div><p className="text-xs text-muted-foreground">项目图标</p><p className="mt-1 text-xs">{draft.project.icon?.kind === 'generated' ? 'AI 生成 · 随方案确认' : '内置图标'}{!completed && '，可修改方案或继续讨论调整'}</p></div></div>
           <div><p className="text-xs text-muted-foreground">项目名称</p><p className="mt-1 break-words font-medium">{draft.project.name}</p></div>
-          <div className="grid gap-2"><p className="text-xs text-muted-foreground">项目指令</p><ProjectInstructionsPreview value={draft.project.instructions} /></div>
+          <div className="grid gap-2"><p className="text-xs text-muted-foreground">项目指令</p>{draft.usesExistingAgents ? existingInstructions : <ProjectInstructionsPreview value={draft.project.instructions} />}</div>
           <p className="text-xs text-muted-foreground">{draft.project.mode === 'chat' ? 'Chat' : 'Boss'} · {PERMISSION_LABELS[draft.project.permissionMode || 'bypassPermissions']} · 团队协作{draft.project.agentTeamsEnabled === false ? '关闭' : '开启'}</p>
           <div className="text-xs"><p className="text-muted-foreground">工作目录</p>{draft.project.workspaces?.length ? draft.project.workspaces.map(directory => <p className="mt-1 break-all" key={directory}>{directory}{directory === draft.project.workspace ? '（默认）' : ''}</p>) : <p className="mt-1">自动建立项目默认目录</p>}</div>
           <p className="text-xs">默认专家：{draft.project.assistantName === '' ? '不使用' : resources.find(entry => entry.kind === 'expert' && entry.id === draft.project.assistantName)?.displayName || '按项目专家配置自动选择'}</p>

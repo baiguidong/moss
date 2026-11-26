@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createProjectCreationService, normalizeCreationPlan } from '../src/project-creation-service.mjs';
+import { createProjectCreationService, normalizeCreationPlan, projectCreationDraftView } from '../src/project-creation-service.mjs';
 import { createProjectCreationResources } from '../src/project-creation-resources.mjs';
 import { resolveProjectSessionDefaults } from '../src/shared/project-session-defaults.mjs';
 
@@ -77,6 +77,32 @@ test('edited configuration invalidates old confirmation and old model revision',
   const result = await f.confirm(next);
   assert.equal(result.project.name, '新名称'); assert.equal(result.project.defaultWorkspace, '/tmp');
   assert.deepEqual(result.project.workspaces, ['/tmp']);
+});
+
+test('preview discards generated and edited instructions for a workspace with AGENTS.md', async t => {
+  const f = await fixture(t);
+  const agentsPath = path.join(f.directory, 'AGENTS.md');
+  await writeFile(agentsPath, 'Original project rules');
+  const draft = await f.propose({ workspace: f.directory, instructions: 'Generated rules' });
+  assert.equal(draft.usesExistingAgents, true);
+  assert.equal(draft.project.instructions, '');
+  const edited = await f.service.update({ draftId: draft.id, version: draft.version, patch: { instructions: 'Edited rules' } });
+  assert.equal(edited.usesExistingAgents, true);
+  assert.equal(edited.project.instructions, '');
+  assert.equal(await readFile(agentsPath, 'utf8'), 'Original project rules');
+  const legacyDraft = { ...draft, usesExistingAgents: undefined };
+  const original = '# Project rules\r\n\r\n- Preserve whitespace.  ';
+  await writeFile(agentsPath, original);
+  const view = await projectCreationDraftView(legacyDraft);
+  assert.equal(view.usesExistingAgents, true);
+  assert.equal(view.existingAgentsContent, original);
+  await writeFile(agentsPath, '');
+  assert.equal((await projectCreationDraftView(draft)).existingAgentsContent, '');
+  assert.equal((await f.service.get({ draftId: draft.id })).existingAgentsContent, undefined);
+  const switched = await f.service.update({ draftId: edited.id, version: edited.version, patch: { workspace: path.join(f.directory, 'new'), instructions: 'New workspace rules' } });
+  assert.equal(switched.usesExistingAgents, false);
+  assert.equal(switched.project.instructions, 'New workspace rules');
+  assert.equal((await projectCreationDraftView(switched)).existingAgentsContent, undefined);
 });
 
 test('generated icons stay in the draft until confirmation and icon edits require reconfirmation', async t => {

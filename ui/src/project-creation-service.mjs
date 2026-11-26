@@ -6,6 +6,7 @@ import { runInKeyedQueue } from './shared/keyed-queue.mjs';
 import { PERMISSION_MODES } from './permission-modes.mjs';
 import { parseAppServiceKey } from '../../packages/app-sdk/src/tool-services.mjs';
 import { normalizeProjectIcon } from '../../shared/project-icon.mjs';
+import { hasProjectAgentsFile, projectAgentsPath } from './project-agents.mjs';
 
 const editable = new Set(['awaiting_confirmation', 'awaiting_authorization', 'failed', 'cancelled', 'installing', 'creating']);
 const list = (value, max = 100) => {
@@ -38,6 +39,21 @@ export function normalizeCreationPlan(input, { generated = true } = {}) {
   };
 }
 
+/** Read the current file for the confirmation card without adding it to the draft. */
+export async function projectCreationDraftView(draft) {
+  const workspace = draft?.project.workspace;
+  if (!workspace || (draft.status === 'completed' && !draft.usesExistingAgents)) return draft;
+  try {
+    if (await hasProjectAgentsFile(workspace)) {
+      const existingAgentsContent = await fs.readFile(projectAgentsPath(workspace), 'utf8');
+      return { ...draft, usesExistingAgents: true, existingAgentsContent };
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') return { ...draft, usesExistingAgents: true, existingAgentsContent: null };
+  }
+  return { ...draft, usesExistingAgents: false };
+}
+
 /** Only confirm() can install or create. Model tools can read and propose plans. */
 export function createProjectCreationService({ directory, assertSession, resources, createProject, readProject,
   emit = () => {}, validateWorkspace = async () => {} }) {
@@ -56,7 +72,7 @@ export function createProjectCreationService({ directory, assertSession, resourc
     const temporary = `${file(draft.id)}.${randomUUID()}.tmp`;
     try { await fs.writeFile(temporary, JSON.stringify(draft, null, 2), { mode: 0o600 }); await fs.rename(temporary, file(draft.id)); }
     finally { await fs.rm(temporary, { force: true }).catch(() => {}); }
-    emit(structuredClone(draft));
+    await emit(structuredClone(draft));
     return draft;
   }
   async function get({ draftId, sessionId } = {}) {
@@ -89,10 +105,12 @@ export function createProjectCreationService({ directory, assertSession, resourc
     await ensureEditable(previous);
     const plan = normalizeCreationPlan(input, options);
     for (const directory of plan.project.workspaces) await validateWorkspace(directory);
+    const usesExistingAgents = Boolean(plan.project.workspace && await hasProjectAgentsFile(plan.project.workspace));
+    if (usesExistingAgents) plan.project.instructions = '';
     const selected = [];
     for (const ref of plan.refs) selected.push(await resources.inspect(ref));
     return save({ id: previous?.id || randomUUID(), sessionId, version: (previous?.version || 0) + 1,
-      status: 'awaiting_confirmation', project: plan.project, resources: selected,
+      status: 'awaiting_confirmation', project: plan.project, usesExistingAgents, resources: selected,
       createdProjectId: null, error: null, createdAt: previous?.createdAt || Date.now(), updatedAt: previous?.updatedAt || 0 });
   }
   async function propose(input, sessionId) {

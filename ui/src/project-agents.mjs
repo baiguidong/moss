@@ -29,37 +29,41 @@ export function projectAgentsPath(directory) {
   return path.join(directory, PROJECT_AGENTS_FILENAME);
 }
 
+export async function hasProjectAgentsFile(directory) {
+  try {
+    return (await fs.stat(projectAgentsPath(directory))).isFile();
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 const fileQueue = new Map();
 const projectDefaults = readFileSync(new URL('./project-session-defaults.md', import.meta.url), 'utf8');
 
 export function ensureProjectAgentsFile(directory, instructions = '', { creating = false } = {}) {
   const filePath = projectAgentsPath(directory);
   return runInKeyedQueue(fileQueue, filePath, async () => {
-    let existing;
     try {
-      existing = await fs.readFile(filePath, 'utf8');
+      return { path: filePath, content: await fs.readFile(filePath, 'utf8'), created: false };
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
-    const configured = normalizeAgentsText(instructions);
-    const base = existing ?? configured;
-    const additions = [];
-    if (existing !== undefined && creating && instructions.trim()) {
-      const body = configured.replace(/^# AGENTS\.md\s*\n/i, '').trim();
-      if (body && !existing.includes(body)) additions.push(body);
+    let content = normalizeAgentsText(instructions);
+    const defaults = projectDefaults.trim();
+    if (creating && !content.includes(defaults)) {
+      content += `\n${defaults}\n`;
     }
-    if (creating && ![base, ...additions].some(text => text.includes(projectDefaults.trim()))) {
-      additions.push(projectDefaults.trim());
-    }
-    const separator = base.endsWith('\n') ? '\n' : '\n\n';
-    const suffix = additions.length ? separator + additions.join('\n\n') + '\n' : '';
-    const content = base + suffix;
-    if (existing === undefined) {
+    try {
       await fs.writeFile(filePath, content, { encoding: 'utf8', flag: 'wx' });
-    } else if (suffix) {
-      await fs.appendFile(filePath, suffix);
+    } catch (error) {
+      // Another creator may have published the file after our first read.
+      if (error.code === 'EEXIST') {
+        return { path: filePath, content: await fs.readFile(filePath, 'utf8'), created: false };
+      }
+      throw error;
     }
-    return { path: filePath, content, created: existing === undefined };
+    return { path: filePath, content, created: true };
   });
 }
 

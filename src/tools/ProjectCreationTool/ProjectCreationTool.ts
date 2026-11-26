@@ -8,7 +8,7 @@ export type ProjectCreationProvider = (
 ) => Promise<unknown>
 
 const inputSchema = z.strictObject({
-  action: z.enum(['get', 'preview']),
+  action: z.enum(['get', 'checkWorkspace', 'preview']),
   version: z.number().int().positive().optional().describe('Current draft version returned by get; required when revising a draft.'),
   name: z.string().trim().min(1).max(80).optional(),
   icon: z.strictObject({
@@ -21,7 +21,7 @@ const inputSchema = z.strictObject({
     try { normalizeProjectIcon(icon, { strict: true }) }
     catch { ctx.addIssue({ code: 'custom', message: '图标无效：请选择内置图标，或提供有效的 SVG path 数据。' }) }
   }).optional().describe('Design an icon matching the project goal. It is previewed for user confirmation with the plan.'),
-  instructions: z.string().max(20000).default('').describe('完整的项目 AGENTS.md 内容，使用 Markdown 和真实换行。借鉴 Codex /init 的“只写长期、不可直接推断的规则”原则，但按普通用户项目翻译：写项目范围、协作方式、资料整理、输出标准和确认规则；只有项目确实涉及代码时才写命令、测试或代码风格。不要写当前任务、具体交付物、阶段目标或一次性请求，不要使用字面量 \\n 或代码围栏。'),
+  instructions: z.string().max(20000).default('').describe('默认工作目录已有 AGENTS.md 时留空。否则提供完整的项目 AGENTS.md 内容，使用 Markdown 和真实换行，只写长期、不可直接推断的规则。不要写当前任务、具体交付物、阶段目标或一次性请求，不要使用字面量 \\n 或代码围栏。'),
   workspace: z.string().trim().optional().describe('Absolute workspace path. Missing directories are created when the user confirms; never discard a requested path because it does not exist.'),
   workspaces: z.array(z.string().trim()).max(8).optional(),
   skillIds: z.array(z.string().trim()).max(50).default([]),
@@ -41,7 +41,7 @@ export function createProjectCreationTool(provider: ProjectCreationProvider) {
     inputSchema,
     maxResultSizeChars: 50000,
     async description() {
-      return 'Read or preview an editable Moss project plan. Only the host UI confirmation installs resources and creates the project.'
+      return 'Read or preview an editable Moss project plan, or check a workspace for AGENTS.md. Only the host UI confirmation installs resources and creates the project.'
     },
     async prompt() {
       return [
@@ -51,7 +51,8 @@ export function createProjectCreationTool(provider: ProjectCreationProvider) {
         'Read the current draft with get before revising it, then submit the full plan with its current version.',
         'Keep the current icon when revising other fields. Redesign it only when the user asks.',
         'Treat one-off work in the user message (for example, organizing a particular case into a Word document) as a future project-session task. Do not put it in instructions or create a first task.',
-        'Write instructions as a concise Chinese adaptation of the Codex /init AGENTS.md convention, not as a coding template: start with # AGENTS.md, state that it guides Moss, and include only durable project-specific scope, collaboration, source/material organization, output standards and confirmation rules. Add commands, tests or code style only when this project truly has software work. Omit sections that are unknown or irrelevant.',
+        'Before drafting instructions for a chosen directory, call checkWorkspace with the default workspace path. If usesExistingAgents is true, leave instructions empty and use the existing AGENTS.md. Check again if the default directory changes.',
+        'When a new AGENTS.md is needed, draft concise Chinese instructions using the Codex /init convention. Start with # AGENTS.md, state that it guides Moss, and include only durable project-specific scope, collaboration, source/material organization, output standards and confirmation rules. Add commands, tests or code style only when this project has software work. Omit unknown or irrelevant sections.',
         'Skills, Apps and experts are optional. Based on the project goal, you may look up and recommend suitable resources, but recommendations must be presented as optional choices through AskUserQuestion. Always include a clear “不使用任何资源/暂不选择” choice when recommending; the user may decline, and a decline or no suitable match must leave all resource ID lists empty and assistantName empty. Never treat a recommendation as approval, never auto-select it, and do not repeat the question after the user declines.',
         'Call preview when ready to show an editable project configuration card. Do not ask for a separate chat confirmation.',
         'This tool never installs resources or creates projects. Only the host UI confirmation can do that.',
@@ -63,6 +64,7 @@ export function createProjectCreationTool(provider: ProjectCreationProvider) {
     isConcurrencySafe() { return false },
     async checkPermissions() { return { behavior: 'allow' as const } },
     async validateInput(input) {
+      if (input.action === 'checkWorkspace' && !input.workspace) return { result: false as const, message: '检查项目指令文件时必须提供工作目录。', errorCode: 1 }
       if (input.action === 'preview' && !input.name) return { result: false as const, message: '预览项目方案时必须提供名称。', errorCode: 1 }
       return { result: true as const }
     },

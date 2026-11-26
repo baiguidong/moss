@@ -163,6 +163,8 @@ export type ProjectCreationDraft = {
     assistantName?: string | null;
     appServiceIds?: string[];
   };
+  usesExistingAgents?: boolean;
+  existingAgentsContent?: string | null;
   resources: Array<{ kind: 'skill' | 'expert' | 'app'; id: string; displayName: string; description?: string; source?: string; status?: string; version?: string;
     runtimeId?: string; icon?: string; installed?: boolean; permissions?: string[]; toolSelection?: string; services?: Array<{ id: string; title: string; available?: boolean; status?: string }> }>;
   pendingActions?: Array<{ appId: string; displayName: string; message: string }>;

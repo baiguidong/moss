@@ -22,8 +22,11 @@ export function ProjectInstructionsField({ value, onChange, disabled = false }: 
   </div>;
 }
 
-export function ProjectInstructionsPreview({ value }: { value: string }) {
+export function ProjectInstructionsPreview({ value, plainText = false }: { value: string; plainText?: boolean }) {
   return <div className="h-[180px] min-w-0 overflow-y-auto rounded-md border border-border px-3 py-2 text-sm" data-project-instructions-preview>
-    {value ? <MarkdownRenderer content={value} variant="compact" /> : <span className="text-muted-foreground">暂无指令</span>}
+    {value ? (plainText
+      ? <pre className="whitespace-pre-wrap break-words font-mono">{value}</pre>
+      : <MarkdownRenderer content={value} variant="compact" />)
+      : <span className="text-muted-foreground">{plainText ? '文件为空' : '暂无指令'}</span>}
   </div>;
 }

@@ -18,9 +18,9 @@ import { registerAppUiRequests } from './apps/app-ui-requests.mjs';
 import { defaultInstanceId as appDefaultInstanceId } from '../../packages/app-runtime/src/state/index.mjs';
 import { AppExecutionHost } from './apps/app-execution-host.mjs';
 import { createExecutionProtocolDefinitions } from '../../packages/app-sdk/src/execution/index.mjs';
-import { createProjectCreationService } from './project-creation-service.mjs';
+import { createProjectCreationService, projectCreationDraftView } from './project-creation-service.mjs';
 import { createProjectCreationResources } from './project-creation-resources.mjs';
-import { ensureProjectAgentsFile, writeProjectAgentsFile } from './project-agents.mjs';
+import { ensureProjectAgentsFile, hasProjectAgentsFile, writeProjectAgentsFile } from './project-agents.mjs';
 import { validateProjectWorkspace, prepareProjectWorkspaces } from './project-workspaces.mjs';
 import { DEFAULT_PROJECT_PERMISSION_MODE } from './shared/project-instructions.mjs';
 import { createProjectStore } from './project-store.mjs';
@@ -1657,7 +1657,8 @@ const PROJECT_CREATION_SYSTEM_PROMPT = [
   '用自然语言了解项目名称、长期目标、工作目录和必要的长期协作规则。根据项目目标判断是否有明显适用的技能、App 或专家；如有，可以查询并给出少量推荐，但推荐必须通过 AskUserQuestion 明确征求选择，并始终提供“不使用任何资源/暂不选择”选项。资源是可选项，用户拒绝、暂不选择或没有合适候选时继续创建，所有资源 ID 保持为空，不得把推荐当成用户同意或反复追问。只询问会影响项目配置的内容，不追问一次性任务的执行细节。',
   '根据项目目标自动设计一个简洁的矢量图标，通过 ProjectPlan 的 icon 字段提交，默认用 generated 和 24×24 的 SVG path 数据及配色。不要输出 SVG 标记、图片链接或请求额外工具。用户指定内置图标时使用 builtin。',
   '图标与项目方案一起在确认卡中供用户确认；用户可改选内置图标、配色，或继续会话要求重新设计。修改其他配置时保留用户已选图标。',
-  '项目 instructions 必须直接作为项目根目录 AGENTS.md 的完整 Markdown 内容，使用真实换行，不要字面量反斜杠 n，也不要代码围栏。借鉴 Codex /init 的核心原则：以 # AGENTS.md 开始，说明文件为 Moss 和兼容代理提供项目指引，只保留长期且不易直接猜到的项目规则。普通用户项目优先写项目范围、协作方式、资料整理、输出标准和确认规则；只有确实涉及代码时才写项目结构、命令、测试或代码风格，不能把代码模板硬套到普通项目。未知或无关章节省略，保持简洁。',
+  '确定默认工作目录后，先调用 ProjectPlan checkWorkspace 检查 AGENTS.md，workspace 填默认工作目录。返回 usesExistingAgents: true 时，直接沿用已有文件，留空 instructions，也无需再收集写入文件的规则。更换默认工作目录时重新检查。',
+  '仅在项目默认工作目录没有 AGENTS.md 或由 Moss 自动新建目录时起草 instructions。提供完整的 Markdown 内容，使用真实换行，不要字面量反斜杠 n，也不要代码围栏。借鉴 Codex /init 的核心原则：以 # AGENTS.md 开始，说明文件为 Moss 和兼容代理提供项目指引，只保留长期且不易直接猜到的项目规则。普通用户项目优先写项目范围、协作方式、资料整理、输出标准和确认规则；只有确实涉及代码时才写项目结构、命令、测试或代码风格，不能把代码模板硬套到普通项目。未知或无关章节省略，保持简洁。',
   '用户消息里的具体事项（例如整理某个游戏案例、面向幼儿园写 Word 文档）属于未来项目会话任务，只能用来理解项目可能需要的能力，绝不能写入 AGENTS.md、项目指令或首个任务。项目创建不保存 firstTask，也不自动发送任何任务。',
   'AGENTS.md 内容可参考 Codex /init 的结构：项目结构与文件组织、构建/测试/开发命令、代码风格与命名、测试约定、提交与协作约定；不要复制通用空话，不要编造尚未确认的命令。',
   '根据项目目标需要推荐资源时，使用 ProjectResource 查询已安装/内置技能、专家、App，并按需求搜索市场、inspect 精确 ID；资源推荐不能视为选择。只有用户在 AskUserQuestion 中明确选择后，才填写对应 ID。用户拒绝、暂不选择或没有合适候选时，skillIds、expertIds、appIds、appServiceIds 必须保持为空，assistantName 必须为空。所选缺失资源会自动安装。不要编造候选、版本或服务 ID。',
@@ -1785,8 +1786,8 @@ const projectCreationService = createProjectCreationService({
   readProject,
   createProject,
   validateWorkspace: validateProjectWorkspace,
-  emit: draft => {
-    emitToRenderer('project-creation:draft-changed', draft);
+  emit: async draft => {
+    emitToRenderer('project-creation:draft-changed', await projectCreationDraftView(draft));
     if (draft.createdProjectId) emitToRenderer('project:changed', { projectId: draft.createdProjectId, reason: 'created-by-conversation' });
   },
 });
@@ -1794,6 +1795,10 @@ const projectCreationService = createProjectCreationService({
 async function projectCreationProvider(input, sessionId) {
   assertProjectCreationSession(sessionId);
   if (input.action === 'get') return projectCreationService.get({ sessionId });
+  if (input.action === 'checkWorkspace') {
+    await validateProjectWorkspace(input.workspace);
+    return { usesExistingAgents: await hasProjectAgentsFile(input.workspace) };
+  }
   if (input.action !== 'preview') throw new Error('不支持的项目方案操作。');
   const record = getSessionRecord(sessionId);
   const selected = record?.projectDefaults?.__projectCreationSelections;
@@ -9580,10 +9585,16 @@ ipcMain.handle('project:create', async (_event, payload = {}) => {
 
 ipcMain.handle('project:resources', (_event, payload = {}) => payload.action === 'inspect' ? projectCreationResources.inspect(payload) : projectCreationResources.list(payload));
 
-ipcMain.handle('project-creation:get-draft', (_event, payload = {}) => projectCreationService.get(payload));
-ipcMain.handle('project-creation:confirm', (_event, payload = {}) => projectCreationService.confirm(payload));
-ipcMain.handle('project-creation:update-draft', (_event, payload = {}) => projectCreationService.update(payload));
-ipcMain.handle('project-creation:cancel', (_event, payload = {}) => projectCreationService.cancel(payload));
+ipcMain.handle('project-creation:get-draft', async (_event, payload = {}) => projectCreationDraftView(await projectCreationService.get(payload)));
+ipcMain.handle('project-creation:confirm', async (_event, payload = {}) => {
+  const result = await projectCreationService.confirm(payload);
+  return { ...result, draft: await projectCreationDraftView(result.draft) };
+});
+ipcMain.handle('project-creation:update-draft', async (_event, payload = {}) => projectCreationDraftView(await projectCreationService.update(payload)));
+ipcMain.handle('project-creation:cancel', async (_event, payload = {}) => {
+  const result = await projectCreationService.cancel(payload);
+  return { ...result, draft: await projectCreationDraftView(result.draft) };
+});
 
 ipcMain.handle('project:update', async (_event, { projectId, updates } = {}) => {
   const project = await updateProject(projectId, updates || {});

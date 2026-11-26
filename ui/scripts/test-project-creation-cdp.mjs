@@ -31,7 +31,8 @@ async function until(fn, label, timeout = 120000) {
 
 const instructionProbe = '核对本轮项目指令'
 const probeRequests = []
-let pending = null
+const workspaceCheckId = randomUUID()
+const previewId = randomUUID()
 const server = createServer(async (request, response) => {
   try {
     const chunks = []
@@ -51,10 +52,10 @@ const server = createServer(async (request, response) => {
       assert.equal(tool.input_schema.properties?.firstTask, undefined)
       assert.match(tool.input_schema.properties?.instructions?.description || '', /真实换行/)
     }
-    if (!pending) {
-      pending = { id: randomUUID(), sent: false }
-    }
-    const input = {
+    const toolResults = body.messages?.flatMap(message => Array.isArray(message.content) ? message.content : []) || []
+    const workspaceCheck = toolResults.find(block => block.type === 'tool_result' && block.tool_use_id === workspaceCheckId)
+    const result = toolResults.find(block => block.type === 'tool_result' && block.tool_use_id === previewId)
+    const input = !workspaceCheck ? { action: 'checkWorkspace', workspace } : {
       action: 'preview',
       name: '幼儿园游戏案例整理',
       icon: { kind: 'generated', color: 'green', paths: ['M4 5h16v14H4z', 'M8 9h8M8 13h5'] },
@@ -68,9 +69,8 @@ const server = createServer(async (request, response) => {
       appIds: [],
       appServiceIds: [],
     }
-    const result = body.messages?.flatMap(message => Array.isArray(message.content) ? message.content : [])
-      .find(block => block.type === 'tool_result' && block.tool_use_id === pending.id)
-    const call = result || probing ? null : { type: 'tool_use', id: pending.id, name: 'ProjectPlan' }
+    if (workspaceCheck && !probing) assert.deepEqual(JSON.parse(workspaceCheck.content), { usesExistingAgents: false })
+    const call = result || probing ? null : { type: 'tool_use', id: workspaceCheck ? previewId : workspaceCheckId, name: 'ProjectPlan' }
     const text = probing ? '已收到。' : result ? '项目配置方案已生成，请在确认卡中检查并创建项目。' : ''
     const events = [
       { type: 'message_start', message: { id: randomUUID(), type: 'message', role: 'assistant', model: body.model, content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 0 } } },
@@ -80,7 +80,6 @@ const server = createServer(async (request, response) => {
       { type: 'message_delta', delta: { stop_reason: call ? 'tool_use' : 'end_turn', stop_sequence: null }, usage: { output_tokens: 1 } },
       { type: 'message_stop' },
     ]
-    pending.sent = true
     response.writeHead(200, { 'Content-Type': 'text/event-stream' })
     response.end(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''))
   } catch (error) {
@@ -129,8 +128,27 @@ try {
   mark('Plan keeps durable Chinese Markdown rules, full-access default and requested workspace without one-off task details')
 
   const sharedRule = '原始观察记录按活动日期归档。'
+  const originalAgents = '# AGENTS.md\n\n' + sharedRule + '\n'
   await fs.mkdir(workspace, { recursive: true })
-  await fs.writeFile(path.join(workspace, 'AGENTS.md'), '# AGENTS.md\n\n' + sharedRule + '\n')
+  const agentsPath = path.join(workspace, 'AGENTS.md')
+  await fs.writeFile(agentsPath, originalAgents)
+  await fs.utimes(agentsPath, 1000, 1000)
+  const modified = (await fs.stat(agentsPath)).mtimeMs
+  const revised = await page.evaluate(({ id, version, project }) => window.agentDesktop.projectCreation.updateDraft({ draftId: id, version, patch: { instructions: project.instructions } }), draft)
+  assert.equal(revised.usesExistingAgents, true)
+  assert.equal(revised.project.instructions, '')
+  assert.equal(revised.existingAgentsContent, originalAgents)
+  const restored = await page.evaluate(draftId => window.agentDesktop.projectCreation.getDraft({ draftId }), draft.id)
+  assert.equal(restored.existingAgentsContent, originalAgents)
+  const storedDraft = JSON.parse(await fs.readFile(path.join(home, 'project-drafts', `${draft.id}.json`), 'utf8'))
+  assert.equal(Object.hasOwn(storedDraft, 'existingAgentsContent'), false)
+  await page.getByText('沿用默认工作目录已有的 AGENTS.md', { exact: true }).waitFor()
+  const originalPreview = page.locator('[data-project-instructions-preview] pre')
+  assert.equal(await originalPreview.textContent(), originalAgents)
+  await page.getByRole('button', { name: '修改方案', exact: true }).click()
+  assert.equal(await originalPreview.textContent(), originalAgents)
+  assert.equal(await page.getByRole('textbox', { name: '项目指令' }).count(), 0)
+  await page.getByRole('button', { name: '放弃修改', exact: true }).click()
   await page.getByRole('button', { name: '确认并创建', exact: true }).click()
   await until(async () => (await page.evaluate(() => window.agentDesktop.listProjects({}))).some(project => project.name === '幼儿园游戏案例整理'), 'project creation')
   await until(() => page.getByText('幼儿园游戏案例整理', { exact: true }).count(), 'project home')
@@ -139,18 +157,16 @@ try {
   assert.ok(project)
   assert.equal(project.permissionMode, 'bypassPermissions')
   assert.equal(await fs.stat(workspace).then(stat => stat.isDirectory()), true)
-  const agents = await fs.readFile(path.join(workspace, 'AGENTS.md'), 'utf8')
+  const agents = await fs.readFile(agentsPath, 'utf8')
   assert.equal(agents, project.instructions)
-  assert.match(agents, /\n/)
-  assert.doesNotMatch(agents, /\\n/)
-  assert.doesNotMatch(agents, /整理幼儿园文档|游戏案例.*Word|生成.*文档/)
+  assert.equal(agents, originalAgents)
+  assert.equal((await fs.stat(agentsPath)).mtimeMs, modified)
   const sessions = await page.evaluate(() => window.agentDesktop.listSessions())
   assert.equal(sessions.filter(entry => entry.projectId === project.id).length, 0)
   assert.equal(sessions.find(entry => entry.id === session.id)?.projectCreationMode, true)
-  mark('Confirmation creates the project, enters its home, writes AGENTS.md and starts no project session')
+  mark('Confirmation creates the project with its existing AGENTS.md intact and starts no project session')
 
-  const rule = '服务于幼儿园教育活动资料的整理、分析和表达。'
-  async function checkInstructions(sessionId, expectedDocument, absentRule) {
+  async function checkInstructions(sessionId, expectedDocument, absentRule, projectSession = false) {
     const before = probeRequests.length
     await page.evaluate(({ sessionId, prompt }) => window.agentDesktop.send({ sessionId, prompt }), { sessionId, prompt: instructionProbe })
     assert.ok(probeRequests.length > before, 'No model request for the instruction probe')
@@ -162,18 +178,21 @@ try {
       assert.ok(!JSON.stringify(body.system).includes('[Project context]'))
       assert.ok(!JSON.stringify(body.system).includes('[Project memory:'))
       if (absentRule) assert.ok(!request.includes(absentRule), 'unexpected instructions from another workspace or revision')
+      if (projectSession) {
+        assert.ok(body.tools?.some(tool => tool.name === 'ProjectMemory'), 'project memory tool is available')
+        assert.ok(body.tools?.some(tool => tool.name === 'ProjectResult'), 'project result tool is available')
+      }
     }
   }
-  assert.ok(agents.includes(draft.project.instructions.replace(/^# AGENTS\.md\s*/, '').trim()))
   const regular = await page.evaluate(workspace => window.agentDesktop.createSession({ workspace, mode: 'chat' }), workspace)
   const chat = await page.evaluate(({ projectId, workspace }) => window.agentDesktop.createSession({ projectId, workspace, mode: 'chat' }), { projectId: project.id, workspace })
   await checkInstructions(regular.summary.id, agents)
+  await checkInstructions(chat.summary.id, agents, undefined, true)
   await checkInstructions(chat.summary.id, agents)
-  await checkInstructions(chat.summary.id, agents)
-  const edited = agents.replace(rule, '按年龄段记录观察资料。')
-  await fs.writeFile(path.join(workspace, 'AGENTS.md'), edited)
-  await checkInstructions(regular.summary.id, edited, rule)
-  await checkInstructions(chat.summary.id, edited, rule)
+  const edited = agents.replace(sharedRule, '按年龄段记录观察资料。')
+  await fs.writeFile(agentsPath, edited)
+  await checkInstructions(regular.summary.id, edited, sharedRule)
+  await checkInstructions(chat.summary.id, edited, sharedRule)
   const second = path.join(root, '另一个工作目录')
   const otherDoc = '# AGENTS.md\n\n本目录用案例编号归档。\n'
   await fs.mkdir(second)
