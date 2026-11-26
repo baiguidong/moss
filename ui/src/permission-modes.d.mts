@@ -5,6 +5,7 @@ export type PermissionMode =
   | 'dontAsk'
   | 'bypassPermissions';
 
+export const DEFAULT_NEW_SESSION_PERMISSION_MODE: 'bypassPermissions';
 export const PERMISSION_MODES: readonly PermissionMode[];
 export function isPermissionMode(value: unknown): value is PermissionMode;
 export function normalizePermissionMode(

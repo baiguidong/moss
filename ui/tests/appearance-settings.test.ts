@@ -7,7 +7,9 @@ import {
 
 describe('desktop appearance settings', () => {
   it('uses the desktop defaults when appearance is absent', () => {
-    expect(normalizeAppearance(undefined)).toEqual(DEFAULT_APPEARANCE);
+    const appearance = normalizeAppearance(undefined);
+    expect(appearance).toEqual(DEFAULT_APPEARANCE);
+    expect(appearance.toolDisplayMode).toBe('merged');
     expect(hasPersistedAppearance({})).toBe(false);
   });
 
@@ -32,12 +34,12 @@ describe('desktop appearance settings', () => {
 
   it('falls back per field when persisted values are invalid', () => {
     expect(normalizeAppearance(
-      { themeMode: 'unknown', cssThemeId: 'gradient-theme' },
+      { themeMode: 'unknown', cssThemeId: 'gradient-theme', toolDisplayMode: 'unknown' },
       { themeMode: 'dark', cssThemeId: 'grid-theme' },
     )).toMatchObject({
       themeMode: 'dark',
       cssThemeId: 'codex',
-      toolDisplayMode: 'expanded',
+      toolDisplayMode: 'merged',
       chatFontSize: 14,
       chatLineHeight: 1.55,
       chatMessageSpacing: 10,

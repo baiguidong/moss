@@ -90,7 +90,7 @@ function resolveAppearance(appearance) {
     '--moss-code-size': `${profile.codeFontSize}px`, '--ui-font-scale': String(profile.uiFontSize / 14),
     '--moss-chat-font-size': `${clamp(appearance?.chatFontSize, 14, 12, 18)}px`, '--moss-chat-line-height': String(clamp(appearance?.chatLineHeight, 1.55, 1.3, 2)),
     '--moss-chat-message-spacing': `${clamp(appearance?.chatMessageSpacing, 10, 4, 24)}px`,
-    '--moss-diff-markers': appearance?.diffMarkers || 'both', '--moss-tool-display-mode': appearance?.toolDisplayMode || 'expanded',
+    '--moss-diff-markers': appearance?.diffMarkers || 'both', '--moss-tool-display-mode': appearance?.toolDisplayMode || 'merged',
     '--moss-show-assistant-border': appearance?.showAssistantMessageBorder === true ? '1' : '0', '--moss-show-assistant-avatar': appearance?.showAssistantAvatar === false ? '0' : '1',
   } }
 }

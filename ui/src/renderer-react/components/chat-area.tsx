@@ -71,6 +71,7 @@ import {
   ToolDisplaySettingsProvider,
   type ToolDisplayMode,
 } from "@/components/chat/tool-display-settings";
+import { DEFAULT_APPEARANCE } from "../../appearance-settings.mjs";
 import { ToolPermissionCard } from "@/components/chat/tool-permission-card";
 import { PendingToolDraftContext, SessionToolCallDrafts, useSessionToolCallDrafts } from '@/components/tool-call-draft-card';
 import { AskUserQuestionCard, type AskUserQuestionCardProps } from "@/components/chat/ask-user-question-card";
@@ -2450,9 +2451,9 @@ export function ChatArea({
   sessionInfo,
   isPinned = false,
   onTogglePin,
-  toolDisplayMode = "expanded",
+  toolDisplayMode = DEFAULT_APPEARANCE.toolDisplayMode,
   sessionToolDisplayMode = null,
-  globalToolDisplayMode = "expanded",
+  globalToolDisplayMode = DEFAULT_APPEARANCE.toolDisplayMode,
   onToolDisplayModeChange,
   toolDisplaySettingBusy = false,
   agentTeams,

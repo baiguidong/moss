@@ -206,7 +206,14 @@ describe('desktop settings', () => {
   });
 
   it('normalizes five permission modes and migrates the legacy bypass switch', () => {
-    expect(normalizeDesktopSettings({}).permissionMode).toBe('default');
+    expect(normalizeDesktopSettings({})).toMatchObject({
+      permissionMode: 'bypassPermissions',
+      bypassPermissions: true,
+    });
+    expect(normalizeDesktopSettings({ permissionMode: 'default' })).toMatchObject({
+      permissionMode: 'default',
+      bypassPermissions: false,
+    });
     expect(normalizeDesktopSettings({ permissionMode: 'acceptEdits' }).permissionMode)
       .toBe('acceptEdits');
     expect(normalizeDesktopSettings({ permissionMode: 'dontAsk' }).permissionMode)
@@ -216,6 +223,10 @@ describe('desktop settings', () => {
     expect(normalizeDesktopSettings({ bypassPermissions: true })).toMatchObject({
       permissionMode: 'bypassPermissions',
       bypassPermissions: true,
+    });
+    expect(normalizeDesktopSettings({ bypassPermissions: false })).toMatchObject({
+      permissionMode: 'default',
+      bypassPermissions: false,
     });
     expect(normalizeDesktopSettings(
       { model: 'next-model' },

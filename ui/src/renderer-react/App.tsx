@@ -70,7 +70,8 @@ import { buildPendingWorkItems, countPendingWorkItems, type PendingWorkItem } fr
 import {
   buildMainChatRenderMessagesFromHistory,
 } from '@/lib/agent-transcript';
-import { normalizeAppearance } from '../appearance-settings.mjs';
+import { DEFAULT_APPEARANCE, normalizeAppearance } from '../appearance-settings.mjs';
+import { DEFAULT_NEW_SESSION_PERMISSION_MODE } from '../permission-modes.mjs';
 import { applyAppearanceTheme, readCachedAppearance } from '@/theme/appearance';
 import { setStoredThemeId } from '@/theme/cssTheme';
 import {
@@ -502,7 +503,7 @@ export default function App() {
   const projectCreationEntryLock = React.useRef(false);
   const projectCreationReturnSessionRef = React.useRef<string | null>(null);
   const [homeComposerMode, setHomeComposerMode] = React.useState<'chat' | 'project-create'>('chat');
-  const [newSessionPermissionMode, setNewSessionPermissionMode] = React.useState<PermissionMode>('default');
+  const [newSessionPermissionMode, setNewSessionPermissionMode] = React.useState<PermissionMode>();
   const [permissionModeSettingSessionId, setPermissionModeSettingSessionId] = React.useState<string | null>(null);
   const permissionModeSettingRequestRef = React.useRef<string | null>(null);
   const [agentTeamsBySession, setAgentTeamsBySession] = React.useState<Record<string, AgentTeamsSessionState>>({});
@@ -636,7 +637,7 @@ export default function App() {
 
   React.useEffect(() => {
     if (!activeSessionId) {
-      setNewSessionPermissionMode(desktopSettings?.permissionMode ?? 'default');
+      setNewSessionPermissionMode(desktopSettings?.permissionMode);
     }
   }, [activeSessionId, desktopSettings?.permissionMode]);
   // Guards against creating a second session (and a second workspace dir) when
@@ -1685,7 +1686,7 @@ export default function App() {
     return messages;
   }, [activeDetail?.history, activeDetail?.busy, activeSessionId, pendingFirstMessage]);
 
-  const globalToolDisplayMode = desktopSettings?.appearance.toolDisplayMode ?? 'expanded';
+  const globalToolDisplayMode = desktopSettings?.appearance.toolDisplayMode ?? DEFAULT_APPEARANCE.toolDisplayMode;
   const activeToolDisplayMode = resolveToolDisplayMode(
     activeDetail?.toolDisplayMode,
     globalToolDisplayMode,
@@ -1882,7 +1883,7 @@ export default function App() {
       navigateToHome({ resetInput: true });
       setDraftProject(current);
       setNewSessionAgentMode('local');
-      setNewSessionPermissionMode(current.permissionMode || desktopSettingsRef.current?.permissionMode || 'default');
+      setNewSessionPermissionMode(current.permissionMode || desktopSettingsRef.current?.permissionMode);
       setComposerIntent(current.mode || 'boss');
       setHomeWorkspaceChoice(current.defaultWorkspace || current.workspaces?.[0] || current.workspace || null);
       // Connector selections now come from Apps; preserve legacy project data in storage only.
@@ -3122,7 +3123,7 @@ export default function App() {
     } }}>
     <UserAvatarContext.Provider value={desktopSettings?.userAvatar ?? ''}>
     <ToolDisplaySettingsProvider
-      toolDisplayMode={desktopSettings?.appearance.toolDisplayMode ?? 'expanded'}
+      toolDisplayMode={globalToolDisplayMode}
     >
     <div
       className={`${themeMode === 'dark' ? 'dark' : ''} flex h-screen w-full flex-col overflow-hidden app-shell`}
@@ -3443,7 +3444,7 @@ export default function App() {
                 leftCollapsed={effectiveLeftCollapsed}
                 rightCollapsed={layout.rightCollapsed}
                 composerIntent={composerIntent}
-                permissionMode={newSessionPermissionMode}
+                permissionMode={newSessionPermissionMode ?? DEFAULT_NEW_SESSION_PERMISSION_MODE}
                 onPermissionModeChange={setNewSessionPermissionMode}
                 childSessions={[]}
                 onChange={setInput}

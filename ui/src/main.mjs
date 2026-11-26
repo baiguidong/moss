@@ -493,7 +493,6 @@ const sdkPath = app.isPackaged
 const rendererHtml = path.join(uiRoot, 'dist', 'renderer', 'index.html');
 const rendererDevServerUrl = process.env.VITE_DEV_SERVER_URL && String(process.env.VITE_DEV_SERVER_URL).trim();
 const shouldOpenDevTools = process.env.MOSS_OPEN_DEVTOOLS === 'true';
-const DEFAULT_BYPASS_PERMISSIONS = process.env.CLAUDE_CODE_BYPASS_PERMISSIONS === 'true';
 // 通用 fs IPC 读取上限, 防止指向超大文件时把主进程内存撑爆。
 const MAX_IMAGE_BASE64_BYTES = 50 * 1024 * 1024;
 const MAX_READ_TEXT_BYTES = 25 * 1024 * 1024;
@@ -4401,7 +4400,7 @@ function getBootStatus() {
     mossHome: process.env.MOSS_HOME || null,
     sdkReady: hasFile(sdkPath),
     sessionsCount: sessions.size,
-    defaultBypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
+    defaultBypassPermissions: DEFAULT_DESKTOP_SETTINGS.bypassPermissions,
     defaultWorkspaceRoot: MOSS_SESSIONS_DIR,
     appsDir: APPS_DIR,
     appRegistryPath: APP_REGISTRY_PATH,

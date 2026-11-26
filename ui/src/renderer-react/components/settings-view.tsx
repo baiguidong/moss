@@ -43,6 +43,7 @@ import { cn } from '@/lib/utils';
 import { cleanIpcErrorMessage } from '@/lib/app-notifications';
 import { AppearanceSettings } from './appearance-settings';
 import { PermissionModeSelector } from '@/components/permission-mode-selector';
+import { DEFAULT_NEW_SESSION_PERMISSION_MODE } from '../../permission-modes.mjs';
 import { isWebUI, supportsHostFeature } from '@/lib/host-environment';
 import {
   DEFAULT_MOSS_TOOL_LOADING,
@@ -1480,7 +1481,7 @@ export function SettingsView({
                         inline
                       >
                         <PermissionModeSelector
-                          value={settingsDraft.permissionMode ?? 'default'}
+                          value={settingsDraft.permissionMode ?? DEFAULT_NEW_SESSION_PERMISSION_MODE}
                           onChange={(mode) => updateSetting('permissionMode', mode)}
                           compact={false}
                         />

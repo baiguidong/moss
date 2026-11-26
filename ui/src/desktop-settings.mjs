@@ -16,6 +16,7 @@ import {
   normalizeMossToolLoading,
 } from './tool-loading-settings.mjs';
 import {
+  DEFAULT_NEW_SESSION_PERMISSION_MODE,
   normalizePermissionMode,
   permissionModeFromLegacyBypass,
 } from './permission-modes.mjs';
@@ -24,17 +25,14 @@ import {
   normalizeDeclaredContextWindow,
 } from '../../shared/model-context-options.mjs';
 
-const DEFAULT_BYPASS_PERMISSIONS = process.env.CLAUDE_CODE_BYPASS_PERMISSIONS === 'true';
-const DEFAULT_PERMISSION_MODE = permissionModeFromLegacyBypass(DEFAULT_BYPASS_PERMISSIONS);
-
 export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   appWidgets: { enabled: true },
   userAvatar: '',
   agentMode: 'local',
   localEnabled: true,
   agentTeamsEnabled: false,
-  permissionMode: DEFAULT_PERMISSION_MODE,
-  bypassPermissions: DEFAULT_BYPASS_PERMISSIONS,
+  permissionMode: DEFAULT_NEW_SESSION_PERMISSION_MODE,
+  bypassPermissions: DEFAULT_NEW_SESSION_PERMISSION_MODE === 'bypassPermissions',
   model: '',
   modelListMode: 'auto',
   availableModels: [],
@@ -404,12 +402,12 @@ export function normalizeDesktopSettings(input, existing = {}) {
   const legacyPermissionMode = Object.prototype.hasOwnProperty.call(source, 'bypassPermissions')
     ? permissionModeFromLegacyBypass(source.bypassPermissions)
     : null;
+  const permissionModeFallback = typeof result.bypassPermissions === 'boolean'
+    ? permissionModeFromLegacyBypass(result.bypassPermissions)
+    : DEFAULT_NEW_SESSION_PERMISSION_MODE;
   result.permissionMode = explicitPermissionMode
     || legacyPermissionMode
-    || normalizePermissionMode(
-      result.permissionMode,
-      permissionModeFromLegacyBypass(result.bypassPermissions),
-    );
+    || normalizePermissionMode(result.permissionMode, permissionModeFallback);
   // Keep the legacy field in sync for older desktop builds and settings files.
   result.bypassPermissions = result.permissionMode === 'bypassPermissions';
 

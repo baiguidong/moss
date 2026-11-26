@@ -3,6 +3,7 @@
 import * as React from "react";
 import type { PresentationResult } from '@/types';
 import type { ToolStatus } from "@/lib/agent-transcript";
+import { DEFAULT_APPEARANCE } from "../../../appearance-settings.mjs";
 
 export const TOOL_DISPLAY_MODES = ["expanded", "collapsed", "merged"] as const;
 export type ToolDisplayMode = typeof TOOL_DISPLAY_MODES[number];
@@ -15,7 +16,7 @@ type ToolDisplaySettings = {
 };
 
 const ToolDisplaySettingsContext = React.createContext<ToolDisplaySettings>({
-  toolDisplayMode: "expanded",
+  toolDisplayMode: DEFAULT_APPEARANCE.toolDisplayMode,
 });
 
 export type ToolExecutionState = "running" | "completed" | "failed";

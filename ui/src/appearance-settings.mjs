@@ -7,7 +7,7 @@ export const DEFAULT_APPEARANCE = Object.freeze({
   uiFontSize: 14, codeFontSize: 12, uiFont: 'system', contentFont: 'system', codeFont: 'system', contrast: 60,
   lightProfile: DEFAULT_PROFILE, darkProfile: DEFAULT_PROFILE, separateLightDark: false,
   reduceMotion: 'system', translucentSidebar: false, diffMarkers: 'both', pointerCursors: true, fontSmoothing: true, dockIcon: 'default',
-  toolDisplayMode: 'expanded',
+  toolDisplayMode: 'merged',
   chatFontSize: 14,
   chatLineHeight: 1.55,
   chatMessageSpacing: 10,

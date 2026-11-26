@@ -1,3 +1,5 @@
+export const DEFAULT_NEW_SESSION_PERMISSION_MODE = 'bypassPermissions';
+
 export const PERMISSION_MODES = Object.freeze([
   'plan',
   'acceptEdits',
