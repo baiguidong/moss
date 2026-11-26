@@ -224,7 +224,7 @@ function submitHarness() {
     setPreparingNewSession: () => {}, setDraftAppIds: () => {}, setDraftAppServiceIds: () => {},
     input: 'original', appSelection: null, appDraftWorkspace: undefined, draftProject: null, homeComposerMode: 'chat', planDecisionBusy: false,
     activeSessionId: 'session', activeDetail: { workspace: '/work', agentMode: 'local', busy: false },
-    newSessionModel: null,
+    draftModel: null,
     activeSessionIdRef: { current: 'session' }, activeDetailRef: { current: { workspace: '/work' } },
     inputDraftRef: { current: '' }, composerAttachmentsRef: { current: [] },
     composerChoicesRef: { current: { skills: [], agent: null } }, appSelectionDraftRef: { current: null },
