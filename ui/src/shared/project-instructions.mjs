@@ -9,13 +9,3 @@ export function normalizeGeneratedProjectInstructions(value) {
 }
 
 export const DEFAULT_PROJECT_PERMISSION_MODE = 'bypassPermissions';
-
-/** Call at a turn boundary; resource and execution defaults remain session-local. */
-export function refreshProjectSessionInstructions(project, session) {
-  if (!project || session.isSubAgent || !session.projectDefaults) return false;
-  const instructions = project.instructions || '';
-  if (session.projectDefaults.instructions === instructions) return false;
-  session.projectDefaults = { ...session.projectDefaults, instructions };
-  if (session.projectResourceManifest) session.projectResourceManifest = { ...session.projectResourceManifest, instructions };
-  return true;
-}

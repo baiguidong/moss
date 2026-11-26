@@ -72,6 +72,7 @@ describe('project runtime resources', () => {
       unavailableSkillIds: ['review', 'slides'],
       experts: [{ id: 'reviewer' }, { id: 'designer' }],
       unavailableExpertIds: ['reviewer', 'designer'],
+      instructions: 'stale rules',
       assets: [{ id: 'asset-1' }],
       memory: { version: 2 },
     }, {
@@ -81,6 +82,7 @@ describe('project runtime resources', () => {
       expertId: 'reviewer',
     });
     expect(scoped?.connectors).toEqual([{ id: 'mail' }]);
+    expect(scoped).not.toHaveProperty('instructions');
     expect(scoped?.apps).toEqual([{ id: 'docs' }]);
     expect(scoped?.skills).toEqual([{ id: 'review' }]);
     expect(scoped?.unavailableSkillIds).toEqual(['review']);

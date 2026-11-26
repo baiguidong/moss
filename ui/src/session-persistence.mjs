@@ -164,6 +164,12 @@ export function createSessionPersistence({
     }
   }
 
+  function readProjectDefaults(value) {
+    const defaults = parsePersistedObject(value);
+    if (defaults) delete defaults.instructions;
+    return defaults;
+  }
+
   function parsePersistedObject(value) {
     if (!value || typeof value !== 'string') return null;
     try {
@@ -414,7 +420,7 @@ export function createSessionPersistence({
         assistantName: row.assistant_name || null,
         assistantSystemPrompt: '',
         projectId: normalizeOptionalProjectId(row.project_id),
-        projectDefaults: parsePersistedObject(row.project_defaults_json),
+        projectDefaults: readProjectDefaults(row.project_defaults_json),
         projectCreationMode: Boolean(row.project_creation_mode),
         connectorIds: parsePersistedStringList(row.connector_ids_json),
         appIds: parsePersistedStringList(row.app_ids_json),
@@ -428,7 +434,7 @@ export function createSessionPersistence({
         subagentStatus: row.subagent_status || null,
         projectTaskStatus: PROJECT_TASK_STATUSES.has(row.project_task_status)
           ? row.project_task_status
-          : row.project_id && !row.parent_session_id ? 'working' : null,
+          : row.project_id && !row.parent_session_id ? 'idle' : null,
         projectTaskPrompt: typeof row.project_task_prompt === 'string' ? row.project_task_prompt : '',
         projectTaskError: typeof row.project_task_error === 'string' ? row.project_task_error : '',
         projectTaskCompletedAt: Number.isFinite(row.project_task_completed_at)
@@ -501,7 +507,7 @@ export function createSessionPersistence({
         assistantName: row.assistant_name || null,
         assistantSystemPrompt: '',
         projectId: normalizeOptionalProjectId(row.project_id),
-        projectDefaults: parsePersistedObject(row.project_defaults_json),
+        projectDefaults: readProjectDefaults(row.project_defaults_json),
         projectCreationMode: Boolean(row.project_creation_mode),
         connectorIds: parsePersistedStringList(row.connector_ids_json),
         appIds: parsePersistedStringList(row.app_ids_json),

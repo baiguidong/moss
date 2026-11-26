@@ -62,6 +62,9 @@ export function registerSessionControlIpc({
     return { ok: true };
   });
 
+  ipcMain.handle('agent:list-pending-questions', () => Array.from(pendingQuestionRequests.values(),
+    ({ requestId, sessionId, requestedAt, input }) => ({ requestId, sessionId, requestedAt, input })));
+
   ipcMain.handle('agent:answer-question', async (_event, { requestId, sessionId, answers, annotations }) => {
     const pending = pendingQuestionRequests.get(requestId);
     if (!pending) {

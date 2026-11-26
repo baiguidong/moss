@@ -4,7 +4,7 @@ import { DESKTOP_PROJECT_KIND, DESKTOP_PROJECT_LAYOUT_VERSION, isDesktopProjectR
 import { normalizeStringList } from './string-list.mjs';
 import { normalizeProjectIcon } from '../../../shared/project-icon.mjs';
 
-export const PROJECT_TASK_STATUSES = new Set(['working', 'waiting_for_user', 'completed', 'failed', 'stopped']);
+export const PROJECT_TASK_STATUSES = new Set(['idle', 'working', 'waiting_for_user', 'completed', 'failed', 'stopped']);
 
 export function normalizeProjectId(projectId) {
   const id = typeof projectId === 'string' ? projectId.trim() : '';

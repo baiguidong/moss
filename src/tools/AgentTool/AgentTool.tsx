@@ -601,11 +601,6 @@ export const AgentTool = buildTool({
       : undefined;
     if (isolatedWorkspace) {
       await mkdir(isolatedWorkspace, { recursive: true });
-      await Promise.all(
-        ['inputs', 'working', 'outputs'].map(directory =>
-          mkdir(join(isolatedWorkspace, directory), { recursive: true }),
-        ),
-      );
       const mossHome = process.env.MOSS_HOME || join(homedir(), '.moss');
       const parentAssetSnapshot = join(
         mossHome,

@@ -3,7 +3,7 @@ import { normalizeProjectDefaults, resolveProjectSessionDefaults } from '../src/
 
 test('inherits project configuration with Boss and Teams enabled, independent of global Teams', () => {
   const resolved = resolveProjectSessionDefaults({ id: 'p', instructions: 'Project rules', skillIds: ['s'], expertIds: ['assistant'], appIds: ['app'] }, {}, { permissionMode: 'acceptEdits', agentTeamsEnabled: false }, '/projects/p');
-  expect(resolved).toMatchObject({ workspace: '/projects/p', permissionMode: 'bypassPermissions', mode: 'boss', assistant_name: 'assistant', appIds: ['app'], projectDefaults: { instructions: 'Project rules', agentTeamsEnabled: true } });
+  expect(resolved).toMatchObject({ workspace: '/projects/p', permissionMode: 'bypassPermissions', mode: 'boss', assistant_name: 'assistant', appIds: ['app'], projectDefaults: { agentTeamsEnabled: true } });
   expect(resolveProjectSessionDefaults({ id: 'p', permissionMode: 'acceptEdits' }, {}, {}, '/p').permissionMode).toBe('acceptEdits');
   expect(resolveProjectSessionDefaults({ id: 'p' }, { permissionMode: 'plan' }, {}, '/p').permissionMode).toBe('plan');
 });
@@ -13,9 +13,10 @@ test('explicit empty resources, Chat and false override project values; snapshot
   const input = { skillIds: [], connectorIds: [], appIds: [], assistant_name: '', agentTeamsEnabled: false, mode: 'chat', workspace: '/two' };
   const first = resolveProjectSessionDefaults(project, input, { permissionMode: 'default' }, '/fallback');
   project.instructions = 'after'; project.skillIds.push('new'); project.expertIds.push('other');
-  expect(first).toMatchObject({ workspace: '/two', skillIds: [], connectorIds: [], appIds: [], assistant_name: '', mode: 'chat', projectDefaults: { instructions: 'before', expertIds: [], agentTeamsEnabled: false } });
+  expect(first).toMatchObject({ workspace: '/two', skillIds: [], connectorIds: [], appIds: [], assistant_name: '', mode: 'chat', projectDefaults: { expertIds: [], agentTeamsEnabled: false } });
   const next = resolveProjectSessionDefaults(project, {}, {}, '/fallback');
-  expect(next.projectDefaults.instructions).toBe('after');
+  expect(first.projectDefaults).not.toHaveProperty('instructions');
+  expect(next.projectDefaults).not.toHaveProperty('instructions');
   expect(next.skillIds).toEqual(['skill', 'new']);
   expect(() => resolveProjectSessionDefaults(project, { workspace: '/outside' }, {}, '/fallback')).toThrow('项目配置');
 });

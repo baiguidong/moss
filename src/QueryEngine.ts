@@ -2,7 +2,7 @@ import { runAppAgent, type AppAgentRunParams } from './services/appExecution/run
 import { TurnInputQueue, type TurnInputState } from './utils/turnInputQueue.js'
 import { attachToolSources } from './utils/toolSources.js'
 import { toolSourceMetadata } from '../shared/tool-source.mjs'
-import { createUserMessage } from './utils/messages.js'
+import { createUserMessage, getMessagesAfterCompactBoundary } from './utils/messages.js'
 import type { CacheSafeParams } from './utils/forkedAgent.js'
 import { runSideQuestion } from './utils/sideQuestion.js'
 import { feature } from 'bun:bundle'
@@ -305,7 +305,7 @@ export class QueryEngine {
 
   async *submitMessage(
     prompt: string | ContentBlockParam[],
-    options?: { uuid?: string; isMeta?: boolean; mode?: PromptInputMode; preparedTools?: string[]; onInputRecorded?: () => void },
+    options?: { uuid?: string; isMeta?: boolean; mode?: PromptInputMode; preparedTools?: string[]; projectAgreementContext?: string; onInputRecorded?: () => void },
   ): AsyncGenerator<SDKMessage, void, unknown> {
     const recoveredMessages = sanitizeMessagesAfterApiFailure(
       this.mutableMessages,
@@ -576,6 +576,15 @@ export class QueryEngine {
       should_query: shouldQuery,
       allowed_tool_count: allowedTools?.length ?? 0,
     })
+
+    // Keep the snapshot in the actual conversation so retries, rewind and resume
+    // use the same delivery state as the model. A lost snapshot is sent again.
+    const agreements = options?.projectAgreementContext
+    if (shouldQuery && agreements && !getMessagesAfterCompactBoundary(this.mutableMessages).some(
+      message => message.type === 'user' && message.isMeta && message.message.content === agreements,
+    )) {
+      this.mutableMessages.push(createUserMessage({ content: agreements, isMeta: true }))
+    }
 
     // Push new messages, including user input and any attachments
     this.mutableMessages.push(...messagesFromUserInput)

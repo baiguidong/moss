@@ -4,7 +4,7 @@ import { mkdtemp, rm, stat, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { validateProjectWorkspace, prepareProjectWorkspaces } from '../src/project-workspaces.mjs';
-import { normalizeGeneratedProjectInstructions, refreshProjectSessionInstructions } from '../src/shared/project-instructions.mjs';
+import { normalizeGeneratedProjectInstructions } from '../src/shared/project-instructions.mjs';
 import { normalizeCreationPlan } from '../src/project-creation-service.mjs';
 import { createProjectCreationResources } from '../src/project-creation-resources.mjs';
 
@@ -36,19 +36,6 @@ test('generated Markdown survives JSON persistence with real line breaks and lea
   assert.equal(normalizeCreationPlan({ name: 'New', permissionMode: 'plan' }).project.permissionMode, 'plan');
   const literal = '## Literal example\\n\\n- Preserve typed escapes';
   assert.equal(normalizeCreationPlan({ name: 'Edited', instructions: literal }, { generated: false }).project.instructions, literal);
-});
-
-test('refreshing instructions at the next turn preserves session resources, permissions and history', () => {
-  const session = { projectDefaults: { instructions: 'old', skillIds: ['chosen'] }, projectResourceManifest: { instructions: 'old', skills: ['chosen'] }, permissionMode: 'plan', history: ['old message'] };
-  assert.equal(refreshProjectSessionInstructions({ instructions: '# 新规则\n\n- 中文' }, session), true);
-  assert.equal(session.projectDefaults.instructions, '# 新规则\n\n- 中文');
-  assert.deepEqual(session.projectDefaults.skillIds, ['chosen']);
-  assert.deepEqual(session.projectResourceManifest.skills, ['chosen']);
-  assert.equal(session.permissionMode, 'plan');
-  assert.deepEqual(session.history, ['old message']);
-  assert.equal(refreshProjectSessionInstructions({ instructions: '# 新规则\n\n- 中文' }, session), false);
-  assert.equal(refreshProjectSessionInstructions({ instructions: 'changed' }, { ...session, isSubAgent: true }), false);
-  assert.equal(refreshProjectSessionInstructions({ instructions: '' }, session), true);
 });
 
 test('resource catalog merges local and marketplace identities and remains usable when the market fails', async () => {

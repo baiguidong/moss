@@ -72,10 +72,10 @@ it('serializes read-modify-write updates and recovers the queue after a failed m
     return { ...current, name: 'Renamed' };
   });
   await entered.promise;
-  const second = store.mutateProjectRecord('project', current => ({ ...current, instructions: current.name }));
+  const second = store.mutateProjectRecord('project', current => ({ ...current, templateId: current.name }));
   release.resolve();
   await Promise.all([first, second]);
-  expect(await store.readProject('project')).toMatchObject({ name: 'Renamed', instructions: 'Renamed' });
+  expect(await store.readProject('project')).toMatchObject({ name: 'Renamed', templateId: 'Renamed' });
   await expect(store.mutateProjectRecord('project', () => { throw new Error('failed update'); })).rejects.toThrow('failed update');
   await store.touchProjectBestEffort('project', 100);
   await store.touchProjectBestEffort('project', 50);

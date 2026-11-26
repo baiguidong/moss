@@ -1,12 +1,16 @@
-import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import { calculateFileSha256, isPathInsideDirectory } from './shared/file-path-utils.mjs';
 import { countSessionMessages } from './shared/session-message-count.mjs';
 import { REMOTE_WORKSPACE_SCHEME, parseRemoteWorkspaceUrl } from './remote-workspace-protocol.mjs';
+
+export async function resolveLocalAttachmentPath(filePath) {
+  const absolutePath = path.resolve(filePath);
+  if (!(await fsp.stat(absolutePath)).isFile()) throw new Error(`附件不是文件：${path.basename(absolutePath)}`);
+  return absolutePath;
+}
 
 export function buildFileAttachmentPrompt(filePaths) {
   return filePaths.length
@@ -267,50 +271,11 @@ export function createSessionPromptPreparation({
     ].join('\n');
   }
 
-  async function localizeProjectSessionAttachments(sessionRecord, filePaths) {
-    if (!sessionRecord.projectId || sessionRecord.agentMode === 'remote-direct') return filePaths;
-    const workspace = path.resolve(sessionRecord.workspace);
-    const realWorkspace = await fsp.realpath(workspace).catch(() => workspace);
-    const inputsDir = path.join(workspace, 'inputs');
-    await fsp.mkdir(inputsDir, { recursive: true });
-    const localized = [];
-    for (const filePath of filePaths) {
-      const resolvedSource = path.resolve(filePath);
-      const realSource = await fsp.realpath(resolvedSource);
-      const stat = await fsp.stat(realSource);
-      if (!stat.isFile()) throw new Error(`附件不是文件：${path.basename(resolvedSource)}`);
-      if (
-        isPathInsideDirectory(workspace, resolvedSource) &&
-        isPathInsideDirectory(realWorkspace, realSource)
-      ) {
-        localized.push(resolvedSource);
-        continue;
-      }
-      const rawName = path.basename(resolvedSource);
-      const safeName = rawName.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'attachment';
-      const parsed = path.parse(safeName);
-      let targetPath = path.join(inputsDir, safeName);
-      let suffix = 1;
-      let sourceHash = null;
-      while (fs.existsSync(targetPath)) {
-        sourceHash ||= await calculateFileSha256(realSource);
-        const targetHash = await calculateFileSha256(targetPath).catch(() => null);
-        if (sourceHash === targetHash) break;
-        targetPath = path.join(inputsDir, `${parsed.name || 'attachment'}-${suffix}${parsed.ext || ''}`);
-        suffix += 1;
-      }
-      if (!fs.existsSync(targetPath)) await fsp.copyFile(realSource, targetPath);
-      localized.push(targetPath);
-    }
-    return localized;
-  }
-
   return {
     buildInlineImageBlocks,
     buildLargePromptRuntimePrompt,
     buildLargePromptVisiblePrompt,
     consumePendingBashContexts,
-    localizeProjectSessionAttachments,
     maybeSpillLargePromptToWorkspace,
     prepareRemoteFileAttachments,
     runDirectBashCommand,

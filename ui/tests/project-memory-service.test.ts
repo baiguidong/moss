@@ -287,3 +287,21 @@ test('asset changes are detected even when the project timestamp has the same mi
   expect(await service.run('p')).toMatchObject({ skipped: 'superseded' });
   expect((await f.store.getProjectMemory('p')).overview).toBe('Legacy knowledge');
 });
+
+test('agreement writes survive restart and preserve concurrent updates, scoped IDs and idempotent saves', async () => {
+  const f = await fixture();
+  const first = f.make(), second = f.make();
+  const save = (text: string) => ({ kind: 'agreement', text, sessionId: 's1' });
+  const [tax] = await Promise.all([
+    first.addNote('p', save('Include tax for A')),
+    second.addNote('p', save('Use EUR for B')),
+  ]);
+  const reopened = f.make();
+  expect((await reopened.readAgreements('p')).version).toBe(2);
+  expect((await reopened.addNote('p', save('Include tax for A'))).version).toBe(2);
+  await expect(reopened.addNote('other', { kind: 'agreement', agreementId: tax.agreement.id, revoke: true })).rejects.toThrow();
+  const changed = await reopened.addNote('p', { ...save('Exclude tax for A'), agreementId: tax.agreement.id });
+  expect(changed.agreement.id).toBe(tax.agreement.id);
+  await reopened.addNote('p', { kind: 'agreement', agreementId: tax.agreement.id, revoke: true });
+  expect(await first.readAgreements('p')).toMatchObject({ version: 4, items: [{ text: 'Use EUR for B' }] });
+});

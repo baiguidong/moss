@@ -39,8 +39,9 @@ export function scopeProjectResourceManifestForWorker(manifest, assignment) {
   const expertIds = new Set(normalizeStringList(
     typeof assignment?.expertId === 'string' ? [assignment.expertId] : [],
   ));
+  const { instructions: _legacyInstructions, ...resources } = manifest;
   return {
-    ...manifest,
+    ...resources,
     apps: Array.isArray(manifest.apps)
       ? manifest.apps.filter((item) => appIds.has(item?.id))
       : [],
@@ -78,7 +79,8 @@ export function normalizeSelectedSkills(skills) {
   return result;
 }
 
-export function buildSelectedSkillsInstruction(skills) {
+export function buildSelectedSkillsInstruction(skills, session) {
+  if (session?.projectId && session.isCoordinatorMode) return buildProjectCoordinatorSelectedSkillsInstruction(skills);
   const selectedSkills = normalizeSelectedSkills(skills);
   if (selectedSkills.length === 0) return '';
   return [

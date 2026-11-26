@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { createWorkspaceFileService } from '../src/workspace-files.mjs';
-import { createSessionPromptPreparation } from '../src/session-prompt-preparation.mjs';
+import { resolveLocalAttachmentPath } from '../src/session-prompt-preparation.mjs';
 import { createProjectAssetService } from '../src/project-assets.mjs';
 import { createSessionTaskService } from '../src/session-task-service.mjs';
 
@@ -55,19 +55,13 @@ describe('extracted workspace and prompt services', () => {
     expect(changes).toHaveLength(1);
   });
 
-  it('localizes project attachments without overwriting a different file with the same name', async () => {
-    const { root, workspace, record } = await fixture();
-    Object.assign(record, { projectId: 'project' });
-    await mkdir(path.join(workspace, 'inputs'));
-    await writeFile(path.join(workspace, 'inputs', 'notes.txt'), 'old');
+  it('references the selected attachment at its original path', async () => {
+    const { root, workspace } = await fixture();
     const source = path.join(root, 'notes.txt');
     await writeFile(source, 'new');
-    const preparation = createSessionPromptPreparation({});
-    const [localized] = await preparation.localizeProjectSessionAttachments(record, [source]);
-    expect(localized).toBe(path.join(workspace, 'inputs', 'notes-1.txt'));
-    expect(await readFile(localized, 'utf8')).toBe('new');
-    expect(await preparation.localizeProjectSessionAttachments(record, [source])).toEqual([localized]);
-    expect(await readFile(path.join(workspace, 'inputs', 'notes.txt'), 'utf8')).toBe('old');
+    expect(await resolveLocalAttachmentPath(source)).toBe(source);
+    expect(await readdir(workspace)).toEqual([]);
+    await expect(resolveLocalAttachmentPath(workspace)).rejects.toThrow('附件不是文件');
   });
 
   it('uses the project root task scope for a child and excludes internal checklist items', async () => {

@@ -29,6 +29,8 @@ async function until(fn, label, timeout = 120000) {
   throw new Error('Timed out: ' + label)
 }
 
+const instructionProbe = '核对本轮项目指令'
+const probeRequests = []
 let pending = null
 const server = createServer(async (request, response) => {
   try {
@@ -41,9 +43,14 @@ const server = createServer(async (request, response) => {
       return
     }
     const tool = body.tools?.find(entry => entry.name === 'ProjectPlan')
-    if (!tool) throw new Error('ProjectPlan was not included in the model request')
-    assert.equal(tool.input_schema.properties?.firstTask, undefined)
-    assert.match(tool.input_schema.properties?.instructions?.description || '', /真实换行/)
+    const probing = JSON.stringify(body.messages).includes(instructionProbe)
+    if (probing) {
+      probeRequests.push(body)
+    } else {
+      assert.ok(tool, 'ProjectPlan was not included in the model request')
+      assert.equal(tool.input_schema.properties?.firstTask, undefined)
+      assert.match(tool.input_schema.properties?.instructions?.description || '', /真实换行/)
+    }
     if (!pending) {
       pending = { id: randomUUID(), sent: false }
     }
@@ -63,8 +70,8 @@ const server = createServer(async (request, response) => {
     }
     const result = body.messages?.flatMap(message => Array.isArray(message.content) ? message.content : [])
       .find(block => block.type === 'tool_result' && block.tool_use_id === pending.id)
-    const call = result ? null : { type: 'tool_use', id: pending.id, name: 'ProjectPlan' }
-    const text = result ? '项目配置方案已生成，请在确认卡中检查并创建项目。' : ''
+    const call = result || probing ? null : { type: 'tool_use', id: pending.id, name: 'ProjectPlan' }
+    const text = probing ? '已收到。' : result ? '项目配置方案已生成，请在确认卡中检查并创建项目。' : ''
     const events = [
       { type: 'message_start', message: { id: randomUUID(), type: 'message', role: 'assistant', model: body.model, content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 0 } } },
       { type: 'content_block_start', index: 0, content_block: call || { type: 'text', text: '' } },
@@ -121,6 +128,9 @@ try {
   assert.equal(draft.firstTask, undefined)
   mark('Plan keeps durable Chinese Markdown rules, full-access default and requested workspace without one-off task details')
 
+  const sharedRule = '原始观察记录按活动日期归档。'
+  await fs.mkdir(workspace, { recursive: true })
+  await fs.writeFile(path.join(workspace, 'AGENTS.md'), '# AGENTS.md\n\n' + sharedRule + '\n')
   await page.getByRole('button', { name: '确认并创建', exact: true }).click()
   await until(async () => (await page.evaluate(() => window.agentDesktop.listProjects({}))).some(project => project.name === '幼儿园游戏案例整理'), 'project creation')
   await until(() => page.getByText('幼儿园游戏案例整理', { exact: true }).count(), 'project home')
@@ -138,6 +148,51 @@ try {
   assert.equal(sessions.filter(entry => entry.projectId === project.id).length, 0)
   assert.equal(sessions.find(entry => entry.id === session.id)?.projectCreationMode, true)
   mark('Confirmation creates the project, enters its home, writes AGENTS.md and starts no project session')
+
+  const rule = '服务于幼儿园教育活动资料的整理、分析和表达。'
+  async function checkInstructions(sessionId, expectedDocument, absentRule) {
+    const before = probeRequests.length
+    await page.evaluate(({ sessionId, prompt }) => window.agentDesktop.send({ sessionId, prompt }), { sessionId, prompt: instructionProbe })
+    assert.ok(probeRequests.length > before, 'No model request for the instruction probe')
+    for (const body of probeRequests.slice(before)) {
+      const request = JSON.stringify(body)
+      const text = JSON.stringify(expectedDocument.trim()).slice(1, -1)
+      assert.equal(JSON.stringify(body.messages).split(text).length - 1, 1, 'expected the entire workspace document once')
+      assert.equal(request.split(expectedDocument.includes(sharedRule) ? sharedRule : expectedDocument.trim().split('\n').at(-1)).length - 1, 1)
+      assert.ok(!JSON.stringify(body.system).includes('[Project context]'))
+      assert.ok(!JSON.stringify(body.system).includes('[Project memory:'))
+      if (absentRule) assert.ok(!request.includes(absentRule), 'unexpected instructions from another workspace or revision')
+    }
+  }
+  assert.ok(agents.includes(draft.project.instructions.replace(/^# AGENTS\.md\s*/, '').trim()))
+  const regular = await page.evaluate(workspace => window.agentDesktop.createSession({ workspace, mode: 'chat' }), workspace)
+  const chat = await page.evaluate(({ projectId, workspace }) => window.agentDesktop.createSession({ projectId, workspace, mode: 'chat' }), { projectId: project.id, workspace })
+  await checkInstructions(regular.summary.id, agents)
+  await checkInstructions(chat.summary.id, agents)
+  await checkInstructions(chat.summary.id, agents)
+  const edited = agents.replace(rule, '按年龄段记录观察资料。')
+  await fs.writeFile(path.join(workspace, 'AGENTS.md'), edited)
+  await checkInstructions(regular.summary.id, edited, rule)
+  await checkInstructions(chat.summary.id, edited, rule)
+  const second = path.join(root, '另一个工作目录')
+  const otherDoc = '# AGENTS.md\n\n本目录用案例编号归档。\n'
+  await fs.mkdir(second)
+  await fs.writeFile(path.join(second, 'AGENTS.md'), otherDoc)
+  await page.evaluate(({ projectId, workspaces }) => window.agentDesktop.updateProject({ projectId, updates: { workspaces } }), { projectId: project.id, workspaces: [workspace, second] })
+  const otherSession = await page.evaluate(({ projectId, workspace }) => window.agentDesktop.createSession({ projectId, workspace, mode: 'chat' }), { projectId: project.id, workspace: second })
+  await checkInstructions(otherSession.summary.id, otherDoc, sharedRule)
+  mark('Ordinary and project chats receive the same complete directory instructions once, follow edits, and isolate other workspaces')
+  const source = path.join(root, 'external attachment.txt')
+  await fs.writeFile(source, 'attachment fixture')
+  const before = probeRequests.length
+  await page.evaluate(({ sessionId, files, prompt }) => window.agentDesktop.send({ sessionId, files, prompt }),
+    { sessionId: chat.summary.id, files: [source], prompt: instructionProbe })
+  assert.ok(probeRequests.length > before)
+  assert.ok(JSON.stringify(probeRequests.at(-1).messages).includes(source))
+  const entries = await fs.readdir(workspace)
+  for (const name of ['inputs', 'working', 'outputs', path.basename(source)]) assert.ok(!entries.includes(name), name)
+  mark('Local project messages reference external attachments without copying them or creating workspace directories')
+  await fs.writeFile(path.join(output, 'AGENTS.md'), agents)
 
   await fs.writeFile(path.join(output, 'validation.json'), JSON.stringify({ ok: true, checks, exceptions, project: { id: project.id, name: project.name, workspace, instructions: project.instructions } }, null, 2))
   console.log('Verified:', output)

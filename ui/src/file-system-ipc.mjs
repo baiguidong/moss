@@ -265,9 +265,7 @@ export function registerFileSystemIpcHandlers({
         });
       }
       const safeName = String(fileName || 'image').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'image';
-      const targetDir = sessionRecord.projectId
-        ? path.join(sessionRecord.workspace, 'inputs')
-        : sessionRecord.workspace;
+      const targetDir = sessionRecord.workspace;
       await fsp.mkdir(targetDir, { recursive: true });
       const filePath = createAvailableWorkspaceFilePath(targetDir, safeName);
       await fsp.writeFile(filePath, Buffer.from(data));
@@ -290,9 +288,7 @@ export function registerFileSystemIpcHandlers({
         });
       }
       const safeName = String(fileName || path.basename(sourcePath)).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim() || 'attachment';
-      const targetDir = sessionRecord.projectId
-        ? path.join(sessionRecord.workspace, 'inputs')
-        : sessionRecord.workspace;
+      const targetDir = sessionRecord.workspace;
       await fsp.mkdir(targetDir, { recursive: true });
       const destPath = createAvailableWorkspaceFilePath(targetDir, safeName);
       // 用 copyFile 而非 readFile+writeFile, 避免把整个文件读进内存(大文件会撑爆主进程)。

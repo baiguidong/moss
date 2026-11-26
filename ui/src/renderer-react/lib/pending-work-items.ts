@@ -155,20 +155,6 @@ export function buildPendingWorkItems({
         dedupeKey: `session:${session.id}:plan`,
       });
     }
-    if (session.projectSessionStatus === 'waiting_for_user' && !sessionsWithQuestions.has(session.id)) {
-      addItem(items, {
-        id: `session:${session.id}:question`,
-        sessionId: session.id,
-        source: 'question',
-        state: 'attention',
-        title,
-        summary: '项目任务等待你的处理',
-        context,
-        createdAt: session.updatedAt,
-        actionRef: session.id,
-        dedupeKey: `session:${session.id}:question`,
-      });
-    }
     if (session.projectSessionStatus === 'failed') {
       addItem(items, {
         id: `session:${session.id}:failure`,

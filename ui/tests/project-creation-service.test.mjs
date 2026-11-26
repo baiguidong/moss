@@ -58,7 +58,7 @@ test('preview never installs; confirmation creates with resources inherited by n
   assert.equal(result.status, 'completed'); assert.equal(Object.hasOwn(result.draft, 'firstTaskSessionId'), false);
   const defaults = resolveProjectSessionDefaults(result.project, {}, {}, '/tmp');
   assert.deepEqual(defaults.skillIds, ['research']); assert.equal(defaults.assistant_name, 'runtime-analyst');
-  assert.equal(defaults.projectDefaults.instructions, '中文输出'); assert.equal(defaults.mode, 'chat');
+  assert.equal('instructions' in defaults.projectDefaults, false); assert.equal(defaults.mode, 'chat');
 });
 
 test('concurrent and repeated confirmations create and launch only once', async t => {

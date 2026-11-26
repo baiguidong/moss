@@ -82,7 +82,7 @@ app.on('browser-window-created', (_event, window) => {
         assert.deepEqual(projectSession.summary.skillIds, ['project-fixture-skill']);
         assert.equal(projectSession.summary.assistantName, 'project-fixture-expert');
         const manifest = JSON.parse(await readFile(paths.sessionResourceManifestPath(projectSession.summary.id), 'utf8'));
-        assert.equal(manifest.experts.length, 1); assert.equal(manifest.skills.length, 1); assert.equal(manifest.instructions, project.instructions);
+        assert.equal(manifest.experts.length, 1); assert.equal(manifest.skills.length, 1); assert.equal('instructions' in manifest, false);
         const pendingSession = await invoke('agent:create-session', { title: '待恢复方案', projectCreationMode: true });
         const pending = { ...seed, id: randomUUID(), sessionId: pendingSession.summary.id };
         await writeFile(path.join(root, 'project-drafts', `${pending.id}.json`), JSON.stringify(pending));

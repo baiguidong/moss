@@ -70,7 +70,7 @@ try {
   assert.deepEqual(requests[0].tools.map(tool => tool.name), [toolName], 'A globally available and selected App tool reaches the model once, without a prefix');
   const { createSupplementPreparation } = await import('../src/session-supplement.mjs');
   const attachment = path.join(root, 'a', 'input.txt'); await writeFile(attachment, 'real attachment fixture');
-  const prepare = createSupplementPreparation({ localizeFiles: async (_record, paths) => paths, resolveResource: async () => {}, isResourceUri: () => false, getAgentCatalog: async () => ({ agents: [] }) });
+  const prepare = createSupplementPreparation({ resolveResource: async () => {}, isResourceUri: () => false, getAgentCatalog: async () => ({ agents: [] }) });
   const prepared = await prepare({ workspace: path.join(root, 'a') }, { prompt: 'SUPPLEMENT_A: use Chinese in the final answer.', details: { intent: 'chat', files: [{ name: 'input.txt', path: attachment }], skills: [{ name: 'review' }] } });
   assert.equal(a.steer(prepared, inputId, state => states.push(state)), true);
   const side = await a.askSideQuestion('Has the tool completed?');

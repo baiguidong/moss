@@ -479,7 +479,7 @@ export type AgentTeamsSessionState = {
   teams: AgentTeamRun[];
 };
 
-export type ProjectTaskStatus = 'working' | 'waiting_for_user' | 'completed' | 'failed' | 'stopped';
+export type ProjectTaskStatus = 'idle' | 'working' | 'waiting_for_user' | 'completed' | 'failed' | 'stopped';
 
 export type ProjectTask = {
   id: string;
@@ -681,6 +681,7 @@ export type ProjectMemory = {
   sourceIds?: string[];
   corrections?: Array<{ id: string; text: string; createdAt: number }>;
   correctionCount?: number;
+  agreements?: { version: number; items: Array<{ id: string; text: string; sourceSessionId: string | null; updatedAt: number }> };
 };
 
 export type AskUserQuestionOption = {
@@ -1513,7 +1514,7 @@ declare global {
       listProjectEvents: (payload: { projectId: string }) => Promise<ProjectEvent[]>;
       getProjectMemory: (payload: { projectId: string }) => Promise<ProjectMemory>;
       organizeProjectMemory: (payload: { projectId: string }) => Promise<ProjectMemoryMaintenance>;
-      noteProjectMemory: (payload: { projectId: string; text: string }) => Promise<unknown>;
+      noteProjectMemory: (payload: { projectId: string; text?: string; kind?: 'fact' | 'agreement'; agreementId?: string; revoke?: boolean }) => Promise<unknown>;
       readProjectMemory: (payload: { projectId: string; action?: string; sourceId?: string; query?: string; limit?: number; offset?: number }) => Promise<unknown>;
       addProjectAsset: (payload: { projectId: string; sourcePath: string; fileName?: string; name?: string; description?: string; sourceType?: string; sourceSessionId?: string }) => Promise<ProjectAsset>;
       removeProjectAsset: (payload: { projectId: string; assetId: string }) => Promise<{ ok: boolean }>;

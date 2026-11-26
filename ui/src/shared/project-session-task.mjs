@@ -3,10 +3,11 @@ const TERMINAL_STATUSES = new Set(['completed', 'failed', 'stopped']);
 export function deriveProjectSessionTaskStatus({
   persistedStatus,
   pendingQuestionCount = 0,
+  active = false,
 } = {}) {
-  if (TERMINAL_STATUSES.has(persistedStatus)) return persistedStatus;
-  if (Number(pendingQuestionCount) > 0) return 'waiting_for_user';
-  return 'working';
+  if (pendingQuestionCount > 0) return 'waiting_for_user';
+  if (active) return 'working';
+  return TERMINAL_STATUSES.has(persistedStatus) ? persistedStatus : 'idle';
 }
 
 export function shouldRecoverInterruptedProjectTask({

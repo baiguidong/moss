@@ -1494,9 +1494,11 @@ export default function App() {
       setAgentTeamsBySession((previous) => ({ ...previous, [payload.sessionId]: payload }));
     });
 
+    let snapshotChanges: Set<string> | null = window.mossWeb ? null : new Set();
     const offQuestionRequest = window.agentDesktop.onQuestionRequest((payload) => {
       if (!payload?.requestId || !payload?.sessionId) return;
       if (removedSessionIdsRef.current.has(payload.sessionId)) return;
+      snapshotChanges?.add(payload.requestId);
       updateQuestionRequests((prev) => [
         ...prev.filter((entry) => entry.requestId !== payload.requestId),
         payload,
@@ -1508,12 +1510,23 @@ export default function App() {
 
     const offQuestionResolved = window.agentDesktop.onQuestionResolved((payload) => {
       if (!payload?.requestId) return;
+      snapshotChanges?.add(payload.requestId);
       updateQuestionRequests((prev) => {
         const next = prev.filter((entry) => entry.requestId !== payload.requestId);
         if (next.length === 0) dismissPermissionNotice();
         return next;
       });
     });
+    if (!window.mossWeb) {
+      void window.agentDesktop.ipcInvoke('agent:list-pending-questions').then((questions: AskUserQuestionRequest[]) => {
+        const changes = snapshotChanges;
+        if (changes) updateQuestionRequests(prev => [
+          ...questions.filter(q => !changes.has(q.requestId)),
+          ...prev.filter(q => changes.has(q.requestId)),
+        ]);
+      }).catch(() => {}).finally(() => { snapshotChanges = null; });
+    }
+
 
     const offMeta = window.agentDesktop.onSessionMeta((summary) => {
       if (removedSessionIdsRef.current.has(summary.id) || summary.archivedAt) return;
@@ -1622,6 +1635,7 @@ export default function App() {
       offBackgroundTasks();
       offAgentTeamsChanged();
       offQuestionRequest();
+      snapshotChanges = null;
       offQuestionResolved();
       offMeta();
       offSessionHistory();
@@ -1726,6 +1740,12 @@ export default function App() {
 
   const handleOpenPendingWork = React.useCallback(async (item: PendingWorkItem) => {
     if (item.sessionId) {
+      if (item.source === 'question' || item.source === 'approval') {
+        updateQuestionRequests(requests => {
+          const selected = requests.find(request => request.requestId === item.actionRef);
+          return selected ? [selected, ...requests.filter(request => request !== selected)] : requests;
+        });
+      }
       await openSession(item.sessionId);
     }
     if (item.source === 'operation' && item.actionRef && !item.sessionId) {
@@ -1742,7 +1762,7 @@ export default function App() {
         window.dispatchEvent(new CustomEvent('moss:show-confirmation', { detail: item.actionRef }));
       }
     }
-  }, [openSession]);
+  }, [openSession, updateQuestionRequests]);
 
   const activeSessionQuestionRequest = React.useMemo(() => (
     questionRequests.find((request) => (
@@ -2363,8 +2383,8 @@ export default function App() {
       }
       if (!sessionId) return;
 
-      // If we just created a new session and have files, copy them to the new workspace
-      if (sessionJustCreated && hasFiles) {
+      // Local project attachments keep the path selected in the composer.
+      if (sessionJustCreated && hasFiles && (!draftProject || newSessionAgentMode === 'remote-direct')) {
         const newFiles: ComposerAttachment[] = [];
         for (const file of files!) {
           if (file.resource) {

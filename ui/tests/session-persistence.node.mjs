@@ -99,12 +99,13 @@ test('reopens real SQLite records, manifests and read-only child sessions with m
   service.hydratePersistedSessions();
   const restored = service.sessions.get('parent');
   for (const key of ['title', 'workspace', 'createdAt', 'updatedAt', 'messageCount', 'underlyingSessionId',
-    'history', 'projectId', 'projectDefaults', 'isCoordinatorMode', 'permissionMode', 'effort', 'modelOverride', 'sessionKind', 'originChannel',
+    'history', 'projectId', 'isCoordinatorMode', 'permissionMode', 'effort', 'modelOverride', 'sessionKind', 'originChannel',
     'sourceSessionId', 'cronTaskId', 'sessionRole', 'assistantName', 'workerSummariesJson',
     'projectTaskStatus', 'projectTaskPrompt', 'projectTaskError', 'projectTaskCompletedAt',
     'toolDisplayMode', 'rewindMessageId', 'rewindCreatedAt', 'channelAppId', 'channelInstanceId', 'channelRuntimePolicy']) {
     assert.deepEqual(restored[key], main[key], key);
   }
+  assert.deepEqual(restored.projectDefaults, { version: 1, skillIds: ['skill'], agentTeamsEnabled: false });
   assert.deepEqual(restored.connectorIds, ['mail', 'drive']);
   assert.deepEqual(restored.appIds, ['builder', 'mcp']);
   assert.deepEqual(restored.appServiceIds, ['["customer.app","sales"]']);

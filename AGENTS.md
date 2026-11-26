@@ -52,3 +52,10 @@ Use two-space indentation and ES modules. Use camelCase for functions and Pascal
 ## Commits and pull requests
 
 Use a lowercase prefix followed by an imperative summary, as in `fix: support OIDC redirects in the desktop login window`. History also uses `feat:`, `test:`, and `docs:`. In a pull request, describe the behavior change and list the checks you ran. Link a related issue when available and include a screenshot for visible UI changes.
+
+## 项目记忆与交付
+
+- 使用历史资料时，区分先前的结论和本次用户提出的要求。
+- 会话提供 `ProjectMemory` 时，可用它查询项目知识和来源。用户明确要求记住、纠正或忘记某项内容时，用它记录这次变更。
+- 用户需要文件交付物时，按约定路径保存。会话提供 `ProjectResult` 时，可用它登记实际交付的文件。输入附件、源码、凭据、缓存和临时文件不登记为成果。
+- 委派任务时，收集实际输出路径和验证结果，再向用户交付。

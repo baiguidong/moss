@@ -296,6 +296,20 @@ test('failed sends restore intent into an empty composer but cannot restore into
   }
 });
 
+test('the first local project message dispatches the original attachment path', async () => {
+  const { state } = submitHarness();
+  state.activeSessionId = null;
+  state.activeSessionIdRef.current = null;
+  state.activeDetail = null;
+  state.draftProject = { id: 'project' };
+  state.createAndOpenSession = async () => 'created';
+  const sent: unknown[] = [];
+  state.dispatchToSession = async (_id: string, _prompt: string, _intent: string, files: unknown) => sent.push(files);
+  const files = [{ name: 'report.txt', path: '/external/report.txt' }];
+  await state.submit('chat', files);
+  expect(sent).toEqual([files]);
+});
+
 test('session creation and attachment copying failures preserve the complete original draft', async () => {
   for (const stage of ['create', 'copy']) {
     const { state } = submitHarness();

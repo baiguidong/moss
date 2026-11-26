@@ -1,4 +1,6 @@
 import fsp from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { projectAgentsPath } from './project-agents.mjs';
 import path from 'node:path';
 import { withDesktopProjectLayout } from './desktop-data-layout.mjs';
 import { normalizeProjectId, normalizeProjectRecord, normalizeProjectMemoryIndex } from './shared/project-normalization.mjs';
@@ -106,10 +108,22 @@ export function createProjectStore({
     return path.join(getProjectDir(projectId), 'sessions');
   }
 
+  function withFileInstructions(project) {
+    if (!project) return null;
+    const directory = project.defaultWorkspace || getProjectWorkspaceDir(project.id);
+    try {
+      project.instructions = readFileSync(projectAgentsPath(directory), 'utf8');
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      project.instructions = '';
+    }
+    return project;
+  }
+
   function readProjectSync(projectId) {
     try {
       const id = normalizeProjectId(projectId);
-      return normalizeProjectRecord(readJsonFile(getProjectFilePath(id), null), id);
+      return withFileInstructions(normalizeProjectRecord(readJsonFile(getProjectFilePath(id), null), id));
     } catch {
       return null;
     }
@@ -117,7 +131,7 @@ export function createProjectStore({
 
   async function readProject(projectId) {
     const id = normalizeProjectId(projectId);
-    return normalizeProjectRecord(await readJsonFileAsync(getProjectFilePath(id), null), id);
+    return withFileInstructions(normalizeProjectRecord(await readJsonFileAsync(getProjectFilePath(id), null), id));
   }
 
   async function writeProject(project) {

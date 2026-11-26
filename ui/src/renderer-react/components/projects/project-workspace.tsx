@@ -576,9 +576,10 @@ function ProjectConfigPanel({
     setSavingStatus('正在准备资源并保存...');
     setError('');
     try {
+      const { instructions, ...settings } = draft;
       const saved = await window.agentDesktop.updateProject({
         projectId: project.id,
-        updates: draft,
+        updates: instructions === project.instructions ? settings : draft,
       });
       setDraft(projectFormFromProject(saved));
       onSaved(saved);
@@ -768,6 +769,7 @@ function ProjectDetail({
   const [events, setEvents] = React.useState<ProjectEvent[]>([]);
   const [memory, setMemory] = React.useState<ProjectMemory | null>(null);
   const [memoryNote, setMemoryNote] = React.useState('');
+  const [editingAgreement, setEditingAgreement] = React.useState<{ id: string; text: string } | null>(null);
   const [memoryPending, setMemoryPending] = React.useState(false);
   const [loadError, setLoadError] = React.useState('');
   const [uploading, setUploading] = React.useState(false);
@@ -816,6 +818,7 @@ function ProjectDetail({
     setTasks([]);
     setEvents([]);
     setMemory(null);
+    setEditingAgreement(null);
     setLoadError('');
     setConfigOpen(Boolean(readFormDraft(projectDraftKey(project.id), project.updatedAt)));
   }, [project.id]);
@@ -836,6 +839,16 @@ function ProjectDetail({
         await window.agentDesktop.noteProjectMemory({ projectId: project.id, text: memoryNote });
         setMemoryNote('');
       } else await window.agentDesktop.organizeProjectMemory({ projectId: project.id });
+      await reload();
+    } catch (error) { setLoadError(error instanceof Error ? error.message : String(error)); }
+    finally { setMemoryPending(false); }
+  };
+
+  const saveAgreement = async (agreementId: string, change: { text: string } | { revoke: true }) => {
+    setMemoryPending(true);
+    try {
+      await window.agentDesktop.noteProjectMemory({ projectId: project.id, kind: 'agreement', agreementId, ...change });
+      setEditingAgreement(null);
       await reload();
     } catch (error) { setLoadError(error instanceof Error ? error.message : String(error)); }
     finally { setMemoryPending(false); }
@@ -950,6 +963,21 @@ function ProjectDetail({
                   </div>
                   {!!memory?.sourceIds?.length && <div className="flex flex-wrap gap-2 py-2 text-xs">来源会话：{memory.sourceIds.map(id =>
                     <button key={id} type="button" className="text-primary hover:underline" onClick={() => onOpenSession(id)}>{tasks.find(task => task.sessionId === id)?.subject || id.slice(0, 12)}</button>)}</div>}
+                  {!!memory?.agreements?.items.length && <section className="grid gap-2 py-2 text-sm" aria-label="当前有效约定">
+                    <h3 className="font-medium">当前有效约定</h3>
+                    {memory.agreements.items.map(item => <div key={item.id} className="flex flex-wrap items-center gap-2">
+                      {editingAgreement?.id === item.id ? <>
+                        <Input className="min-w-40 flex-1" aria-label="编辑项目约定" maxLength={12000} value={editingAgreement.text} onChange={event => setEditingAgreement({ id: item.id, text: event.target.value })} />
+                        <Button size="sm" disabled={memoryPending || !editingAgreement.text.trim()} onClick={() => void saveAgreement(item.id, { text: editingAgreement.text })}>保存</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setEditingAgreement(null)}>取消</Button>
+                      </> : <>
+                        <span className="min-w-32 flex-1 whitespace-pre-wrap break-words">{item.text}</span>
+                        {item.sourceSessionId && <Button size="sm" variant="link" onClick={() => onOpenSession(item.sourceSessionId!)}>来源会话</Button>}
+                        <Button size="sm" variant="ghost" disabled={memoryPending} onClick={() => setEditingAgreement(item)}>编辑</Button>
+                        <Button size="sm" variant="ghost" disabled={memoryPending} onClick={() => void saveAgreement(item.id, { revoke: true })}>撤销约定</Button>
+                      </>}
+                    </div>)}
+                  </section>}
                   {!!memory?.corrections?.length && <div className="grid gap-1 py-2 text-xs text-muted-foreground">待合并的修正（共 {memory.correctionCount || memory.corrections.length} 条）：{memory.corrections.map(note => <p key={note.id}>{note.text}</p>)}</div>}
                   <div className="flex gap-2 pt-2">
                     <Input aria-label="项目记忆修正" value={memoryNote} onChange={event => setMemoryNote(event.target.value)} placeholder="记住、更正或忘记某项项目知识…" maxLength={12000} />

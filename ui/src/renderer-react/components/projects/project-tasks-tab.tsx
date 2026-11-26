@@ -27,8 +27,9 @@ const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'working', label: '进行中' },
   { value: 'waiting_for_user', label: '等待你处理' },
   { value: 'failed', label: '失败' },
-  { value: 'completed', label: '已回复' },
-  { value: 'stopped', label: '未运行' },
+  { value: 'idle', label: '空闲' },
+  { value: 'completed', label: '已完成' },
+  { value: 'stopped', label: '已停止' },
 ];
 
 function formatTime(timestamp?: number | null) {

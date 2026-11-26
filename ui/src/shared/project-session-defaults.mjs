@@ -38,7 +38,7 @@ export function resolveProjectSessionDefaults(project, input, global, fallbackWo
     permissionMode: normalizePermissionMode(input.permissionMode ?? defaults.permissionMode, global.permissionMode),
     mode: own(input, 'mode') ? (input.mode === 'boss' ? 'boss' : 'chat') : defaults.mode,
     projectDefaults: {
-      version: 1, instructions: project.instructions || '', skillIds: pickList('skillIds'),
+      version: 1, skillIds: pickList('skillIds'),
       expertIds: assistantName ? [assistantName] : own(input, 'assistant_name') || defaults.assistantName !== null
         ? [] : normalizeStringList(project.expertIds),
       agentTeamsEnabled: typeof input.agentTeamsEnabled === 'boolean' ? input.agentTeamsEnabled : defaults.agentTeamsEnabled,

@@ -22,7 +22,7 @@ import { createProjectCreationService } from './project-creation-service.mjs';
 import { createProjectCreationResources } from './project-creation-resources.mjs';
 import { ensureProjectAgentsFile, writeProjectAgentsFile } from './project-agents.mjs';
 import { validateProjectWorkspace, prepareProjectWorkspaces } from './project-workspaces.mjs';
-import { DEFAULT_PROJECT_PERMISSION_MODE, refreshProjectSessionInstructions } from './shared/project-instructions.mjs';
+import { DEFAULT_PROJECT_PERMISSION_MODE } from './shared/project-instructions.mjs';
 import { createProjectStore } from './project-store.mjs';
 import { createSessionPaths, normalizeSessionDirName } from './session-paths.mjs';
 import { createSessionPersistence } from './session-persistence.mjs';
@@ -48,7 +48,7 @@ import { createProjectAssetService } from './project-assets.mjs';
 import { createSessionTaskService } from './session-task-service.mjs';
 import { SessionRuntimePool } from './session-runtime-pool.mjs';
 import { normalizeRuntimeLifecycle } from './runtime-lifecycle-settings.mjs';
-import { buildFileAttachmentPrompt, createSessionPromptPreparation } from './session-prompt-preparation.mjs';
+import { buildFileAttachmentPrompt, createSessionPromptPreparation, resolveLocalAttachmentPath } from './session-prompt-preparation.mjs';
 import { ensureInsideRoot, getSessionWorkspaceRoot, applyRemoteSessionWorkspace } from './workspace-paths.mjs';
 import { isPathInsideDirectory, hasFile } from './shared/file-path-utils.mjs';
 import { registerSessionControlIpc } from './session-control-ipc.mjs';
@@ -333,7 +333,6 @@ import { createPreviewOwnership, registerPreviewOwnershipIpc } from './presentat
 import { createPresentationService } from './presentation/presentation-service.mjs';
 import { createPresentationResolver } from './presentation/resource-resolver.mjs';
 import { registerPresentationIpcHandlers } from './presentation/presentation-ipc.mjs';
-import { buildProjectSystemPrompts } from './shared/project-system-prompts.mjs';
 import { createTurnObservationService } from './workspace-versions/turn-observation-service.mjs';
 import { buildTerminalLaunch, registerTerminalIpc } from './terminal-service.mjs';
 import {
@@ -343,7 +342,6 @@ import {
   createDesktopDataPaths,
   DESKTOP_PROJECT_KIND,
   DESKTOP_PROJECT_LAYOUT_VERSION,
-  getProjectSessionWorkspaceDirectories,
 } from './desktop-data-layout.mjs';
 import { configureDesktopProfile, MOSS_HOME } from './moss-home.mjs';
 import {
@@ -1105,7 +1103,7 @@ const { ensureRemoteSessionConnection, fetchRemoteWorkspaceProtocolContent, list
   mossLog, resolveEnterpriseAccountConnection, uploadRemoteDirectWorkspaceData,
   uploadRemoteDirectWorkspaceFile, writeRemoteDirectWorkspaceFile,
 });
-const { buildLargePromptRuntimePrompt, buildLargePromptVisiblePrompt, consumePendingBashContexts, localizeProjectSessionAttachments, maybeSpillLargePromptToWorkspace, prepareRemoteFileAttachments, runDirectBashCommand } = createSessionPromptPreparation({
+const { buildLargePromptRuntimePrompt, buildLargePromptVisiblePrompt, consumePendingBashContexts, maybeSpillLargePromptToWorkspace, prepareRemoteFileAttachments, runDirectBashCommand } = createSessionPromptPreparation({
   emitSessionMeta, emitToRenderer, emitWorkspaceChanged, ensureRemoteSessionConnection,
   schedulePersistSession, takeRemoteAttachmentSource, uploadFileToRemoteSessionWorkspace,
   uploadRemoteDirectWorkspaceData,
@@ -1431,9 +1429,7 @@ function getProjectRootTaskLifecycleSync(projectId, sessionId) {
   const sessionRecord = sessions.get(normalizedSessionId);
   if (!isProjectTaskRootSession(sessionRecord) || sessionRecord.projectId !== id) return null;
   return {
-    status: PROJECT_TASK_STATUSES.has(sessionRecord.projectTaskStatus)
-      ? sessionRecord.projectTaskStatus
-      : 'working',
+    status: projectTaskStatusForSession(sessionRecord),
     taskPrompt: sessionRecord.projectTaskPrompt || '',
     error: sessionRecord.projectTaskError || '',
     completedAt: sessionRecord.projectTaskCompletedAt || null,
@@ -1633,7 +1629,7 @@ async function createProject(payload = {}, internal = {}) {
   const appSelection = await sessionApps.validateSelection(project);
   Object.assign(project, appSelection);
   await prepareProjectWorkspaces(project.workspaces);
-  const agents = await ensureProjectAgentsFile(project.defaultWorkspace, project.instructions);
+  const agents = await ensureProjectAgentsFile(project.defaultWorkspace, project.instructions, { creating: true });
   project.instructions = agents.content;
   await ensureProjectStructure(project.id);
   await writeJsonFileAtomicAsync(getProjectAssetIndexPath(project.id), []);
@@ -1851,8 +1847,11 @@ async function updateProject(projectId, updates = {}) {
       ...(Object.prototype.hasOwnProperty.call(updates, 'skillIds') ? { skillIds: normalizeStringList(updates.skillIds) } : {}),
       updatedAt: Date.now(),
     };
-    if (changesInstructions || Object.prototype.hasOwnProperty.call(updates, 'workspaces') || Object.prototype.hasOwnProperty.call(updates, 'defaultWorkspace')) {
-      const agents = await writeProjectAgentsFile(next.defaultWorkspace || next.workspaces[0], next.instructions);
+    if (next.defaultWorkspace !== existing.defaultWorkspace || changesInstructions) {
+      const directory = next.defaultWorkspace || next.workspaces[0];
+      const agents = next.defaultWorkspace !== existing.defaultWorkspace && !changesInstructions
+        ? await ensureProjectAgentsFile(directory)
+        : await writeProjectAgentsFile(directory, next.instructions);
       next.instructions = agents.content;
     }
     return next;
@@ -1936,10 +1935,9 @@ function projectTaskStatusForSession(
   pendingQuestionCount = Array.from(pendingQuestionRequests.values())
     .filter((request) => request.sessionId === sessionRecord.id).length,
 ) {
-  if (pendingQuestionCount > 0) return 'waiting_for_user';
   return deriveProjectSessionTaskStatus({
-    persistedStatus: sessionRecord.busy || sessionRecord.preparingPrompt || getProjectWorkerTasks(sessionRecord).some(isActiveProjectWorker)
-      ? null : sessionRecord.messageCount > 0 ? 'completed' : 'stopped',
+    persistedStatus: sessionRecord.projectTaskStatus,
+    active: sessionRecord.busy || sessionRecord.preparingPrompt || getProjectWorkerTasks(sessionRecord).some(isActiveProjectWorker),
     pendingQuestionCount,
   });
 }
@@ -2000,7 +1998,7 @@ async function createProjectCoordinatorTask(projectId, payload = {}) {
   if (!prompt) throw new Error('Prompt is required.');
   const created = await createDesktopSession({ ...payload, projectId, title: buildSessionTitle(prompt) });
   void sendAgentPromptNow({ sender: null }, { sessionId: created.summary.id, prompt,
-    mode: created.summary.composerIntent }).catch(error => mossLog('warn', 'project', 'Project session failed', { error: error.message }));
+    mode: created.summary.composerIntent }, { explicitProjectTask: true }).catch(error => mossLog('warn', 'project', 'Project session failed', { error: error.message }));
   return { task: await getProjectCoordinatorTask(projectId, created.summary.id), session: created.summary };
 }
 
@@ -2674,7 +2672,6 @@ function snapshotLegacyProjectDefaults(sessionRecord) {
   if (!project) return;
   const manifest = sessionRecord.projectResourceManifest || readJsonFile(getLocalSessionResourceManifestPath(sessionRecord.id, sessionRecord.storageRootSessionId), {});
   sessionRecord.projectDefaults = { version: 1,
-    instructions: manifest.instructions ?? project.instructions ?? '',
     skillIds: manifest.skills?.map(skill => skill.id) || project.skillIds || [],
     expertIds: manifest.experts?.map(expert => expert.id) || project.expertIds || [],
     agentTeamsEnabled: desktopSettings.agentTeamsEnabled === true,
@@ -2757,7 +2754,6 @@ async function buildProjectResourceManifest(sessionRecord) {
       name: scenario.name,
       description: scenario.description || '',
     } : null,
-    instructions: sessionRecord.projectDefaults?.instructions || '',
     apps: getRuntimeSessionAppSelection(sessionRecord).selectedAppIds.map((id) => ({ id })),
     connectors: connectorIds.map((id) => {
       const connector = connectorInfoById.get(id);
@@ -2979,17 +2975,6 @@ function buildConnectorSystemPrompt(sessionRecord) {
   return lines.join('\n');
 }
 
-function buildProjectSystemPrompt(sessionRecord) {
-  if (!sessionRecord?.projectId) return {};
-  const project = getSessionProject(sessionRecord);
-  if (!project) return {};
-  snapshotLegacyProjectDefaults(sessionRecord);
-  return buildProjectSystemPrompts(project, {
-    instructions: sessionRecord.projectDefaults?.instructions || '',
-    manifest: sessionRecord.projectResourceManifest,
-  });
-}
-
 function recordUsageForSession(event, sessionRecord) {
   if (!sessionRecord?.id) return;
   try {
@@ -3061,7 +3046,6 @@ async function buildClaudeSessionConfig(cwd, sessionRecord, runtimeSystemPrompt,
     sessionRecord.runtimeAppIds = [...appToolPolicy.appIds];
     sessionRecord.runtimeAppServiceIds = [...appToolPolicy.appServiceIds];
   }
-  const projectContextPrompt = appScoped ? {} : buildProjectSystemPrompt(sessionRecord);
   const connectorSystemPrompt = buildConnectorSystemPrompt(sessionRecord);
   const customSystemPrompt = typeof sessionRecord?.assistantSystemPrompt === 'string'
     ? sessionRecord.assistantSystemPrompt.trim()
@@ -3069,7 +3053,6 @@ async function buildClaudeSessionConfig(cwd, sessionRecord, runtimeSystemPrompt,
   const projectCreationPrompt = sessionRecord?.projectCreationMode ? `${PROJECT_CREATION_SYSTEM_PROMPT}\n用户在创建入口明确选择的配置（必须保留，推荐内容只能追加）：${JSON.stringify(sessionRecord.projectDefaults?.__projectCreationSelections || {})}\n当前草稿：${JSON.stringify(await projectCreationService.get({ sessionId: sessionRecord.id }))}` : '';
   const appendSystemPrompt = [
     appScoped ? undefined : desktopSettings.appendSystemPrompt,
-    projectContextPrompt.appendSystemPrompt,
     connectorSystemPrompt,
     runtimeSystemPrompt,
     appSessionResponseStylePrompt(sessionRecord),
@@ -3099,7 +3082,6 @@ async function buildClaudeSessionConfig(cwd, sessionRecord, runtimeSystemPrompt,
       : [customSystemPrompt, projectCreationPrompt].filter(Boolean).join('\n\n') || undefined,
     effort: sessionRecord?.effort ?? null,
     appendSystemPrompt: sessionRecord?.appTestRunId ? undefined : appendSystemPrompt || undefined,
-    mainSessionSystemPrompt: sessionRecord?.appTestRunId || sessionRecord?.isSubAgent ? undefined : projectContextPrompt.mainSessionSystemPrompt,
     presentationEnabled: sessionRecord?.sessionKind === 'chat' && sessionRecord?.agentMode !== 'remote-direct' && !sessionRecord?.isSubAgent && !sessionRecord?.appTestRunId,
     maxTurns: desktopSettings.maxTurns,
     thinkingConfig: buildThinkingConfig(desktopSettings),
@@ -3115,7 +3097,7 @@ async function buildClaudeSessionConfig(cwd, sessionRecord, runtimeSystemPrompt,
     projectMemory: sessionRecord?.projectId && !sessionRecord.isSubAgent ? async input => {
       if (sessionRecord.deleted || !getSessionProject(sessionRecord)) throw new Error('Project session is no longer available.');
       return input.action === 'note'
-        ? projectMemoryService.addNote(sessionRecord.projectId, { text: input.text, sessionId: sessionRecord.id })
+        ? projectMemoryService.addNote(sessionRecord.projectId, { ...input, sessionId: sessionRecord.id })
         : projectMemoryService.read(sessionRecord.projectId, input);
     } : undefined,
     projectResult: sessionRecord?.projectId && !sessionRecord.isSubAgent ? async input => {
@@ -3843,6 +3825,7 @@ async function runSessionPromptObserved({
   onAccepted,
   onRuntimeMessage,
   failOnApiError = false,
+  explicitProjectTask = false,
   controllerSignal,
   retryEncryptedContentOnce = false,
   suppressInitialPromptEcho = false,
@@ -3857,7 +3840,7 @@ async function runSessionPromptObserved({
   if (Array.isArray(selectedSkills) && selectedSkills.length) {
     const granted = catalog ? resolveInstalledSkillInfos(selectedSkills.map(skill => skill?.name || skill),
       catalog.resources.filter(item => item.kind === 'skill')) : selectedSkills;
-    const instruction = buildSelectedSkillsInstruction(granted);
+    const instruction = buildSelectedSkillsInstruction(granted, sessionRecord);
     if (instruction) runtimePrompt = instruction + '\n\n' + runtimePrompt;
   }
   const catalogKey = catalog ? JSON.stringify([catalog.identity, catalog.resources.map(item => [item.id, item.sha256])]) : '';
@@ -3869,13 +3852,6 @@ async function runSessionPromptObserved({
   // Refresh before selecting the engine. A watcher must not dispose that
   // engine between here and the transition from preparingPrompt to busy.
   await localTranscriptSync.refresh(sessionRecord, { duringPreparation: true });
-  if (sessionRecord.projectId && !sessionRecord.isSubAgent) {
-    snapshotLegacyProjectDefaults(sessionRecord);
-    if (refreshProjectSessionInstructions(readProjectSync(sessionRecord.projectId), sessionRecord)) {
-      await disposeRuntime(sessionRecord);
-      schedulePersistSession(sessionRecord, true);
-    }
-  }
   if (!sessionRecord.runtime && sessionRecord.underlyingSessionId) {
     const resumed = await resumeSessionRecord(sessionRecord, runtimeSystemPrompt);
     if (!resumed && sessionRecord.resumeReadOnlyReason) {
@@ -3940,6 +3916,12 @@ async function runSessionPromptObserved({
     }
   }
   assertWorkspaceVersionIdle(sessionRecord);
+  const tracksProjectTurn = sessionRecord.projectId && isProjectTaskRootSession(sessionRecord) && !notificationsOnly;
+  if (tracksProjectTurn) {
+    sessionRecord.projectTaskStatus = 'idle';
+    sessionRecord.projectTaskError = '';
+    sessionRecord.projectTaskCompletedAt = null;
+  }
   beginSessionBusyTiming(sessionRecord);
   computerUseService.beginTurn(sessionRecord.id);
   sessionRecord.busy = true;
@@ -3974,6 +3956,7 @@ async function runSessionPromptObserved({
       let sawCompactBoundary = false;
       let apiErrorMessage = '';
       let resultErrorMessage = '';
+      let succeeded = false;
       let suppressRemainingPromptTooLongTurn = false;
       let skippedInitialReplayUser = false;
       const expectedVisibleUserPrompt = normalizeReplayUserText(expectedVisiblePrompt);
@@ -3993,9 +3976,15 @@ async function runSessionPromptObserved({
         ? sessionTaskInbox.bind(sessionRecord, runtime.sessionId) : undefined);
       const turnInbox = inbox && { ...inbox, peek: () =>
         sessionSendCancellation.hasWaitingInput(sessionRecord.id, controllerSignal) ? undefined : inbox.peek() };
+      const agreements = sessionRecord.projectId && !sessionRecord.isSubAgent && !notificationsOnly && !isAppScopedSession(sessionRecord)
+        ? await projectMemoryService.readAgreements(sessionRecord.projectId) : null;
+      const projectAgreementContext = agreements?.version
+        ? '[Active project agreements]\nThese are the current user-confirmed project defaults. This list replaces all earlier versions, including when empty. Apply each within its stated scope and honor exceptions in the current request.\n' +
+          JSON.stringify({ version: agreements.version, agreements: agreements.items.map(({ id, text }) => ({ id, text })) })
+        : undefined;
       for await (const message of runtime.send(prompt, controllerSignal, {
         userMessageId: visibleUserEvent?.uuid, preparedTools, presentationTurn: turnContext,
-        taskInbox: turnInbox, notificationsOnly,
+        taskInbox: turnInbox, notificationsOnly, projectAgreementContext,
       })) {
         if (isExpectedControllerCancellation(message, controllerSignal)) continue;
         if (turnContext.observation) turnObservationService.observeMessage(turnContext.observation, message);
@@ -4056,9 +4045,7 @@ async function runSessionPromptObserved({
         } else if (message.type === 'result' && (
           message.is_error === true || message.subtype !== 'success'
         )) {
-          resultErrorMessage ||= Array.isArray(message.errors)
-            ? message.errors.filter(Boolean).join('\n')
-            : String(message.result || 'Model runtime failed.');
+          resultErrorMessage ||= (Array.isArray(message.errors) && message.errors.filter(Boolean).join('\n')) || String(message.result || 'Model runtime failed.');
         } else if (
           message.type === 'result' &&
           Array.isArray(message.permission_denials) &&
@@ -4084,6 +4071,7 @@ async function runSessionPromptObserved({
           continue;
         }
 
+        if (message.type === 'result' && message.subtype === 'success' && !message.is_error) succeeded = true;
         appendRuntimeMessageToSession(sessionRecord, message);
         onRuntimeMessage?.(message);
         emitToRenderer('agent:event', { sessionId: sessionRecord.id, payload: message });
@@ -4097,11 +4085,21 @@ async function runSessionPromptObserved({
         sawCompactBoundary,
         apiErrorMessage,
         resultErrorMessage,
+        succeeded,
       };
     };
 
     const finishRuntimeRun = (run) => {
       const failure = run.apiErrorMessage || run.resultErrorMessage;
+      if (tracksProjectTurn && !controllerSignal?.aborted && sessionRecord.projectTaskStatus !== 'stopped') {
+        if (failure) {
+          sessionRecord.projectTaskStatus = 'failed';
+          sessionRecord.projectTaskError = failure;
+        } else if (explicitProjectTask && run.succeeded) {
+          sessionRecord.projectTaskStatus = 'completed';
+          sessionRecord.projectTaskCompletedAt = Date.now();
+        }
+      }
       if (failOnApiError && failure) {
         const error = new Error(failure);
         error.isRecordedRuntimeError = Boolean(run.apiErrorMessage);
@@ -4290,8 +4288,18 @@ async function runSessionPrompt(options) {
         summary: getSessionSummary(options.sessionRecord),
         tasks: snapshotSessionTasks(options.sessionRecord),
       });
-      try { return await sessionRuntimePool.use(options.sessionRecord, () => runSessionPromptNow(options)); }
-      finally {
+      try {
+        return await sessionRuntimePool.use(options.sessionRecord, () => runSessionPromptNow(options));
+      } catch (error) {
+        const record = options.sessionRecord;
+        if (record.projectId && isProjectTaskRootSession(record) && !options.notificationsOnly
+          && !options.controllerSignal?.aborted && record.projectTaskStatus !== 'stopped') {
+          record.projectTaskStatus = 'failed';
+          record.projectTaskError = error instanceof Error ? error.message : String(error);
+          record.projectTaskCompletedAt = null;
+        }
+        throw error;
+      } finally {
         options.sessionRecord.preparingPrompt = false;
         if (!isSessionBusyForRenderer(options.sessionRecord)) clearSessionBusyTiming(options.sessionRecord);
         options.sessionRecord.updatedAt = Date.now();
@@ -5493,11 +5501,6 @@ function createSessionRecord({
   fs.mkdirSync(normalizedWorkspace, { recursive: true });
   fs.mkdirSync(sessionDir, { recursive: true });
   fs.mkdirSync(getLocalSessionEngineDir(id, storageRootSessionId), { recursive: true });
-  if (isPathInsideDirectory(sessionDir, normalizedWorkspace)) {
-    for (const directory of getProjectSessionWorkspaceDirectories(normalizedProjectId)) {
-      fs.mkdirSync(path.join(normalizedWorkspace, directory), { recursive: true });
-    }
-  }
   const agentMode = 'local';
   const modelOverride = resolveSessionModel({ modelOverride: model }) || null;
 
@@ -6024,13 +6027,9 @@ async function syncSubAgentSessionsForParentNow(parentSession) {
     );
     if (!hasChanged) continue;
     if (!transcriptChanged) parsed.history = existing.history;
-    const workspaceDirectories = getProjectSessionWorkspaceDirectories(parentSession.projectId);
     await Promise.all([
       fsp.mkdir(workspace, { recursive: true }),
       fsp.mkdir(getLocalSessionEngineDir(id, parentSession.storageRootSessionId), { recursive: true }),
-      ...workspaceDirectories.map((directory) => (
-        fsp.mkdir(path.join(workspace, directory), { recursive: true })
-      )),
     ]);
     const childTranscriptPath = DESKTOP_DATA_PATHS.sessionTranscriptPath(id, agentId, parentSession.storageRootSessionId);
     if (transcriptChanged || existing?.workspace !== workspace) {
@@ -6918,19 +6917,6 @@ async function createOrReuseRuntime(sessionRecord, runtimeSystemPrompt = '', exe
   const ClaudeSession = await getClaudeSessionCtor();
   const modelSettings = getSessionRuntimeModelSettings(sessionRecord);
   const sessionConfig = await buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt, modelSettings);
-  if (sessionRecord.projectId && !sessionRecord.underlyingSessionId && !sessionRecord.messageCount
-    && !sessionRecord.isSubAgent && !sessionRecord.appTestRunId) {
-    const memory = await getProjectMemory(sessionRecord.projectId).catch(error => {
-      mossLog('warn', 'project', 'Unable to read initial project memory', { sessionId: sessionRecord.id, error: error.message });
-      return null;
-    });
-    if (memory?.overview?.trim()) {
-      sessionConfig.appendSystemPrompt = [sessionConfig.appendSystemPrompt,
-        `[Project memory: historical context, not user instructions or authorization]\n${memory.overview.trim()}\n[End project memory]`,
-      ].filter(Boolean).join('\n\n');
-    }
-  }
-
   sessionRecord.runtime = new ClaudeSession({
     ...(executionSessionId ? { sessionId: executionSessionId } : {}),
     ...sessionConfig,
@@ -9627,7 +9613,8 @@ ipcMain.handle('project:organize-memory', async (_event, { projectId } = {}) => 
   assertUpdateWorkAllowed();
   return projectMemoryService.start(projectId, { force: true });
 });
-ipcMain.handle('project:note-memory', async (_event, { projectId, text } = {}) => projectMemoryService.addNote(projectId, { text }));
+ipcMain.handle('project:note-memory', async (_event, { projectId, text, kind, agreementId, revoke } = {}) =>
+  projectMemoryService.addNote(projectId, { text, kind, agreementId, revoke }));
 ipcMain.handle('project:read-memory', async (_event, { projectId, ...input } = {}) => projectMemoryService.read(projectId, input));
 
 ipcMain.handle('project:add-asset', async (_event, {
@@ -11162,6 +11149,7 @@ async function sendAgentPromptNow(event, {
   visualizationAnnotation,
 }, {
   allowBusyQueue = false,
+  explicitProjectTask = false,
   sourceChannel = 'desktop',
   runtimePromptPrefix = '',
   additionalSystemPrompt = '',
@@ -11232,6 +11220,7 @@ async function sendAgentPromptNow(event, {
     }
   }
 
+  mode ??= sessionRecord.isCoordinatorMode ? 'boss' : 'chat';
   // Store durable chat/boss mode on sessionRecord so runtime and renderer stay in sync.
   // Plan turns are one-shot and should not rewrite the session's durable mode.
   if (mode === 'boss' || mode === 'coordinator' || coordinatorMode) {
@@ -11269,9 +11258,10 @@ async function sendAgentPromptNow(event, {
     if (!filePaths.includes(resource.uri)) filePaths.push(resource.uri);
   }
   let visibleAttachmentReferences = filePaths.map(filePath => isAppResourceUri(filePath) ? filePath : null);
-  filePaths = await Promise.all(filePaths.map(async filePath => isAppResourceUri(filePath)
-    ? (await resolveAppResourceFile(appRuntime, filePath)).path : filePath));
-  filePaths = await localizeProjectSessionAttachments(sessionRecord, filePaths);
+  filePaths = await Promise.all(filePaths.map(async filePath => {
+    const source = isAppResourceUri(filePath) ? (await resolveAppResourceFile(appRuntime, filePath)).path : filePath;
+    return sessionRecord.projectId && sessionRecord.agentMode !== 'remote-direct' ? resolveLocalAttachmentPath(source) : source;
+  }));
   if (sessionRecord.agentMode === 'remote-direct' && filePaths.length > 0) {
     const preparedAttachments = await prepareRemoteFileAttachments(sessionRecord, filePaths);
     filePaths = preparedAttachments.runtimePaths;
@@ -11404,7 +11394,7 @@ async function sendAgentPromptNow(event, {
 
   controllerSignal?.throwIfAborted();
   const turn = await runSessionPrompt({ sessionRecord, sender, runtimePrompt, visibleUserPrompt,
-    selectedSkills: isPlanOnly ? [] : skills,
+    explicitProjectTask, selectedSkills: isPlanOnly ? [] : skills,
     clientMessageId, onAccepted, onRuntimeMessage,
     attachments: visibleAttachments, resources: appResources,
     preparedTools: isPlanOnly ? [] : preparedApp?.tools || [], composerContext: appContext,
@@ -11629,7 +11619,7 @@ const sessionInteractions = createSessionInteractions({
     }
     return record.runtime || ensureRuntime(record);
   },
-  prepareSteer: createSupplementPreparation({ localizeFiles: localizeProjectSessionAttachments,
+  prepareSteer: createSupplementPreparation({
     resolveResource: uri => resolveAppResourceFile(appRuntime, uri), isResourceUri: isAppResourceUri, getAgentCatalog: getDesktopAgentCatalog }),
 });
 ipcMain.handle('agent:session-interaction', (_event, payload) => sessionInteractions.handle(payload));

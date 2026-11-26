@@ -3,7 +3,7 @@ import { getSessionRuntimeContext } from './utils/sessionIdContext.js'
 import { getAdditionalDirectoriesForMossMd } from './bootstrap/state.js'
 import { getLocalISODate } from './constants/common.js'
 import {
-  getAutoMemEntrypointCacheKey,
+  getInstructionFilesCacheKey,
   getMossMds,
   getMemoryFiles,
 } from './utils/mossmd.js'
@@ -196,5 +196,5 @@ export const getUserContext = memoize(
   },
   // Profile and memory state are session-scoped in the embedded runtime.
   () =>
-    `${getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId || ''}:${getMossConfigHomeDir()}:${getCwd()}:${getAutoMemEntrypointCacheKey()}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
+    `${getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId || ''}:${getMossConfigHomeDir()}:${getCwd()}:${getInstructionFilesCacheKey()}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
 )

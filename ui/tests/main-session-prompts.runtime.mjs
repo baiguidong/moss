@@ -3,18 +3,17 @@ import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createCoordinatorStressFixture, bounded } from './helpers/coordinator-stress-fixture.mjs';
-import { buildProjectSystemPrompts } from '../src/shared/project-system-prompts.mjs';
 
 process.env.MOSS_RUNTIME_ADVANCED_SETTINGS = JSON.stringify({ moss_streaming_tool_execution: true });
 process.env.CLAUDE_CODE_USE_NATIVE_FILE_SEARCH = '1';
 const report = process.stdout.write.bind(process.stdout);
 const fixture = await createCoordinatorStressFixture();
-const projectPrompts = buildProjectSystemPrompts({ id: 'fixture-project', name: 'ESP32' }, { instructions: 'SHARED_PROJECT_CONSTRAINT' });
 const text = body => JSON.stringify(body.system);
 const names = body => (body.tools || []).map(tool => tool.name);
 try {
   const ui = await fixture.scenario('ui', 1, async () => ({}), {
-    ...projectPrompts,
+    appendSystemPrompt: 'SHARED_PROJECT_CONSTRAINT',
+    mainSessionSystemPrompt: 'MAIN_ONLY_INSTRUCTION',
     presentationEnabled: true,
     onAppEvent: async () => ({ ok: true }),
     projectMemory: async () => ({}), projectResult: async () => ({}),
@@ -33,12 +32,12 @@ try {
     assert.match(text(parent), /MAIN_IDENTITY_RETAINED/);
     assert.match(text(parent), /SHARED_PROJECT_CONSTRAINT/);
     for (const tool of ['moss_present', 'ProjectResult', 'ProjectMemory']) {
-      assert.match(text(parent), new RegExp(tool));
+      assert.match(text(parent), /MAIN_ONLY_INSTRUCTION/);
       assert.ok(names(parent).includes(tool), `${tool} missing from Boss main session`);
     }
     for (const { body } of ui.state.workerRequests) {
       assert.match(text(body), /DOCUMENT_WORKER_IDENTITY/);
-      assert.doesNotMatch(text(body), /MAIN_IDENTITY_RETAINED|ProjectResult|ProjectMemory|moss_present|result previews/);
+      assert.doesNotMatch(text(body), /MAIN_IDENTITY_RETAINED|MAIN_ONLY_INSTRUCTION|moss_present|result previews/);
       assert.ok(!names(body).some(name => ['moss_present', 'ProjectResult', 'ProjectMemory'].includes(name)));
     }
   };

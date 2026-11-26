@@ -2,7 +2,6 @@ import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { normalizeStringList } from '../src/shared/string-list.mjs';
-import { refreshProjectSessionInstructions } from '../src/shared/project-instructions.mjs';
 import { connectorIdFromApp } from '../../packages/app-sdk/src/discovery.mjs';
 
 const main = readFileSync(new URL('../src/main.mjs', import.meta.url), 'utf8');
@@ -15,7 +14,7 @@ function fixture() {
   let restores = 0, disposals = 0;
   const controller = new AbortController();
   const context: any = {
-    normalizeStringList, connectorIdFromApp, refreshProjectSessionInstructions,
+    normalizeStringList, connectorIdFromApp,
     isAppScopedSession: (value: any) => Boolean(value?.channelAppId && value?.channelRuntimePolicy?.contextScope === 'app'),
     getRuntimeSessionConnectorIds: (value: any) => value.connectorIds,
     listAllStoredApps: () => [{ id: 'moss.baidu-netdisk', connectorApp: { id: 'baidu-netdisk' } }],

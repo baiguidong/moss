@@ -241,16 +241,22 @@ export type MemoryFileInfo = {
   rawContent?: string
 }
 
-export function getAutoMemEntrypointCacheKey(): string {
-  if (!isAutoMemoryEnabled()) return 'disabled'
-
-  const entrypoint = getAutoMemEntrypoint()
+function instructionFileCacheKey(entrypoint: string): string {
   try {
     const stats = getFsImplementation().statSync(entrypoint)
     return `${entrypoint}:${stats.mtimeMs}:${stats.ctimeMs}:${stats.size}:${stats.ino}`
   } catch {
     return `${entrypoint}:missing`
   }
+}
+
+export function getAutoMemEntrypointCacheKey(): string {
+  return isAutoMemoryEnabled() ? instructionFileCacheKey(getAutoMemEntrypoint()) : 'disabled'
+}
+
+export function getInstructionFilesCacheKey(): string {
+  const workspaceFile = join(getOriginalCwd(), 'AGENTS.md')
+  return JSON.stringify([getAutoMemEntrypointCacheKey(), instructionFileCacheKey(workspaceFile)])
 }
 
 function pathInOriginalCwd(path: string): boolean {
@@ -1048,7 +1054,7 @@ export const getMemoryFiles = memoize(
     return result
   },
   (forceIncludeExternal: boolean = false) =>
-    `${getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId || ''}:${forceIncludeExternal}:${getMossConfigHomeDir()}:${getOriginalCwd()}:${getAutoMemEntrypointCacheKey()}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
+    `${getSessionRuntimeContext()?.appToolPolicy?.isolatedAppId || ''}:${forceIncludeExternal}:${getMossConfigHomeDir()}:${getOriginalCwd()}:${getInstructionFilesCacheKey()}:${getAdditionalDirectoriesForMossMd().join('\0')}`,
 )
 
 function isInstructionsMemoryType(

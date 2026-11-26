@@ -42,7 +42,6 @@ async function fixture(count = 1) {
     getLocalSessionEngineDir: (id: string) => path.join(root, 'mirror', id),
     getLocalSessionDir: (id: string) => path.join(root, 'mirror', id),
     getLocalSessionResourceManifestPath: (id: string) => path.join(root, 'mirror', id, 'resources.json'),
-    getProjectSessionWorkspaceDirectories: () => [],
     DESKTOP_DATA_PATHS: { sessionTranscriptPath: (id: string, agent: string) => path.join(root, 'mirror', id, `${agent}.jsonl`) },
     normalizePermissionMode: (mode: string) => mode || 'default', desktopSettings: { permissionMode: 'default' },
     countSessionMessages: (history: any[]) => history.length, deriveSessionPreview,
@@ -75,6 +74,8 @@ test('metadata arriving after the transcript updates worker identity and resourc
   expect(f.children.get('subagent-a0').connectorIds).toEqual(['connector-b']);
   expect(f.manifests.at(-1).resources).toEqual(resources);
   expect(f.copies).toHaveLength(1);
+  const entries = await fs.readdir(f.children.get('subagent-a0').workspace);
+  expect(entries.filter(name => ['inputs', 'working', 'outputs'].includes(name))).toEqual([]);
 });
 
 test('opening the parent leaves unchanged child histories unloaded', async () => {

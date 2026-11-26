@@ -51,9 +51,6 @@ Knowledge collections are managed by installed Apps in their instance data direc
 ~/.moss/sessions/<session-id>/
   session.json
   workspace/
-    inputs/                 # project sessions only
-    working/                # project sessions only
-    outputs/                # project sessions only
     .moss/
       project-assets/
   runtime/
@@ -71,12 +68,7 @@ Knowledge collections are managed by installed Apps in their instance data direc
 - Every main session and subagent session owns one top-level session directory.
 - `session.json` carries `kind: "moss-session"` and the current
   `layoutVersion`.
-- Project sessions pre-create `workspace/inputs/`, `workspace/working/`, and
-  `workspace/outputs/`; regular chat sessions use the workspace root without
-  these empty directories.
-- `workspace/inputs/` contains localized source material,
-  `workspace/working/` contains intermediate work, and `workspace/outputs/`
-  contains final publish candidates.
+- Local project chats reference attachments at their original paths.
 - `.moss/project-assets/` is a read-only-style session snapshot of project
   assets. It is not durable project storage.
 - `runtime/resource-manifest.json` is the resource snapshot used by that

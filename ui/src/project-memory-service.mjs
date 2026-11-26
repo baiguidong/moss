@@ -294,13 +294,54 @@ export function createProjectMemoryService({
     return getStatus(id);
   }
 
-  async function addNote(projectId, { text, sessionId = null } = {}) {
+  async function readAgreements(id) {
+    try {
+      return JSON.parse(await fs.readFile(path.join(root(id), 'agreements.json'), 'utf8'));
+    } catch (error) {
+      if (error.code === 'ENOENT') return { version: 0, items: [] };
+      throw error;
+    }
+  }
+
+  async function changeAgreement(id, { text, agreementId, revoke, sessionId }) {
+    return withProjectCommit(id, async () => {
+      await projectFor(id);
+      const file = path.join(root(id), 'agreements.json');
+      const release = await lockfile.lock(file, { realpath: false, retries: { retries: 8, minTimeout: 10 } });
+      try {
+        const state = await readAgreements(id);
+        const existing = agreementId
+          ? state.items.find(item => item.id === agreementId)
+          : state.items.find(item => item.text === text);
+        if (agreementId && !existing) throw new Error('项目约定已被撤销或不存在，请重新读取。');
+        if (existing && !revoke && existing.text === text) return { version: state.version, agreement: existing };
+        const agreement = { id: existing?.id || randomUUID(), text, sourceSessionId: sessionId ?? existing?.sourceSessionId ?? null, updatedAt: now() };
+        const items = state.items.filter(item => item.id !== agreement.id);
+        if (!revoke) items.push(agreement);
+        const version = state.version + 1;
+        await writeJsonFileAtomicAsync(file, { version, items });
+        return revoke ? { version, revokedId: agreement.id } : { version, agreement };
+      } finally {
+        await release();
+      }
+    });
+  }
+
+  async function addNote(projectId, { text, sessionId = null, kind = 'fact', agreementId, revoke = false } = {}) {
     const id = normalizeProjectId(projectId);
     await projectFor(id);
     const note = redactProjectMemorySecrets(text).trim();
-    if (!note || note.length > 12000) throw new Error('记忆修正不能为空，且不能超过 12000 字符。');
+    if (!['fact', 'agreement'].includes(kind) || ((agreementId || revoke) && kind !== 'agreement') || (revoke && !agreementId)) {
+      throw new Error('项目约定操作无效。');
+    }
+    if ((!note && !revoke) || note.length > 12000) throw new Error('记忆修正不能为空，且不能超过 12000 字符。');
     if (sessionId && !(await listSources(id)).some(source => source.id === sessionId && !source.deleted)) throw new Error('会话不属于当前项目。');
-    const record = { id: `note-${randomUUID()}`, text: note, sessionId, createdAt: now() };
+    if (kind === 'agreement') {
+      const change = await changeAgreement(id, { text: note, sessionId, agreementId, revoke });
+      notify(id);
+      return change;
+    }
+    const record = { id: `note-${randomUUID()}`, kind, text: note, sessionId, createdAt: now() };
     await withProjectCommit(id, async () => {
       await projectFor(id);
       await writeJsonFileAtomicAsync(path.join(root(id), 'notes', `${record.id}.json`), record);
@@ -319,7 +360,7 @@ export function createProjectMemoryService({
       const memory = await getMemory(id);
       const notes = await readNotes(id);
       const pending = notes.filter(note => !memory.noteIds?.includes(note.id));
-      return { ...memory, corrections: pending.slice(startAt, startAt + Math.min(count, 5)), correctionCount: pending.length };
+      return { ...memory, agreements: await readAgreements(id), corrections: pending.slice(startAt, startAt + Math.min(count, 5)), correctionCount: pending.length };
     }
     const memberIds = new Set(membersOf(await listSources(id)).map(source => source.id));
     const records = (await readRecords(id, 'extractions')).filter(source => memberIds.has(source.id));
@@ -337,7 +378,7 @@ export function createProjectMemoryService({
   }
 
   return {
-    run, start, getStatus, addNote, read, consider,
+    run, start, getStatus, addNote, read, readAgreements, consider,
     isRunning: () => running.size > 0,
     async stop() {
       stopped = true;

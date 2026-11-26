@@ -1,14 +1,22 @@
 import { expect, test } from 'bun:test'
-import { buildProjectSystemPrompts } from '../src/shared/project-system-prompts.mjs'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { ensureProjectAgentsFile } from '../src/project-agents.mjs'
 
-test('shared project constraints exclude main-session delivery and memory tool instructions', () => {
-  const prompts = buildProjectSystemPrompts({ id: 'project-1', name: 'ESP32' }, {
-    instructions: 'Use ESP32-S3.', manifest: { assets: [{ path: '/inputs/spec.md' }] },
-  })
-  expect(prompts.appendSystemPrompt).toContain('Use ESP32-S3.')
-  expect(prompts.appendSystemPrompt).toContain('/inputs/spec.md')
-  expect(prompts.appendSystemPrompt).not.toMatch(/ProjectResult|ProjectMemory|moss_present|main Agent/)
-  expect(prompts.mainSessionSystemPrompt).toContain('ProjectResult')
-  expect(prompts.mainSessionSystemPrompt).toContain('ProjectMemory')
-  expect(buildProjectSystemPrompts(null)).toEqual({})
+test('project creation keeps the complete repository and generated instructions once', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'moss-agents-'))
+  const file = path.join(root, 'AGENTS.md')
+  try {
+    const original = '# Repository rules\n\nKeep existing style.\n'
+    const generated = '## Build\n\nUse bun.\n\n## Tests\n\nRun the desktop suite.'
+    await writeFile(file, original)
+    const first = await ensureProjectAgentsFile(root, '# AGENTS.md\n\n' + generated, { creating: true })
+    await ensureProjectAgentsFile(root, '# AGENTS.md\n\n' + generated, { creating: true })
+    expect(first.content.startsWith(original)).toBe(true)
+    expect(first.content.split(generated)).toHaveLength(2)
+    expect(await readFile(file, 'utf8')).toBe(first.content)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })

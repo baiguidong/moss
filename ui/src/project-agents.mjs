@@ -1,4 +1,6 @@
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
+import { runInKeyedQueue } from './shared/keyed-queue.mjs';
 import * as fs from 'node:fs/promises';
 
 import { normalizeGeneratedProjectInstructions } from './shared/project-instructions.mjs';
@@ -27,30 +29,46 @@ export function projectAgentsPath(directory) {
   return path.join(directory, PROJECT_AGENTS_FILENAME);
 }
 
-/**
- * Create the project instruction file without overwriting a user's existing
- * AGENTS.md. Existing content becomes the project instruction snapshot.
- */
-export async function ensureProjectAgentsFile(directory, instructions = '') {
+const fileQueue = new Map();
+const projectDefaults = readFileSync(new URL('./project-session-defaults.md', import.meta.url), 'utf8');
+
+export function ensureProjectAgentsFile(directory, instructions = '', { creating = false } = {}) {
   const filePath = projectAgentsPath(directory);
-  try {
-    const existing = await fs.readFile(filePath, 'utf8');
-    if (existing.trim()) return { path: filePath, content: normalizeAgentsText(existing), created: false };
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw new Error(`无法读取项目指令文件：${filePath}（${error.message}）`);
-  }
-  const content = normalizeAgentsText(instructions);
-  await fs.writeFile(filePath, content, { encoding: 'utf8', flag: 'wx' }).catch(async error => {
-    if (error.code !== 'EEXIST') throw new Error(`无法创建项目指令文件：${filePath}（${error.message}）`);
-    return null;
+  return runInKeyedQueue(fileQueue, filePath, async () => {
+    let existing;
+    try {
+      existing = await fs.readFile(filePath, 'utf8');
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    const configured = normalizeAgentsText(instructions);
+    const base = existing ?? configured;
+    const additions = [];
+    if (existing !== undefined && creating && instructions.trim()) {
+      const body = configured.replace(/^# AGENTS\.md\s*\n/i, '').trim();
+      if (body && !existing.includes(body)) additions.push(body);
+    }
+    if (creating && ![base, ...additions].some(text => text.includes(projectDefaults.trim()))) {
+      additions.push(projectDefaults.trim());
+    }
+    const separator = base.endsWith('\n') ? '\n' : '\n\n';
+    const suffix = additions.length ? separator + additions.join('\n\n') + '\n' : '';
+    const content = base + suffix;
+    if (existing === undefined) {
+      await fs.writeFile(filePath, content, { encoding: 'utf8', flag: 'wx' });
+    } else if (suffix) {
+      await fs.appendFile(filePath, suffix);
+    }
+    return { path: filePath, content, created: existing === undefined };
   });
-  return { path: filePath, content, created: true };
 }
 
-/** Save an explicit project settings edit back to the instruction file. */
-export async function writeProjectAgentsFile(directory, instructions = '') {
+/** Save the complete Markdown document edited in project settings. */
+export function writeProjectAgentsFile(directory, instructions = '') {
   const filePath = projectAgentsPath(directory);
-  const content = normalizeAgentsText(instructions);
-  await fs.writeFile(filePath, content, 'utf8');
-  return { path: filePath, content };
+  return runInKeyedQueue(fileQueue, filePath, async () => {
+    const content = instructions;
+    await fs.writeFile(filePath, content, 'utf8');
+    return { path: filePath, content };
+  });
 }

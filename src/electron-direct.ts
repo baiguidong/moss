@@ -439,6 +439,7 @@ type DesktopTurnOptions = {
   presentationTurn?: { id: string; sessionId: string; epoch?: string }
   taskInbox?: SessionTaskInbox
   notificationsOnly?: boolean
+  projectAgreementContext?: string
 }
 
 export type DesktopPermissionDecision =
@@ -1565,6 +1566,7 @@ export class ClaudeSession {
                     mode,
                     onInputRecorded,
                     preparedTools: turnOptions?.preparedTools,
+                    projectAgreementContext: turnOptions?.projectAgreementContext,
                   })
 
                   try {
