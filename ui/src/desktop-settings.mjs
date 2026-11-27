@@ -33,6 +33,7 @@ export const DEFAULT_DESKTOP_SETTINGS = Object.freeze({
   agentTeamsEnabled: false,
   permissionMode: DEFAULT_NEW_SESSION_PERMISSION_MODE,
   bypassPermissions: DEFAULT_NEW_SESSION_PERMISSION_MODE === 'bypassPermissions',
+  localModelEnabled: false,
   model: '',
   modelListMode: 'auto',
   availableModels: [],
@@ -250,8 +251,8 @@ function loadLocalSettingsAuthConfig(settingsPath) {
       ? parsed.env
       : {};
     const textModel = objectField(objectField(parsed, 'models'), 'text');
-    const modelBaseUrl = parsed.localModelEnabled !== false && normalizeMossBaseUrl(stringField(textModel, 'baseUrl') || '');
-    const modelAuthToken = parsed.localModelEnabled !== false && stringField(textModel, 'apiKey');
+    const modelBaseUrl = parsed.localModelEnabled === true && normalizeMossBaseUrl(stringField(textModel, 'baseUrl') || '');
+    const modelAuthToken = parsed.localModelEnabled === true && stringField(textModel, 'apiKey');
     if (modelBaseUrl) {
       process.env.MOSS_MODEL_BASE_URL = modelBaseUrl;
       result.injected.push('MOSS_MODEL_BASE_URL');
@@ -324,7 +325,8 @@ export function normalizeDesktopSettings(input, existing = {}) {
   result.agentMode = 'local';
   result.localEnabled = true;
 
-  if (typeof source.localModelEnabled === 'boolean') result.localModelEnabled = source.localModelEnabled;
+  result.localModelEnabled = typeof source.localModelEnabled === 'boolean'
+    ? source.localModelEnabled : existing.localModelEnabled === true;
 
   result.model =
     stringField(source, 'model') ??
@@ -883,10 +885,7 @@ function loadDesktopSettings(settingsPath, log) {
 }
 
 export function resolveDesktopModelSettings(settings, managedModel) {
-  // Existing installations keep their previous routing until the switch is used.
-  const useLocal = settings.localModelEnabled ??
-    (Boolean(settings.model?.trim() && settings.url?.trim()) || !managedModel);
-  if (useLocal) return settings;
+  if (settings.localModelEnabled === true) return settings;
   return {
     ...settings,
     model: managedModel?.model || '',
@@ -915,13 +914,13 @@ function syncDesktopThinkingEnv(settings) {
 }
 
 function syncDesktopModelEnv(settings) {
-  const modelBaseUrl = settings?.localModelEnabled !== false && normalizeMossBaseUrl(settings?.url || '');
+  const modelBaseUrl = settings?.localModelEnabled === true && normalizeMossBaseUrl(settings?.url || '');
   if (modelBaseUrl) {
     process.env.MOSS_MODEL_BASE_URL = modelBaseUrl;
   } else {
     delete process.env.MOSS_MODEL_BASE_URL;
   }
-  if (settings?.localModelEnabled !== false && settings?.apiKey) {
+  if (settings?.localModelEnabled === true && settings?.apiKey) {
     process.env.MOSS_MODEL_AUTH_TOKEN = settings.apiKey;
   } else {
     delete process.env.MOSS_MODEL_AUTH_TOKEN;

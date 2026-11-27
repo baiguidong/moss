@@ -175,3 +175,50 @@ test('opaque OAuth and resource routes select the registered Host without login 
   const preview = await new Promise((resolve, reject) => { const req = http.get(base + '/api/auth', { headers: { Host: port + '.preview.example', Cookie: 'moss_cloud=never-forward' } }, res => { let body = ''; res.on('data', chunk => body += chunk); res.on('end', () => resolve(body)); }); req.on('error', reject); });
   assert.equal(preview, 'bound-host'); assert.equal(received.at(-1).path, `/_moss/port/${port}/api/auth`); assert.equal(received.at(-1).cookie, undefined);
 });
+
+test('cloud heartbeat supplies a private streaming Router endpoint with the user key', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'moss-router-'));
+  const backend = http.createServer(async (req, res) => {
+    if (req.url === '/api/v1/hosts/heartbeat') {
+      return respond(res, { modelConfig: { model: 'example', apiKey: 'user-token', url: 'https://public.example' } });
+    }
+    assert.equal(req.url, '/v1/messages?beta=true');
+    assert.equal(req.headers['x-api-key'], 'user-token');
+    assert.equal(req.headers.cookie, undefined);
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    assert.deepEqual(JSON.parse(body), { model: 'example' });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write('data: first\n\n');
+    req.socket.once('close', () => res.destroy());
+  });
+  const upstream = await listen(backend);
+  const gateway = await startGateway({ env: {
+    MOSS_WEB_ORIGIN: 'https://moss.example', MOSS_WEB_AUTH_SERVER: upstream, MOSS_WEB_IMAGE: 'test',
+    MOSS_CLOUD_MODEL_UPSTREAM: upstream, MOSS_CLOUD_MODEL_PORT: '0', MOSS_CLOUD_STATE: dir,
+    MOSS_WEB_HOST: '127.0.0.1', MOSS_WEB_PORT: '0',
+  }, docker: {} });
+  t.after(async () => {
+    await gateway.close();
+    backend.closeAllConnections();
+    await new Promise(resolve => backend.close(resolve));
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const row = gateway.store.ensure({ user: { id: 'alice' }, organization: { id: 'org' } });
+  const response = await fetch(`http://127.0.0.1:${gateway.server.address().port}/_moss-auth/api/v1/hosts/heartbeat`, {
+    method: 'POST', headers: { 'X-Moss-Environment': row.id, 'X-Moss-Host-Token': row.controlToken },
+    body: JSON.stringify({ id: row.id, kind: 'cloud' }),
+  });
+  const { modelConfig } = await response.json();
+  const url = new URL(modelConfig.url);
+  assert.equal(url.hostname, 'moss-cloud-gateway');
+  url.hostname = '127.0.0.1';
+  assert.equal((await fetch(new URL('/api/user', url))).status, 404);
+  assert.equal((await fetch(new URL('/v1/models', url))).status, 401);
+  const stream = await fetch(new URL('/v1/messages?beta=true', url), { method: 'POST',
+    headers: { 'x-api-key': modelConfig.apiKey, cookie: 'private' }, body: JSON.stringify({ model: modelConfig.model }),
+    signal: AbortSignal.timeout(5000) });
+  const reader = stream.body.getReader();
+  assert.equal(new TextDecoder().decode((await reader.read()).value), 'data: first\n\n');
+  await reader.cancel();
+});

@@ -2373,6 +2373,7 @@ function BackgroundTaskPanel({
 }
 
 export function ChatArea({
+  waitingForServerModel = false,
   messages,
   projectCreationReview,
   value,
@@ -2468,6 +2469,7 @@ export function ChatArea({
 }: {
   messages: TranscriptRenderMessage[];
   projectCreationReview?: React.ReactNode;
+  waitingForServerModel?: boolean;
   value: string;
   loading: boolean;
   busyStartedAt?: number | null;
@@ -2783,7 +2785,7 @@ export function ChatArea({
         />
         <div className="shrink-0 px-3 pb-4 sm:px-4">
           {loading && loadingStartTime != null ? (
-            <ActivityStrip label="正在准备会话…" startTime={loadingStartTime} />
+            <ActivityStrip label={waitingForServerModel ? "正在获取服务端模型…" : "正在准备会话…"} startTime={loadingStartTime} />
           ) : null}
         </div>
       </div>
@@ -2903,7 +2905,7 @@ export function ChatArea({
             <BackgroundTaskPanel sessionId={sessionId} tasks={backgroundTasks.filter((task) => task.appId !== "moss.workflow" && !appWorkbench.appIds.has(task.appId || ""))} />
           )}
           {composerActivity && activityStartTime != null && (
-            <ActivityStrip label={composerActivity.label} startTime={activityStartTime} tokens={turnTokens} />
+            <ActivityStrip label={loading && waitingForServerModel ? "正在获取服务端模型…" : composerActivity.label} startTime={activityStartTime} tokens={turnTokens} />
           )}
           <QueuedMessages messages={queuedMessages ?? []} onEdit={onEditQueuedMessage} onRemove={onRemoveQueuedMessage} />
           {sessionId && <SessionInteractions key={sessionId} sessionId={sessionId} items={interactions} busy={loading} onRestore={item => onRestoreInteraction ? onRestoreInteraction(item) : onChange(value ? `${value}\n\n${item.prompt}` : item.prompt)} />}

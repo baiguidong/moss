@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const hash = value => createHash('sha256').update(String(value)).digest();
-export function createWebAuth({ home, env = process.env, fetchImpl = fetch }) {
+export function createWebAuth({ home, env = process.env, fetchImpl = fetch, onServerLogin }) {
   const serverUrl = env.MOSS_WEB_AUTH_SERVER?.replace(/\/$/, '');
   const ownerId = env.MOSS_WEB_OWNER_ID;
   const ownerOrg = env.MOSS_WEB_OWNER_ORG_ID;
@@ -78,6 +78,7 @@ export function createWebAuth({ home, env = process.env, fetchImpl = fetch }) {
         const identity = await upstream('/api/v1/auth/me', { headers: { Authorization: `Bearer ${accessToken}` } });
         checkOwner(identity);
         hostAccessToken = accessToken;
+        onServerLogin?.();
         const user = identity.user || {};
         account = { userName: [user.name, user.username, user.email, user.id].find(value => typeof value === 'string' && value.trim())?.trim() || '', userEmail: typeof user.email === 'string' ? user.email.trim() : '' };
         expiresAt = Math.min(expiresAt, Date.now() + (Number(result.expires_in) || 3600) * 1000);

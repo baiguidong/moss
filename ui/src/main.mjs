@@ -1179,10 +1179,10 @@ function getRuntimeModelSettings() {
 
 function getConfiguredRuntimeModelSettings() {
   const settings = getRuntimeModelSettings();
-  if (settings.localModelEnabled !== undefined && (!settings.model || !settings.url)) {
+  if (!settings.model || !settings.url) {
     throw new Error(settings.localModelEnabled
       ? '请先在设置中填写本地模型名称和 API URL。'
-      : 'Moss Server 暂未提供可用的文本模型。请检查服务器连接或开启本地模型配置。');
+      : isServerSignedIn() ? 'Moss Server 暂未提供可用的文本模型。' : '请先登录 Moss Server，或在设置中打开本地模型配置。');
   }
   return settings;
 }
@@ -1217,7 +1217,10 @@ function assertSessionModelAllowed(model, settings = getRuntimeModelSettings()) 
   return value;
 }
 
-function getSessionRuntimeModelSettings(sessionRecord) {
+async function getSessionRuntimeModelSettings(sessionRecord) {
+  if (!desktopSettings.localModelEnabled && !hostManagedModel && isServerSignedIn()) {
+    await hostControl.refresh({ throwOnError: true });
+  }
   const settings = getConfiguredRuntimeModelSettings();
   const model = assertSessionModelAllowed(resolveSessionModel(sessionRecord, settings), settings);
   if (!sessionRecord.modelOverride) {
@@ -6922,7 +6925,7 @@ async function createOrReuseRuntime(sessionRecord, runtimeSystemPrompt = '', exe
   await waitForManagedRuntimesBeforeLocalSession();
   await prepareAssistantContextForSessionStart(sessionRecord);
   const ClaudeSession = await getClaudeSessionCtor();
-  const modelSettings = getSessionRuntimeModelSettings(sessionRecord);
+  const modelSettings = await getSessionRuntimeModelSettings(sessionRecord);
   const sessionConfig = await buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt, modelSettings);
   sessionRecord.runtime = new ClaudeSession({
     ...(executionSessionId ? { sessionId: executionSessionId } : {}),
@@ -6982,7 +6985,7 @@ async function restoreSessionRuntime(sessionRecord, runtimeSystemPrompt = '') {
   await prepareAssistantContextForSessionStart(sessionRecord);
   const resumeClaudeSession = await getResumeClaudeSessionFn();
 
-  const modelSettings = getSessionRuntimeModelSettings(sessionRecord);
+  const modelSettings = await getSessionRuntimeModelSettings(sessionRecord);
   try {
     const resumed = await resumeClaudeSession(targetSessionId, {
       ...(await buildClaudeSessionConfig(sessionRecord.workspace, sessionRecord, runtimeSystemPrompt, modelSettings)),
@@ -7263,6 +7266,13 @@ hostControl = createHostControlClient({ home: MOSS_HOME, db: sessionDb, kind: is
     throw new Error('不支持此控制命令');
   },
   applyPolicy: async (policy, modelConfig) => {
+    if (!isWebHost && modelConfig?.url) {
+      const endpoint = new URL(modelConfig.url);
+      if (endpoint.protocol !== 'https:' && !(endpoint.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(endpoint.hostname))) {
+        hostManagedModel = null;
+        throw new Error('Moss Server 下发的 Router 地址需要使用 HTTPS，请联系管理员。');
+      }
+    }
     const modelChanged = JSON.stringify(modelConfig) !== JSON.stringify(hostManagedModel);
     if (!policy || (policy.revision === hostPolicyRevision && !modelChanged)) return;
     hostManagedModel = modelConfig || null;
@@ -8526,6 +8536,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     overrides.set('computer-use:status', () => ({ supported: false, enabled: false, phase: 'unsupported', requests: [], apps: [], sessionApps: [] }));
     webServer = await startWebServer({
       restoreState: webRestoreState,
+      onServerLogin: () => { void hostControl.refresh(); },
       onDrain: async () => {
         webAutomationsPaused = true;
         appRuntimeRestoreController?.abort();

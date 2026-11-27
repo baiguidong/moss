@@ -580,7 +580,7 @@ export default function App() {
   const isLocalRuntimeModel = desktopSettings?.runtimeModel?.managed === false;
   const runtimeModel = hasManagedModelAuth || isLocalRuntimeModel
     ? (desktopSettings?.runtimeModel || desktopSettings)
-    : desktopSettings?.localModelEnabled === false ? undefined : desktopSettings;
+    : desktopSettings?.localModelEnabled === true ? desktopSettings : undefined;
   const modelSettings = runtimeModel ? {
     model: runtimeModel.model,
     availableModels: runtimeModel.availableModels,
@@ -3357,6 +3357,7 @@ export default function App() {
                 currentModel={modelForCurrentSource(activeDetail?.modelOverride) || undefined}
                 onModelChange={activeDetail?.agentMode !== 'remote-direct' && !activeDetail?.isSubAgent ? handleSessionModelChange : undefined}
                 modelSettings={modelSettings}
+                waitingForServerModel={Boolean(desktopSettings?.serverSignedIn && !desktopSettings.localModelEnabled && !runtimeModel?.model)}
                 sessionUsage={sessionUsage}
                 value={input}
                 loading={Boolean(activeDetail?.busy || pendingSendRequests.has(activeSessionId) || pendingFirstMessage?.sessionId === activeSessionId)}
@@ -3461,6 +3462,7 @@ export default function App() {
                 currentModel={draftModel || modelSettings?.model}
                 onModelChange={draftProject ? undefined : handleSessionModelChange}
                 modelSettings={modelSettings}
+                waitingForServerModel={Boolean(desktopSettings?.serverSignedIn && !desktopSettings.localModelEnabled && !runtimeModel?.model)}
                 sessionWorkspace={undefined}
                 homeWorkspace={appDraftWorkspace}
                 workspaceOptions={draftProject?.workspaces}

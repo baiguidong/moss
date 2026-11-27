@@ -77,6 +77,7 @@ const server = createServer(async (req, res) => {
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 await fs.writeFile(path.join(root, 'settings.json'), JSON.stringify({
+  localModelEnabled: true,
   models: { text: {
     model: 'fixture-model',
     availableModels: ['fixture-model', 'fixture-secondary', 'fixture-tertiary'],

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
+import { createModelProxy } from './model-proxy.mjs';
 import { Docker } from './docker.mjs';
 import { EnvironmentStore } from './store.mjs';
 import { Environments } from './environments.mjs';
@@ -35,6 +36,7 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
   if (!origin || new URL(origin).origin !== origin) throw new Error('MOSS_WEB_ORIGIN must be an exact origin');
   const authBase = env.MOSS_WEB_AUTH_SERVER?.replace(/\/$/, '');
   if (!env.MOSS_WEB_IMAGE) throw new Error('MOSS_WEB_IMAGE is required');
+  const modelProxy = env.MOSS_CLOUD_MODEL_UPSTREAM ? createModelProxy(env.MOSS_CLOUD_MODEL_UPSTREAM) : null;
   const store = new EnvironmentStore(stateRoot, { maxUsers: number(env.MOSS_CLOUD_MAX_USERS, 20, 1, 10000) });
   store.acquire();
   const installationPath = path.join(stateRoot, 'installation-id');
@@ -235,7 +237,11 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
             }
           }
           const response = await fetch(`${authBase}${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: req.headers.authorization || '' }, body: JSON.stringify(input), redirect: 'error', signal: AbortSignal.timeout(15000) });
-          return json(res, response.status, await response.json());
+          const payload = await response.json();
+          if (modelProxy && response.ok && payload.modelConfig && (endpoint.endsWith('/heartbeat') || endpoint.endsWith('/enroll'))) {
+            payload.modelConfig.url = `http://moss-cloud-gateway:${modelProxy.address().port}`;
+          }
+          return json(res, response.status, payload);
         }
         if (!authBase && req.method === 'GET' && endpoint === '/api/v1/bootstrap') return json(res, 200, { capabilities: {} });
         if (authBase && req.method === 'GET' && (endpoint === '/api/v1/managed-resources/manifest' ||
@@ -436,8 +442,12 @@ export async function startGateway({ env = process.env, docker = new Docker(), r
   });
   await new Promise((resolve, reject) => { admin.once('error', reject); admin.listen(adminPath, resolve); });
   await fsp.chmod(adminPath, 0o600);
+  if (modelProxy) await new Promise((resolve, reject) => {
+    modelProxy.once('error', reject);
+    modelProxy.listen(Number(env.MOSS_CLOUD_MODEL_PORT || 43129), env.MOSS_WEB_HOST || '0.0.0.0', resolve);
+  });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(Number(env.MOSS_WEB_PORT || 43128), env.MOSS_WEB_HOST || '0.0.0.0', resolve); });
-  return { server, store, computers, snapshots, identityProvider, async close() { closing = true; clearInterval(cleanup); clearInterval(garbageCollection); for (const socket of previewSockets) socket.destroy(); for (const id of sessions.keys()) removeSession(id); await new Promise(resolve => server.close(resolve)); await new Promise(resolve => admin.close(resolve)); await Promise.allSettled([...computers.locks.values()]); store.close(); } };
+  return { server, store, computers, snapshots, identityProvider, async close() { closing = true; if (modelProxy) { modelProxy.close(); modelProxy.closeAllConnections(); } clearInterval(cleanup); clearInterval(garbageCollection); for (const socket of previewSockets) socket.destroy(); for (const id of sessions.keys()) removeSession(id); await new Promise(resolve => server.close(resolve)); await new Promise(resolve => admin.close(resolve)); await Promise.allSettled([...computers.locks.values()]); store.close(); } };
 }
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const gateway = await startGateway();

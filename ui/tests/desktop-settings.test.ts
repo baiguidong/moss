@@ -44,7 +44,8 @@ describe('desktop settings', () => {
     const managed = { model: 'server', url: 'https://server.test', apiKey: 'server-key', availableModels: ['server'] };
     fs.writeFileSync(settingsPath, JSON.stringify({ models: { text } }));
     const store = createDesktopSettingsStore({ settingsPath });
-    expect(resolveDesktopModelSettings(store.value, managed)).toBe(store.value);
+    expect(store.value.localModelEnabled).toBe(false);
+    expect(resolveDesktopModelSettings(store.value, managed)).toMatchObject(managed);
     expect(resolveDesktopModelSettings(normalizeDesktopSettings({}), managed)).toMatchObject(managed);
     store.save({ localModelEnabled: false });
     const restarted = createDesktopSettingsStore({ settingsPath });

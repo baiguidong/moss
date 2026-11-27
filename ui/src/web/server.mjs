@@ -42,9 +42,9 @@ async function readJson(req) {
   return JSON.parse(body || '{}');
 }
 
-export async function startWebServer({ registry, home, rendererRoot, env = process.env, overrides = new Map(), snapshot = async () => ({}), oauth, apps, onDisconnect, resources: providedResources, resolvePreviewResource, getBlockers = () => [], restoreState, onDrain, onResume }) {
+export async function startWebServer({ registry, home, rendererRoot, env = process.env, overrides = new Map(), snapshot = async () => ({}), oauth, apps, onDisconnect, onServerLogin, resources: providedResources, resolvePreviewResource, getBlockers = () => [], restoreState, onDrain, onResume }) {
   restoreState ||= createRestoreState(env);
-  const auth = createWebAuth({ home, env });
+  const auth = createWebAuth({ home, env, onServerLogin });
   await fsp.mkdir(path.join(home, 'web'), { recursive: true, mode: 0o700 });
   const identityPath = path.join(home, 'web', 'host-id');
   try { await fsp.writeFile(identityPath, randomUUID(), { flag: 'wx', mode: 0o600 }); }

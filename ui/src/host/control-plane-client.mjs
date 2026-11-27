@@ -70,7 +70,11 @@ export function createHostControlClient({ home, db, kind, environmentId, version
           await applyAccess({ allowed: false, reason: '企业身份验证失败，请重新登录或联系管理员。' });
           if (response.status === 401) { delete account.token; save(); }
         }
-        throw new Error(`控制平面请求失败 (${response.status})`);
+        const details = await response.json().catch(() => null);
+        if (response.status === 503 && details?.error === 'New API 没有返回可用模型，请先配置渠道') {
+          throw new Error('Moss Server 暂未提供可用的文本模型，请检查 Router 渠道。');
+        }
+        throw new Error(`控制平面请求失败 (${response.status})，请重试。`);
       }
       return response.json();
     };
@@ -109,12 +113,18 @@ export function createHostControlClient({ home, db, kind, environmentId, version
       account.usageCursor = events.at(-1).id; save();
     }
   }
-  const refresh = () => {
-    if (stopped) return Promise.resolve();
-    if (busy) return busyGeneration === generation ? busy : busy.then(refresh);
-    busyGeneration = generation;
-    busy = tick().catch(onError).finally(() => { busy = null; });
-    return busy;
+  const refresh = async ({ throwOnError = false } = {}) => {
+    if (stopped) return;
+    if (busy && busyGeneration !== generation) {
+      await busy;
+      return refresh({ throwOnError });
+    }
+    if (!busy) {
+      busyGeneration = generation;
+      busy = tick().catch(error => { onError(error); return error; }).finally(() => { busy = null; });
+    }
+    const error = await busy;
+    if (throwOnError && error) throw error;
   };
   return {
     attributeSession(sessionId) {

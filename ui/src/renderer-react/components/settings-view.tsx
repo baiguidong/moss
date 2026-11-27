@@ -921,7 +921,7 @@ export function SettingsView({
   const localModelUrl = settingsDraft?.url?.trim() || '';
   const localModelApiKey = settingsDraft?.apiKey?.trim() || '';
   const runtimeModel = settingsDraft?.runtimeModel;
-  const useLocalModel = settingsDraft?.localModelEnabled ?? !runtimeModel?.managed;
+  const useLocalModel = settingsDraft?.localModelEnabled === true;
   const managedModel = !useLocalModel && runtimeModel?.managed && (isWebUI() || settingsDraft?.enterpriseAccountAccessToken)
     ? runtimeModel : undefined;
   const followsApiCatalog = settingsDraft?.modelListMode !== 'manual';

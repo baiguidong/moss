@@ -148,6 +148,12 @@ if [[ -z "$new_api_public_base_url" ]]; then
   new_api_public_base_url="http://${public_authority}:3000"
 fi
 set_env MOSS_NEW_API_PUBLIC_BASE_URL "$new_api_public_base_url"
+# Desktop inference uses the TLS entry. Router's console/OIDC may have its own origin.
+if [[ "$new_api_public_base_url" == https://* ]]; then
+  set_env MOSS_NEW_API_MODEL_BASE_URL "$new_api_public_base_url"
+else
+  set_env MOSS_NEW_API_MODEL_BASE_URL "$public_url"
+fi
 
 web_port="$(read_value MOSS_WEB_HTTPS_PORT)"
 [[ "$web_port" =~ ^[0-9]+$ ]] && ((web_port >= 1 && web_port <= 65535)) \
