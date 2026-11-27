@@ -384,12 +384,23 @@ jobs:
             grep -Fxq "$asset" <<<"$assets"
           done
 
+      - name: Checkout release notes and tag history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         shell: bash
         run: |
-          VERSION="${RELEASE_TAG#v}"
-          notes="$(printf 'Moss %s\n\nLinux x86_64 一键部署 Server 控制平面 + 个人云电脑：下载下方 install-moss-server.sh，在 Ubuntu 主机执行；缺少 Docker 时自动安装随 Release 附带的 Docker Engine 与 Compose：\n\n```bash\nsudo env MOSS_PUBLIC_HOST=服务器IP bash install-moss-server.sh\n```\n\nWebUI: https://服务器IP/ · Server 管理页: https://服务器IP/admin/。Mac 和 Windows 客户端安装包也在下方，WebUI 登录页提供同版本下载入口。' "$VERSION")"
-          gh release edit "$RELEASE_TAG" --notes "$notes" --draft=false --repo "$GITHUB_REPOSITORY"
+          set -euo pipefail
+          notes="release-notes/$RELEASE_TAG.md"
+          if [[ ! -s "$notes" ]]; then
+            notes="$RUNNER_TEMP/release-notes.md"
+            previous=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>/dev/null || true)
+            git log --no-merges --format='- %s' "${previous:+$previous..}HEAD" > "$notes"
+          fi
+          gh release edit "$RELEASE_TAG" --notes-file "$notes" --draft=false --repo "$GITHUB_REPOSITORY"

@@ -3,8 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { UpdateContent } from '../src/renderer-react/components/update-modal';
 import type { UpdateState } from '../src/renderer-react/types';
 
-const actions = { check() {}, download() {}, cancel() {}, install() {}, open() {}, reveal() {}, release() {}, autoDownload() {} };
-const state: UpdateState = { revision: 1, currentVersion: '1.0.0', version: '1.2.0', phase: 'downloaded', capabilities: { mode: 'manual', platform: 'darwin', arch: 'arm64', packageType: 'dmg' }, downloadId: 'id', releasePage: 'https://github.com/baiguidong/moss/releases', autoDownload: true };
+const actions = { check() {}, download() {}, cancel() {}, install() {}, open() {}, reveal() {}, release() {}, skip() {} };
+const state: UpdateState = { revision: 1, currentVersion: '1.0.0', version: '1.2.0', phase: 'downloaded', capabilities: { mode: 'manual', platform: 'darwin', arch: 'arm64', packageType: 'dmg' }, downloadId: 'id', releasePage: 'https://github.com/baiguidong/moss/releases' };
 const render = (patch = {}) => renderToStaticMarkup(<UpdateContent state={{ ...state, ...patch }} actions={actions} />);
 
 test('macOS only offers DMG opening and explains manual replacement', () => {
@@ -37,4 +37,12 @@ test('macOS ZIP installs in-app and exposes its full path on installation failur
   expect(failed).toContain(downloadPath);
   expect(failed).toContain('解压 ZIP');
   expect(failed).toContain('在 Finder 中显示');
+});
+
+test('offers a download decision with the target changelog before and during download', () => {
+  const notes = '修复窗口恢复';
+  const available = render({ phase: 'available', downloadId: undefined, notes });
+  for (const label of ['下载更新', '跳过此版本', notes]) expect(available).toContain(label);
+  expect(render({ phase: 'downloading', downloadId: undefined, notes })).toContain(notes);
+  expect(render({ phase: 'available', downloadId: undefined, skipped: true })).toContain('已跳过此版本');
 });

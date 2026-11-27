@@ -5,7 +5,7 @@ export function registerUpdateHandlers({ ipcMain, getWindow, coordinator, openEx
     'update:download': params => coordinator.download(params?.candidateId),
     'update:cancel': () => coordinator.cancel(),
     'update:dismiss': params => coordinator.dismiss(params?.version),
-    'update:set-auto-download': params => coordinator.setAutoDownload(params?.enabled),
+    'update:skip': params => coordinator.skip(params?.candidateId),
     'update:open-downloaded': params => coordinator.open(params?.downloadId),
     'update:show-downloaded': params => coordinator.open(params?.downloadId, true),
     'update:install': params => coordinator.install(params?.candidateId),

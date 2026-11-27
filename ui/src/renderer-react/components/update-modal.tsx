@@ -15,7 +15,7 @@ const size = (bytes = 0) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
 type UpdateActions = {
   check: () => void; download: () => void; cancel: () => void; install: () => void;
-  open: () => void; reveal: (downloadId: string) => void; release: () => void; autoDownload: (enabled: boolean) => void;
+  open: () => void; reveal: (downloadId: string) => void; release: () => void; skip: () => void;
 };
 
 export function UpdateContent({ state, actions, operationError }: { state: UpdateState; actions: UpdateActions; operationError?: string }) {
@@ -31,14 +31,14 @@ export function UpdateContent({ state, actions, operationError }: { state: Updat
     <div className="space-y-4 p-5">
       <div className="flex items-center gap-2">
         {busy && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
-        <p className="text-sm font-medium" role="status">{state.capabilities.mode === 'development' ? '当前为开发版' : titles[state.phase]}</p>
+        <p className="text-sm font-medium" role="status">{state.capabilities.mode === 'development' ? '当前为开发版' : state.skipped && state.phase === 'available' ? '已跳过此版本' : titles[state.phase]}</p>
       </div>
       <p className="text-xs text-muted-foreground">
         当前版本 {state.currentVersion}{state.version ? ` → ${state.version}` : ''}
       </p>
       {state.reason && <p className="text-sm text-muted-foreground">{state.reason}</p>}
       {(operationError || state.error) && <p role="alert" className="break-words text-sm text-destructive">{operationError || state.error}</p>}
-      {state.notes && <div className="max-h-44 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-accent/50 p-3 text-xs text-muted-foreground">{state.notes}</div>}
+      {state.notes && <div className="max-h-44 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-accent/50 p-3 text-xs text-muted-foreground" aria-label="本版更新内容">{state.notes}</div>}
       {state.phase === 'downloading' && (
         <div className="space-y-2">
           <progress className="h-2 w-full accent-primary" max={100} value={state.progress?.percent || 0} aria-label="下载进度" />
@@ -63,7 +63,8 @@ export function UpdateContent({ state, actions, operationError }: { state: Updat
       </div>}
       {hasDownload && !recovery && <p className="break-all text-xs text-muted-foreground">{state.fileName}</p>}
       <div className="flex flex-wrap gap-2">
-        {state.phase === 'available' && <Button size="sm" onClick={actions.download}><Download className="mr-1 h-3.5 w-3.5" />下载安装包</Button>}
+        {state.phase === 'available' && <Button size="sm" onClick={actions.download}><Download className="mr-1 h-3.5 w-3.5" />下载更新</Button>}
+        {state.phase === 'available' && !state.skipped && <Button size="sm" variant="outline" onClick={actions.skip}>跳过此版本</Button>}
         {state.phase === 'downloading' && <Button size="sm" variant="outline" onClick={actions.cancel}>取消下载</Button>}
         {hasDownload && !busy && (
           <>
@@ -76,9 +77,6 @@ export function UpdateContent({ state, actions, operationError }: { state: Updat
         {!busy && !hasDownload && state.phase !== 'error' && state.capabilities.mode !== 'development' && <Button size="sm" variant="outline" onClick={actions.check}>重新检查</Button>}
         {!busy && <Button size="sm" variant="ghost" onClick={actions.release}><ExternalLink className="mr-1 h-3.5 w-3.5" />发布页</Button>}
       </div>
-      {native && <label className="flex items-center gap-2 text-xs text-muted-foreground">
-        <input type="checkbox" checked={state.autoDownload} onChange={event => actions.autoDownload(event.target.checked)} />发现新版本时自动下载
-      </label>}
     </div>
   );
 }
@@ -88,7 +86,7 @@ export function UpdateModal({ onPendingVersionChange }: { onPendingVersionChange
   const [state, setState] = React.useState<UpdateState | null>(null);
   const [operationError, setOperationError] = React.useState('');
   const lastPrompt = React.useRef('');
-  const pendingVersion = state?.candidateId ? state.version : undefined;
+  const pendingVersion = state?.candidateId && !state.skipped ? state.version : undefined;
   React.useEffect(() => {
     onPendingVersionChange(pendingVersion);
   }, [onPendingVersionChange, pendingVersion]);
@@ -153,7 +151,9 @@ export function UpdateModal({ onPendingVersionChange }: { onPendingVersionChange
           open: () => void run(() => api.openDownloaded({ downloadId: state.downloadId! })),
           reveal: downloadId => void run(() => api.showDownloaded({ downloadId })),
           release: () => void run(api.openReleasePage),
-          autoDownload: enabled => void run(() => api.setAutoDownload({ enabled })),
+          skip: () => void run(() => api.skip({ candidateId: state.candidateId! })).then(next => {
+            if (next?.skipped) setVisible(false);
+          }),
         }} /> : <div className="p-5 text-sm">{operationError || '正在读取更新状态…'}</div>}
       </div>
     </div>

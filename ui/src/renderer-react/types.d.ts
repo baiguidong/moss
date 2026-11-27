@@ -1893,7 +1893,7 @@ declare global {
         download: (params: { candidateId: string }) => Promise<UpdateResponse>;
         cancel: () => Promise<UpdateResponse>;
         dismiss: (params: { version?: string }) => Promise<UpdateResponse>;
-        setAutoDownload: (params: { enabled: boolean }) => Promise<UpdateResponse>;
+        skip: (params: { candidateId: string }) => Promise<UpdateResponse>;
         openDownloaded: (params: { downloadId: string }) => Promise<UpdateResponse>;
         showDownloaded: (params: { downloadId: string }) => Promise<UpdateResponse>;
         install: (params: { candidateId: string }) => Promise<UpdateResponse>;
@@ -1966,7 +1966,7 @@ export type UpdateState = {
   error?: string;
   retry?: 'check' | 'download' | 'install';
   releasePage: string;
-  autoDownload: boolean;
+  skipped?: boolean;
   prompt?: boolean;
   progress?: { transferred: number; total: number; percent: number; bytesPerSecond: number };
 };

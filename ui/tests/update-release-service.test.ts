@@ -32,6 +32,16 @@ describe('release discovery', () => {
     expect(candidate.id).toMatch(/^[a-f0-9]{64}$/);
     expect(urls[1]).toBe(`https://github.com/${repo}/releases/download/v1.10.0/latest-mac.yml`);
   });
+  test('includes the intervening stable releases across pages in descending version order', async () => {
+    const firstPage = Array.from({ length: 30 }, (_, i) => makeRelease(`2.0.${i}`, { draft: true }));
+    firstPage[0] = makeRelease('1.10.0', { body: '最新版说明' });
+    const older = [makeRelease('1.2.0', { body: '中间版说明' }), makeRelease('1.0.0'), makeRelease('1.3.0-beta.1')];
+    const { result } = service([], '1.0.0', { fetchImpl: async (url: string) => {
+      if (!url.includes('api.github')) return new Response(metadata('1.10.0'));
+      return Response.json(new URL(url).searchParams.get('page') === '1' ? firstPage : older);
+    } });
+    expect((await result.check()).notes).toBe('v1.10.0\n最新版说明\n\nv1.2.0\n中间版说明');
+  });
   test('never downgrades or reinstalls the same version', async () => {
     for (const current of ['1.10.0', '2.0.0', '2.0.0-beta.1']) {
       const { result, urls } = service([makeRelease('1.10.0')], current);

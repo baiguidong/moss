@@ -75,8 +75,15 @@ export function createReleaseService({ repo, currentVersion, capabilities, fetch
     async check() {
       if (!semver.valid(currentVersion)) throw new Error('当前版本号无效，无法检查更新。');
       const options = { fetchImpl, signal: AbortSignal.timeout(30_000) };
-      const releases = JSON.parse(await readText(`https://api.github.com/repos/${repo}/releases?per_page=100`, { ...options, api: true }));
-      if (!Array.isArray(releases)) throw new Error('更新服务器返回格式错误。');
+      const releases = [];
+      const pageSize = 30;
+      for (let page = 1; ; page++) {
+        const url = `https://api.github.com/repos/${repo}/releases?per_page=${pageSize}&page=${page}`;
+        const batch = JSON.parse(await readText(url, { ...options, api: true }));
+        if (!Array.isArray(batch)) throw new Error('更新服务器返回格式错误。');
+        releases.push(...batch);
+        if (batch.length < pageSize) break;
+      }
       const stable = releases.filter(release => !release.draft && !release.prerelease
         && typeof release.tag_name === 'string' && semver.valid(release.tag_name.replace(/^v/, ''))
         && !semver.prerelease(release.tag_name.replace(/^v/, '')))
@@ -104,7 +111,11 @@ export function createReleaseService({ repo, currentVersion, capabilities, fetch
       const metadata = await readText(getAsset(rawMetadata[0]).url, options);
       asset = capabilities.packageType === 'portable' ? assetFromChecksums(metadata, asset) : assetFromMetadata(metadata, version, asset);
       const id = createHash('sha256').update(JSON.stringify({ tag, version, asset, platform: capabilities.platform, arch: capabilities.arch })).digest('hex');
-      return { id, tag, version, asset, feedUrl, htmlUrl, notes: typeof release.body === 'string' ? release.body.slice(0, 20000) : '' };
+      const notes = stable.filter(item => semver.gt(item.tag_name, currentVersion)).map(item => {
+        const body = typeof item.body === 'string' ? item.body.trim() : '';
+        return `${item.tag_name}\n${body || '该版本未提供更新说明。'}`;
+      }).join('\n\n');
+      return { id, tag, version, asset, feedUrl, htmlUrl, notes };
     },
   };
 }

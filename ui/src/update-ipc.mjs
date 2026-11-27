@@ -79,7 +79,7 @@ export function startUpdateChecks() {
   const check = () => {
     if (Date.now() - lastCheck < 60_000) return;
     lastCheck = Date.now();
-    void coordinator.check({ background: true });
+    void coordinator.check();
   };
   startupTimer = setTimeout(check, 5000);
   interval = setInterval(check, 6 * 60 * 60 * 1000);

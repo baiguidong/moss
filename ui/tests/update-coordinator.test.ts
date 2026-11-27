@@ -54,26 +54,30 @@ describe('update state and concurrency', () => {
     expect(coordinator.getState().downloadId).toBeTruthy();
     await expect(coordinator.download('wrong-id')).rejects.toThrow('失效');
   });
-  test('background downloads are Windows-only and respect preferences', async () => {
-    for (const [capabilities, preferences, expected] of [[nativeCaps, {}, 1], [nativeCaps, { autoDownload: false }, 0], [{ ...nativeCaps, mode: 'manual' }, {}, 0]] as const) {
-      const { coordinator, calls } = setup({ capabilities, preferences });
-      await coordinator.check({ background: true });
-      await Promise.resolve(); await Promise.resolve();
-      expect(calls.downloads).toBe(expected);
+  test('checks only fetch metadata, even with legacy automatic downloads enabled', async () => {
+    for (const platform of ['win32', 'darwin']) {
+      const { coordinator, calls } = setup({ capabilities: { ...nativeCaps, platform }, preferences: { autoDownload: true } });
+      await coordinator.check();
+      await Promise.resolve();
+      expect(calls.downloads).toBe(0);
+      expect(coordinator.getState()).toMatchObject({ phase: 'available', notes: candidate.notes, prompt: true });
+      await coordinator.download(candidate.id);
+      expect(calls.downloads).toBe(1);
     }
   });
-  test('cancelled background download does not immediately restart on another check', async () => {
-    let attempts = 0;
-    const { coordinator } = setup({ capabilities: nativeCaps, nativeUpdater: { download: (_candidate: any, { signal }: any) => new Promise((_, reject) => {
-      attempts++; signal.addEventListener('abort', () => reject(new Error('abort')));
-    }) } });
-    await coordinator.check({ background: true });
-    coordinator.cancel();
-    await Promise.resolve(); await Promise.resolve();
-    await coordinator.check({ background: true });
-    await Promise.resolve();
-    expect(attempts).toBe(1);
-    expect(coordinator.getState().phase).toBe('available');
+  test('skip survives restart, permits a manual update and only suppresses that version', async () => {
+    let saved = {};
+    const { coordinator } = setup({ savePreferences: (next: object) => { saved = next; } });
+    await coordinator.check();
+    expect(coordinator.skip(candidate.id)).toMatchObject({ skipped: true, prompt: false });
+    const restarted = setup({ preferences: saved }).coordinator;
+    await restarted.check();
+    expect(restarted.getState()).toMatchObject({ skipped: true, prompt: false });
+    const newer = setup({ preferences: saved, releases: { check: async () => ({ ...candidate, id: 'next', version: '1.3.0' }) } }).coordinator;
+    await newer.check();
+    expect(newer.getState()).toMatchObject({ skipped: false, prompt: true });
+    await restarted.download(candidate.id);
+    expect(restarted.getState()).toMatchObject({ phase: 'downloaded', skipped: false });
   });
   test('macOS validates download IDs and files again before opening, never installs', async () => {
     const { coordinator, calls, options } = setup();

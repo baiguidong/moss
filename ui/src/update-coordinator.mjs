@@ -7,8 +7,8 @@ export function createUpdateCoordinator({
   openPath, showItemInFolder, prepareForInstall, getInstallBlockers = () => [],
   preferences = {}, savePreferences = () => {}, onState = () => {}, installTimeout = 15_000,
 }) {
-  let prefs = { autoDownload: preferences.autoDownload !== false, dismissedVersion: preferences.dismissedVersion || '', installAttempt: preferences.installAttempt };
-  let state = { revision: 0, currentVersion, capabilities, phase: capabilities.mode === 'development' || capabilities.mode === 'unsupported' ? 'unsupported' : 'idle', reason: capabilities.reason, releasePage, autoDownload: prefs.autoDownload };
+  let prefs = { skippedVersion: preferences.skippedVersion || '', dismissedVersion: preferences.dismissedVersion || '', installAttempt: preferences.installAttempt };
+  let state = { revision: 0, currentVersion, capabilities, phase: capabilities.mode === 'development' || capabilities.mode === 'unsupported' ? 'unsupported' : 'idle', reason: capabilities.reason, releasePage };
   const previous = prefs.installAttempt;
   if (capabilities.mode === 'nativeUpdater' && previous?.from === currentVersion && previous.path && previous.asset?.sha512) {
     state.recovery = { version: previous.version, path: previous.path, downloadId: randomUUID() };
@@ -19,15 +19,14 @@ export function createUpdateCoordinator({
   let downloadPromise = null;
   let installPromise = null;
   let controller = null;
-  let suppressedDownload = null;
   let opening = false;
   let installTimer;
   const snapshot = () => structuredClone(state);
   const publish = patch => {
     state = { ...state, ...patch, revision: state.revision + 1 };
-    state.prompt = Boolean(state.version && prefs.dismissedVersion !== state.version && (
-      state.phase === 'downloaded' || (state.phase === 'available' && (capabilities.mode !== 'nativeUpdater' || !prefs.autoDownload))
-    ));
+    state.skipped = Boolean(state.version && state.version === prefs.skippedVersion);
+    state.prompt = Boolean(state.version && !state.skipped && prefs.dismissedVersion !== state.version
+      && ['available', 'downloaded'].includes(state.phase));
     onState(snapshot());
     return snapshot();
   };
@@ -39,7 +38,7 @@ export function createUpdateCoordinator({
 
   const api = {
     getState: snapshot,
-    check({ background = false } = {}) {
+    check() {
       if (checkPromise) return checkPromise;
       if (downloadPromise || installPromise || filePath || state.phase === 'installing') return Promise.resolve(snapshot());
       if (!['manual', 'nativeUpdater'].includes(capabilities.mode)) return Promise.resolve(snapshot());
@@ -49,12 +48,7 @@ export function createUpdateCoordinator({
           candidate = await releases.check();
           if (!candidate) return publish({ phase: 'upToDate', version: undefined, candidateId: undefined, notes: undefined });
           if (candidate.unsupported) return publish({ phase: 'unsupported', version: candidate.version, reason: candidate.reason, releasePage: candidate.htmlUrl, candidateId: undefined });
-          publish({ phase: 'available', version: candidate.version, candidateId: candidate.id, notes: candidate.notes, fileName: candidate.asset.name, releasePage: candidate.htmlUrl, downloadId: undefined, progress: undefined });
-          if ((background || capabilities.platform === 'darwin') && capabilities.mode === 'nativeUpdater' && prefs.autoDownload && suppressedDownload !== candidate.id) {
-            // Run after checkPromise is cleared; failures remain visible in the snapshot.
-            queueMicrotask(() => { void api.download(candidate.id); });
-          }
-          return snapshot();
+          return publish({ phase: 'available', version: candidate.version, candidateId: candidate.id, notes: candidate.notes, fileName: candidate.asset.name, releasePage: candidate.htmlUrl, downloadId: undefined, progress: undefined });
         } catch (error) {
           candidate = null;
           return fail(error, 'check');
@@ -67,6 +61,7 @@ export function createUpdateCoordinator({
       if (downloadPromise) return downloadPromise;
       if (installPromise || state.phase === 'installing' || filePath) return Promise.resolve(snapshot());
       if (candidate.unsupported || checkPromise) return Promise.reject(new Error('请等待版本检查完成。'));
+      if (prefs.skippedVersion === candidate.version) persist({ ...prefs, skippedVersion: '' });
       controller = new AbortController();
       const signal = controller.signal;
       publish({ phase: 'downloading', error: undefined, retry: undefined, progress: { transferred: 0, total: candidate.asset.size, percent: 0, bytesPerSecond: 0 } });
@@ -88,17 +83,18 @@ export function createUpdateCoordinator({
       return downloadPromise;
     },
     cancel() {
-      if (controller) { suppressedDownload = candidate?.id; controller.abort(); }
+      controller?.abort();
       return snapshot();
     },
     dismiss(version) {
       if (version && version === state.version) persist({ ...prefs, dismissedVersion: version });
       return publish({});
     },
-    setAutoDownload(enabled) {
-      if (typeof enabled !== 'boolean') throw new Error('自动下载设置无效。');
-      persist({ ...prefs, autoDownload: enabled });
-      return publish({ autoDownload: enabled });
+    skip(id) {
+      requireCandidate(id);
+      if (state.phase !== 'available') throw new Error('请先取消下载，再跳过此版本。');
+      persist({ ...prefs, skippedVersion: candidate.version });
+      return publish({});
     },
     async open(downloadId, reveal = false) {
       if (installPromise || state.phase === 'installing') throw new Error('正在准备安装，请稍候。');
