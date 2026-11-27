@@ -13,10 +13,10 @@ export function assertUpdateUrl(raw, { api = false } = {}) {
   return url;
 }
 
-export async function fetchUpdateResource(url, { fetchImpl = fetch, signal, api = false } = {}) {
+export async function fetchUpdateResource(url, { fetchImpl = fetch, signal, api = false, range, onUrl } = {}) {
   for (let redirects = 0; redirects <= 5; redirects++) {
     assertUpdateUrl(url, { api });
-    const response = await fetchImpl(url, { signal, redirect: 'manual', headers: { 'User-Agent': 'Moss', Accept: api ? 'application/vnd.github+json' : '*/*' } });
+    const response = await fetchImpl(url, { signal, redirect: 'manual', headers: { 'User-Agent': 'Moss', Accept: api ? 'application/vnd.github+json' : '*/*', ...(range && { Range: range }) } });
     if (response.status >= 300 && response.status < 400) {
       await response.body?.cancel();
       const location = response.headers.get('location');
@@ -28,6 +28,7 @@ export async function fetchUpdateResource(url, { fetchImpl = fetch, signal, api 
       await response.body?.cancel();
       throw new Error(`更新请求失败（HTTP ${response.status}），请稍后重试。`);
     }
+    onUrl?.(url);
     return response;
   }
   throw new Error('更新下载重定向次数过多。');

@@ -1728,9 +1728,9 @@ export default function App() {
     [baseSidebarSessions, questionRequests],
   );
 
-  const [desktopUpdate, setDesktopUpdate] = React.useState<{ version: string; detectedAt: number }>();
-  const onPendingVersionChange = React.useCallback((version?: string) => {
-    setDesktopUpdate(version ? { version, detectedAt: Date.now() } : undefined);
+  const [desktopUpdate, setDesktopUpdate] = React.useState<{ version: string; detectedAt: number; ready: boolean }>();
+  const onPendingVersionChange = React.useCallback((version?: string, ready = false) => {
+    setDesktopUpdate(previous => version ? { version, ready, detectedAt: previous?.version === version ? previous.detectedAt : Date.now() } : undefined);
   }, []);
   const pendingWorkItems = React.useMemo(
     () => buildPendingWorkItems({

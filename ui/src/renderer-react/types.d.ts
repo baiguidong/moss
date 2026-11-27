@@ -1954,7 +1954,7 @@ export type UpdateState = {
   revision: number;
   currentVersion: string;
   capabilities: { platform: string; arch: string; packageType: string; mode: 'manual' | 'nativeUpdater' | 'unsupported' | 'development' };
-  phase: 'idle' | 'checking' | 'upToDate' | 'available' | 'downloading' | 'verifying' | 'downloaded' | 'preparingInstall' | 'installing' | 'error' | 'unsupported';
+  phase: 'idle' | 'checking' | 'upToDate' | 'available' | 'downloading' | 'verifying' | 'downloaded' | 'staging' | 'preparingInstall' | 'installing' | 'error' | 'unsupported';
   version?: string;
   candidateId?: string;
   downloadId?: string;
@@ -1964,7 +1964,7 @@ export type UpdateState = {
   notes?: string;
   reason?: string;
   error?: string;
-  retry?: 'check' | 'download' | 'install';
+  retry?: 'check' | 'download' | 'full' | 'install';
   releasePage: string;
   skipped?: boolean;
   prompt?: boolean;

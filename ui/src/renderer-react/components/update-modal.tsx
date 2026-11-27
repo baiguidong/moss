@@ -5,13 +5,13 @@ import { Download, ExternalLink, FolderOpen, Loader2, RefreshCw, X } from 'lucid
 import { Button } from '@/components/ui/button';
 import type { UpdateResponse, UpdateState } from '@/types';
 
-const busyPhases = new Set(['checking', 'downloading', 'verifying', 'preparingInstall', 'installing']);
+const busyPhases = new Set(['checking', 'downloading', 'verifying', 'staging', 'preparingInstall', 'installing']);
 const titles: Record<UpdateState['phase'], string> = {
   idle: '检查更新', checking: '正在检查更新…', upToDate: '已是最新版本', available: '发现新版本',
   downloading: '正在下载安装包…', verifying: '正在校验安装包…', downloaded: '下载完成',
-  preparingInstall: '正在保存数据并准备退出…', installing: '正在启动安装程序…', error: '更新未完成', unsupported: '暂不能更新',
+  staging: '正在解压并验证新版应用…', preparingInstall: '正在保存数据并准备退出…', installing: '正在启动安装程序…', error: '更新未完成', unsupported: '暂不能更新',
 };
-const size = (bytes = 0) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+const size = (bytes = 0) => `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 
 type UpdateActions = {
   check: () => void; download: () => void; cancel: () => void; install: () => void;
@@ -26,7 +26,7 @@ export function UpdateContent({ state, actions, operationError }: { state: Updat
   const recovery = state.retry === 'install' && state.downloadPath && state.downloadId
     ? { path: state.downloadPath, downloadId: state.downloadId, version: state.version }
     : state.recovery;
-  const retry = state.retry === 'install' ? actions.install : state.retry === 'download' ? actions.download : actions.check;
+  const retry = state.retry === 'install' ? actions.install : (state.retry === 'download' || state.retry === 'full') ? actions.download : actions.check;
   return (
     <div className="space-y-4 p-5">
       <div className="flex items-center gap-2">
@@ -73,7 +73,7 @@ export function UpdateContent({ state, actions, operationError }: { state: Updat
             {!recovery && <Button size="sm" variant="outline" onClick={() => actions.reveal(state.downloadId!)}><FolderOpen className="mr-1 h-3.5 w-3.5" />{mac ? '在 Finder 中显示' : '在文件夹中显示'}</Button>}
           </>
         )}
-        {state.phase === 'error' && !hasDownload && <Button size="sm" onClick={retry}><RefreshCw className="mr-1 h-3.5 w-3.5" />重试</Button>}
+        {state.phase === 'error' && !hasDownload && <Button size="sm" onClick={retry}><RefreshCw className="mr-1 h-3.5 w-3.5" /> {state.retry === 'full' ? '下载完整安装包' : '重试'}</Button>}
         {!busy && !hasDownload && state.phase !== 'error' && state.capabilities.mode !== 'development' && <Button size="sm" variant="outline" onClick={actions.check}>重新检查</Button>}
         {!busy && <Button size="sm" variant="ghost" onClick={actions.release}><ExternalLink className="mr-1 h-3.5 w-3.5" />发布页</Button>}
       </div>
@@ -81,15 +81,16 @@ export function UpdateContent({ state, actions, operationError }: { state: Updat
   );
 }
 
-export function UpdateModal({ onPendingVersionChange }: { onPendingVersionChange: (version?: string) => void }) {
+export function UpdateModal({ onPendingVersionChange }: { onPendingVersionChange: (version?: string, ready?: boolean) => void }) {
   const [visible, setVisible] = React.useState(false);
   const [state, setState] = React.useState<UpdateState | null>(null);
   const [operationError, setOperationError] = React.useState('');
   const lastPrompt = React.useRef('');
   const pendingVersion = state?.candidateId && !state.skipped ? state.version : undefined;
+  const ready = state?.phase === 'downloaded' && state.capabilities.mode === 'nativeUpdater';
   React.useEffect(() => {
-    onPendingVersionChange(pendingVersion);
-  }, [onPendingVersionChange, pendingVersion]);
+    onPendingVersionChange(pendingVersion, ready);
+  }, [onPendingVersionChange, pendingVersion, ready]);
   const accept = React.useCallback((next: UpdateState) => {
     setState(current => !current || next.revision >= current.revision ? next : current);
   }, []);

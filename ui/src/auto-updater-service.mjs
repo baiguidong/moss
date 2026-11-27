@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { verifyUpdateFile } from './update-download-service.mjs';
 
 // The Electron instance is injected so this module can be tested without launching an app.
@@ -8,7 +9,7 @@ export function createAutoUpdaterService({ updater, logger, verify = verifyUpdat
   updater.autoRunAppAfterInstall = true;
   updater.allowPrerelease = false;
   updater.allowDowngrade = false;
-  updater.disableDifferentialDownload = true;
+  updater.disableDifferentialDownload = false;
   let downloaded = null;
   let installError = null;
   let onInstallError = null;
@@ -18,7 +19,8 @@ export function createAutoUpdaterService({ updater, logger, verify = verifyUpdat
   });
 
   return {
-    async download(candidate, { signal, onProgress, onVerifying } = {}) {
+    async download(candidate, { signal, onProgress, onVerifying, full = false } = {}) {
+      updater.disableDifferentialDownload = full;
       downloaded = null;
       onInstallError = null;
       // Pin electron-updater to the exact release already selected by the coordinator.
@@ -53,6 +55,17 @@ export function createAutoUpdaterService({ updater, logger, verify = verifyUpdat
         signal?.removeEventListener('abort', cancel);
         updater.off('download-progress', progress);
       }
+    },
+    async restore(candidate, filePath) {
+      const helper = await updater.getOrCreateDownloadHelper();
+      const info = { url: candidate.asset.name, size: candidate.asset.size, sha512: candidate.asset.sha512 };
+      const fileInfo = { url: new URL(candidate.asset.url), info };
+      if (filePath !== path.join(helper.cacheDirForPendingUpdate, candidate.asset.name)
+        || await helper.getValidCachedUpdateFile(fileInfo, updater.logger) !== filePath) throw new Error('更新缓存已失效。');
+      const cached = helper.downloadedFileInfo;
+      info.isAdminRightsRequired = cached.isAdminRightsRequired;
+      await helper.setDownloadedFile(filePath, null, { version: candidate.version, files: [info] }, fileInfo, candidate.asset.name, false);
+      downloaded = { id: candidate.id, filePath };
     },
     install(candidate, onError) {
       if (downloaded?.id !== candidate.id) throw new Error('请先下载并校验当前版本。');

@@ -24,7 +24,7 @@ export type PendingWorkInput = {
   notifications?: AppNotification[];
   sessions?: SessionSummary[];
   operationDrafts?: OperationDraft[];
-  desktopUpdate?: { version: string; detectedAt: number };
+  desktopUpdate?: { ready?: boolean; version: string; detectedAt: number };
   now?: number;
   doneWindowMs?: number;
 };
@@ -79,7 +79,7 @@ export function buildPendingWorkItems({
     items.push({
       id, dedupeKey: id, source: 'update', state: 'review',
       title: `Moss v${desktopUpdate.version} 可更新`,
-      summary: '查看版本说明和更新进度',
+      summary: desktopUpdate.ready ? '更新已准备好，可以安装并重启' : '查看版本说明和更新进度',
       createdAt: desktopUpdate.detectedAt,
     });
   }

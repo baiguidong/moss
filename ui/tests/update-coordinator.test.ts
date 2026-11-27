@@ -188,3 +188,40 @@ test('failed installation retains the package after reveal and across restart', 
   expect(shown).toEqual(['/verified.exe', '/verified.exe']);
   expect(setup({ currentVersion: candidate.version, preferences: saved }).coordinator.getState().recovery).toBeUndefined();
 });
+
+test('delta failure waits for a second click before requesting a full package', async () => {
+  const attempts: boolean[] = [];
+  const { coordinator } = setup({ capabilities: nativeCaps, nativeUpdater: {
+    async download(_candidate: object, options: { full: boolean }) {
+      attempts.push(options.full);
+      if (!options.full) throw Object.assign(Error('需要下载完整安装包'), { code: 'FULL_DOWNLOAD_REQUIRED' });
+      return '/verified.exe';
+    },
+  } });
+  await coordinator.check();
+  await coordinator.download(candidate.id);
+  expect(attempts).toEqual([false]);
+  expect(coordinator.getState().retry).toBe('full');
+  await coordinator.download(candidate.id);
+  expect(attempts).toEqual([false, true]);
+  expect(coordinator.getState().phase).toBe('downloaded');
+});
+
+test('stages before announcing readiness, then restores an intact download without network transfer', async () => {
+  let saved: any;
+  let stages = 0;
+  const { coordinator } = setup({ capabilities: { ...nativeCaps, platform: 'darwin' },
+    savePreferences: (prefs: any) => { saved = prefs; },
+    nativeUpdater: { download: async () => '/verified.zip', stage: async () => { stages++; } },
+  });
+  await coordinator.check(); await coordinator.download(candidate.id);
+  expect(stages).toBe(1);
+  expect(coordinator.getState().phase).toBe('downloaded');
+  let restores = 0;
+  const restart = setup({ capabilities: nativeCaps, preferences: saved, nativeUpdater: {
+    restore: async () => { restores++; }, download: () => { throw Error('unexpected transfer'); },
+  } });
+  await restart.coordinator.check();
+  expect(restores).toBe(1);
+  expect(restart.coordinator.getState()).toMatchObject({ phase: 'downloaded', downloadPath: '/verified.zip' });
+});

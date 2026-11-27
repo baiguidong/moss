@@ -7,7 +7,7 @@ export function createUpdateCoordinator({
   openPath, showItemInFolder, prepareForInstall, getInstallBlockers = () => [],
   preferences = {}, savePreferences = () => {}, onState = () => {}, installTimeout = 15_000,
 }) {
-  let prefs = { skippedVersion: preferences.skippedVersion || '', dismissedVersion: preferences.dismissedVersion || '', installAttempt: preferences.installAttempt };
+  let prefs = { skippedVersion: preferences.skippedVersion || '', dismissedVersion: preferences.dismissedVersion || '', ready: preferences.ready, installAttempt: preferences.installAttempt };
   let state = { revision: 0, currentVersion, capabilities, phase: capabilities.mode === 'development' || capabilities.mode === 'unsupported' ? 'unsupported' : 'idle', reason: capabilities.reason, releasePage };
   const previous = prefs.installAttempt;
   if (capabilities.mode === 'nativeUpdater' && previous?.from === currentVersion && previous.path && previous.asset?.sha512) {
@@ -48,7 +48,18 @@ export function createUpdateCoordinator({
           candidate = await releases.check();
           if (!candidate) return publish({ phase: 'upToDate', version: undefined, candidateId: undefined, notes: undefined });
           if (candidate.unsupported) return publish({ phase: 'unsupported', version: candidate.version, reason: candidate.reason, releasePage: candidate.htmlUrl, candidateId: undefined });
-          return publish({ phase: 'available', version: candidate.version, candidateId: candidate.id, notes: candidate.notes, fileName: candidate.asset.name, releasePage: candidate.htmlUrl, downloadId: undefined, progress: undefined });
+          const details = { version: candidate.version, candidateId: candidate.id, notes: candidate.notes, fileName: candidate.asset.name, releasePage: candidate.htmlUrl };
+          const ready = prefs.ready;
+          if (ready?.from === currentVersion && ready.id === candidate.id) {
+            try {
+              await downloader.verify(ready.path, candidate.asset);
+              if (nativeUpdater?.restore) await nativeUpdater.restore(candidate, ready.path);
+              filePath = ready.path;
+              return publish({ ...details, phase: 'downloaded', downloadId: randomUUID(), downloadPath: filePath });
+            } catch { /* A removed or replaced cache entry can be downloaded again. */ }
+          }
+          if (ready) persist({ ...prefs, ready: undefined });
+          return publish({ ...details, phase: 'available', downloadId: undefined, progress: undefined });
         } catch (error) {
           candidate = null;
           return fail(error, 'check');
@@ -62,6 +73,7 @@ export function createUpdateCoordinator({
       if (installPromise || state.phase === 'installing' || filePath) return Promise.resolve(snapshot());
       if (candidate.unsupported || checkPromise) return Promise.reject(new Error('请等待版本检查完成。'));
       if (prefs.skippedVersion === candidate.version) persist({ ...prefs, skippedVersion: '' });
+      const full = state.retry === 'full';
       controller = new AbortController();
       const signal = controller.signal;
       publish({ phase: 'downloading', error: undefined, retry: undefined, progress: { transferred: 0, total: candidate.asset.size, percent: 0, bytesPerSecond: 0 } });
@@ -69,15 +81,26 @@ export function createUpdateCoordinator({
         try {
           const service = capabilities.mode === 'nativeUpdater' ? nativeUpdater : downloader;
           filePath = await service.download(candidate, {
-            signal,
+            signal, full,
             onProgress: progress => publish({ progress }),
             onVerifying: () => publish({ phase: 'verifying' }),
           });
           signal.throwIfAborted();
-          return publish({ phase: 'downloaded', downloadId: randomUUID(), downloadPath: filePath, error: undefined });
+          publish({ phase: 'verifying', downloadId: randomUUID(), downloadPath: filePath });
+          if (capabilities.mode === 'nativeUpdater') {
+            persist({ ...prefs, ready: { id, from: currentVersion, path: filePath } });
+            if (nativeUpdater.stage) {
+              publish({ phase: 'staging' });
+              await nativeUpdater.stage(candidate, filePath);
+            }
+          }
+          return publish({ phase: 'downloaded', error: undefined });
         } catch (error) {
+          if (filePath && !signal.aborted && error?.code !== 'INVALID_UPDATE_BUNDLE') return fail(error, 'install');
           filePath = null;
-          return signal.aborted ? publish({ phase: 'available', error: '下载已取消。', progress: undefined }) : fail(error, 'download');
+          if (prefs.ready) persist({ ...prefs, ready: undefined });
+          publish({ downloadId: undefined, downloadPath: undefined });
+          return signal.aborted ? publish({ phase: 'available', error: '下载已取消。', progress: undefined }) : fail(error, error?.code === 'FULL_DOWNLOAD_REQUIRED' || full ? 'full' : 'download');
         } finally { downloadPromise = null; controller = null; }
       })();
       return downloadPromise;
@@ -129,6 +152,7 @@ export function createUpdateCoordinator({
     install(id) {
       try {
         requireCandidate(id);
+        if (downloadPromise) throw new Error('请等待更新准备完成。');
         if (opening) throw new Error('正在校验安装包，请稍候。');
         if (capabilities.mode !== 'nativeUpdater' || !filePath) throw new Error('当前版本尚不能自动安装。');
       } catch (error) { return Promise.reject(error); }

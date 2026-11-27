@@ -21,7 +21,7 @@ test('never silently installs on quit or allows downgrade after setting a channe
   const { service, updater, candidate, counts } = fixture();
   expect(updater.autoInstallOnAppQuit).toBe(false);
   expect(updater.autoDownload).toBe(false);
-  expect(updater.disableDifferentialDownload).toBe(true);
+  expect(updater.disableDifferentialDownload).toBe(false);
   expect(() => service.install(candidate)).toThrow();
   await service.download(candidate);
   expect(updater.allowDowngrade).toBe(false);

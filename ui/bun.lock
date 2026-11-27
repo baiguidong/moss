@@ -35,7 +35,7 @@
         "diff": "^8.0.4",
         "dompurify": "^3.4.1",
         "electron-log": "^5.4.3",
-        "electron-updater": "^6.8.3",
+        "electron-updater": "6.8.3",
         "framer-motion": "^12.38.0",
         "js-yaml": "^5.2.3",
         "jszip": "^3.10.1",
