@@ -8590,7 +8590,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }, 0);
   } else {
     createWindow();
-    if (!selfTestTarget) initializeAutoUpdater();
+    if (!selfTestTarget) {
+      initializeAutoUpdater();
+      startUpdateChecks();
+    }
     appRuntimeRestoreController = new AbortController();
     const restoreSignal = appRuntimeRestoreController.signal;
     // Let the renderer paint and load its sessions before restoring and

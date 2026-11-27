@@ -28,7 +28,7 @@ export function UpdateContent({ state, actions, operationError }: { state: Updat
     <div className="space-y-4 p-5">
       <div className="flex items-center gap-2">
         {busy && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
-        <p className="text-sm font-medium" role="status">{titles[state.phase]}</p>
+        <p className="text-sm font-medium" role="status">{state.capabilities.mode === 'development' ? '当前为开发版' : titles[state.phase]}</p>
       </div>
       <p className="text-xs text-muted-foreground">
         当前版本 {state.currentVersion}{state.version ? ` → ${state.version}` : ''}
@@ -97,15 +97,17 @@ export function UpdateModal() {
   React.useEffect(() => {
     if (window.mossWeb) return;
     const api = window.agentDesktop.update;
-    const offState = api.onState(accept);
-    const offOpen = api.onOpenModal(() => {
+    const openModal = () => {
       setVisible(true);
       void run(api.getState).then(snapshot => {
         if (snapshot && ['idle', 'upToDate'].includes(snapshot.phase)) void run(api.check);
       });
-    });
+    };
+    const offState = api.onState(accept);
+    const offOpen = api.onOpenModal(openModal);
+    window.addEventListener('moss:open-update-modal', openModal);
     void run(api.getState);
-    return () => { offState(); offOpen(); };
+    return () => { offState(); offOpen(); window.removeEventListener('moss:open-update-modal', openModal); };
   }, [accept, run]);
   React.useEffect(() => {
     if (!state?.prompt) return;

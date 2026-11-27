@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowRight, Check, ChevronRight, Cloud, Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole, LogOut, Monitor, Settings, UserRound } from 'lucide-react';
+import { ArrowRight, Check, ChevronRight, Cloud, Eye, EyeOff, Info, KeyRound, LoaderCircle, LockKeyhole, LogOut, Monitor, Settings, UserRound } from 'lucide-react';
 import appPackage from '../../package.json';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from './components/ui/dropdown-menu';
 import './globals.css';
@@ -112,7 +112,7 @@ function WebSessionControls({ status, account, onLogout }: { status: string; acc
       setPending(false);
     }
   };
-  const navigate = (view: 'settings') => window.dispatchEvent(new CustomEvent('moss:account-navigate', { detail: view }));
+  const navigate = (view: 'settings' | 'about') => window.dispatchEvent(new CustomEvent('moss:account-navigate', { detail: view }));
   const accountName = account?.userName || account?.userEmail || '个人中心';
   return <>
     <DropdownMenu>
@@ -130,6 +130,7 @@ function WebSessionControls({ status, account, onLogout }: { status: string; acc
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => navigate('settings')}><Settings aria-hidden="true" />设置</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => navigate('about')}><Info aria-hidden="true" />关于</DropdownMenuItem>
         <DropdownMenuSeparator />
         {(status === 'unauthenticated' || status === 'incompatible' || status === 'environment-changed') && <DropdownMenuItem onSelect={() => location.reload()}>刷新连接</DropdownMenuItem>}
         {window.mossWeb?.managed && <DropdownMenuItem asChild><a href="/?window=cloud-environment">环境快照</a></DropdownMenuItem>}

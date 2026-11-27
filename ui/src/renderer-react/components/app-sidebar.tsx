@@ -32,6 +32,7 @@ import {
   LogOut,
   Inbox,
   FilePenLine,
+  Info,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -82,7 +83,7 @@ export interface SidebarSession {
   subagentStatus?: 'running' | 'completed' | 'failed' | null;
 }
 
-export type MainView = "chat" | "pending" | "drafts" | "projects" | "overview" | "mail" | "common" | "skills" | "experts" | "connectors" | "apps" | "settings" | "cron" | "embedded-app" | "app-info";
+export type MainView = "chat" | "pending" | "drafts" | "projects" | "overview" | "mail" | "common" | "skills" | "experts" | "connectors" | "apps" | "settings" | "about" | "cron" | "embedded-app" | "app-info";
 
 export type SidebarMoreView = Extract<MainView, "overview" | "mail" | "cron" | "drafts">;
 
@@ -367,7 +368,7 @@ export function AppSidebar({
   React.useEffect(() => {
     const navigate = (event: Event) => {
       const view = (event as CustomEvent).detail;
-      if (view === 'apps' || view === 'settings') onChangeView(view);
+      if (view === 'apps' || view === 'settings' || view === 'about') onChangeView(view);
     };
     window.addEventListener('moss:account-navigate', navigate);
     return () => window.removeEventListener('moss:account-navigate', navigate);
@@ -771,6 +772,7 @@ export function AppSidebar({
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => onChangeView('settings')}><Settings className="h-4 w-4" />设置</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onChangeView('about')}><Info className="h-4 w-4" />关于</DropdownMenuItem>
               {serverAccount ? <DropdownMenuItem disabled={serverAuthState === 'loading'} onSelect={() => void onLogoutServer?.()}>
                 <LogOut className="h-4 w-4" />{serverAuthState === 'loading' ? '正在退出 Moss Server…' : '退出登录'}
               </DropdownMenuItem> : <DropdownMenuItem disabled={serverAuthState === 'loading'} onSelect={() => void onLoginServer?.()}>

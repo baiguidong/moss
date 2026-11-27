@@ -49,6 +49,7 @@ import { AppDetailsView } from '@/components/app-details-view';
 import { AppWorkspaceView } from '@/components/app-workspace-view';
 import { ResourceHubView } from '@/components/resource-hub-view';
 import { previewIpc } from '@/ipc/preview.ipc';
+import { AboutView } from '@/components/about-view';
 import { UpdateModal } from '@/components/update-modal';
 import { TaskPanel } from '@/components/task-panel';
 import { usePresentation } from '@/lib/use-presentation';
@@ -3538,6 +3539,8 @@ export default function App() {
               onCreateProjectConversation={handleCreateProjectConversation}
               onNewSession={handleNewProjectSession}
             />
+          ) : activeView === 'about' ? (
+            <AboutView />
           ) : (
             renderSettingsView()
           )}
@@ -3605,7 +3608,7 @@ export default function App() {
           </div>
         </div>
 
-        <AppWidgetHost apps={apps} enabled={activeView !== 'settings' && activeView !== 'projects' && desktopSettings?.appWidgets?.enabled !== false && !presentation.snapshot?.resources.some(resource => resource.id === presentation.snapshot?.state.activeId && resource.kind === 'file')} />
+        <AppWidgetHost apps={apps} enabled={activeView !== 'about' && activeView !== 'settings' && activeView !== 'projects' && desktopSettings?.appWidgets?.enabled !== false && !presentation.snapshot?.resources.some(resource => resource.id === presentation.snapshot?.state.activeId && resource.kind === 'file')} />
         <GlobalSessionSearch
           open={globalSearchOpen}
           onClose={() => setGlobalSearchOpen(false)}
