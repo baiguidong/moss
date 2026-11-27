@@ -1087,7 +1087,13 @@ export class AppProcessSupervisor {
       await this.releaseLease(hosted)
       return
     }
-    if (!isChildRunning(hosted.child) && process.platform !== 'win32') {
+    if (!isChildRunning(hosted.child)) {
+      // Windows has no POSIX process group. Once this child has exited its PID
+      // can already identify another process and is no longer a taskkill target.
+      if (process.platform === 'win32') {
+        await this.releaseLease(hosted)
+        return
+      }
       const current = await readProcessInfo(pid)
       if (current && hosted.childIdentity?.started && current.started !== hosted.childIdentity.started) {
         throw new AppServiceError(APP_ERROR_CODES.backendUnavailable, `App Backend process identity changed: ${hosted.definition.appId}`)

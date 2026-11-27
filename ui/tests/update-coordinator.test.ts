@@ -164,3 +164,23 @@ describe('Windows installation', () => {
     expect(calls.installs).toBe(0); expect(lifecycle.isPreparing()).toBe(true);
   });
 });
+
+test('failed installation retains the package after reveal and across restart', async () => {
+  let saved: any;
+  const shown: string[] = [];
+  const { coordinator } = setup({ capabilities: nativeCaps,
+    releases: { check: async () => ({ ...candidate, asset: { ...candidate.asset, sha512: 'verified' } }) },
+    showItemInFolder: (file: string) => shown.push(file),
+    savePreferences: (prefs: any) => { saved = prefs; }, prepareForInstall: async () => { throw Error('shutdown failed'); } });
+  await coordinator.check(); await coordinator.download(candidate.id); await coordinator.install(candidate.id);
+  const failure = coordinator.getState();
+  expect(failure).toMatchObject({ phase: 'error', retry: 'install', downloadPath: '/verified.exe' });
+  await coordinator.open(failure.downloadId, true);
+  expect(coordinator.getState()).toEqual(failure);
+  const restart = setup({ capabilities: nativeCaps, preferences: saved, showItemInFolder: (file: string) => shown.push(file) });
+  const recovery = restart.coordinator.getState().recovery;
+  expect(recovery.path).toBe(failure.downloadPath);
+  await restart.coordinator.open(recovery.downloadId, true);
+  expect(shown).toEqual(['/verified.exe', '/verified.exe']);
+  expect(setup({ currentVersion: candidate.version, preferences: saved }).coordinator.getState().recovery).toBeUndefined();
+});

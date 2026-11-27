@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -42,6 +44,11 @@ export default async function afterPack(context) {
   const resourcesDir = resourcesDirectory(context);
   await requireFile(path.join(resourcesDir, 'cli', 'cli.js'), 'Moss terminal CLI');
   if (platform === 'darwin') {
+    const helpersDir = path.resolve(resourcesDir, '../Helpers');
+    await fsp.mkdir(helpersDir, { recursive: true });
+    execFileSync('xcrun', ['clang', '-arch', arch === 'arm64' ? 'arm64' : 'x86_64',
+      '-mmacosx-version-min=12.0', '-fobjc-arc', '-framework', 'AppKit',
+      fileURLToPath(new URL('../build/mac/update-helper.m', import.meta.url)), '-o', path.join(helpersDir, 'MossUpdate')]);
     const ptyRoot = path.join(resourcesDir, 'app.asar.unpacked', 'node_modules', 'node-pty');
     const helpers = [
       path.join(ptyRoot, 'prebuilds', target, 'spawn-helper'),

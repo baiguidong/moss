@@ -2,8 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { getUpdateCapabilities, pickRecommendedReleaseAsset, supportsAutomaticUpdates } from '../src/update-capabilities.mjs';
 
 describe('update package compatibility', () => {
-  test('macOS and Portable never use the native installer', () => {
-    expect(supportsAutomaticUpdates('darwin')).toBe(false);
+  test('macOS and installed Windows support in-app installation', () => {
+    expect(supportsAutomaticUpdates('darwin')).toBe(true);
+    expect(getUpdateCapabilities({ platform: 'darwin', arch: 'arm64', isPackaged: true })).toMatchObject({ packageType: 'zip', mode: 'nativeUpdater' });
     expect(supportsAutomaticUpdates('win32', true)).toBe(false);
     expect(supportsAutomaticUpdates('win32', false)).toBe(true);
     expect(getUpdateCapabilities({ platform: 'win32', arch: 'x64', isPackaged: true }).mode).toBe('unsupported');
@@ -16,6 +17,7 @@ describe('update package compatibility', () => {
     const setup = { name: 'Moss-Setup-1.2.3-x64.exe' };
     const portable = { name: 'Moss-Portable-1.2.3-x64.exe' };
     const assets = [portable, dmg, setup, { name: 'Moss-1.2.3-arm64-mac.zip' }];
+    expect(pickRecommendedReleaseAsset(assets, 'darwin', 'arm64', 'zip', '1.2.3')).toBe(assets[3]);
     expect(pickRecommendedReleaseAsset(assets, 'darwin', 'arm64', 'dmg', '1.2.3')).toBe(dmg);
     expect(pickRecommendedReleaseAsset(assets, 'win32', 'x64', 'nsis', '1.2.3')).toBe(setup);
     expect(pickRecommendedReleaseAsset(assets, 'win32', 'x64', 'portable', '1.2.3')).toBe(portable);
@@ -23,6 +25,7 @@ describe('update package compatibility', () => {
       expect(pickRecommendedReleaseAsset(assets, platform, arch)).toBeUndefined();
     }
     expect(pickRecommendedReleaseAsset([{ name: 'Moss Setup 1.2.3.exe' }], 'win32', 'x64')).toBeUndefined();
+    expect(pickRecommendedReleaseAsset(assets, 'darwin', 'arm64', 'zip', '1.2.3')).toBe(assets[3]);
     expect(pickRecommendedReleaseAsset(assets, 'darwin', 'arm64', 'dmg', '1.2.4')).toBeUndefined();
     expect(pickRecommendedReleaseAsset([dmg, dmg], 'darwin', 'arm64')).toBeUndefined();
   });

@@ -5,12 +5,14 @@ import path from 'node:path';
 import log from 'electron-log';
 import { getUpdateCapabilities } from './update-capabilities.mjs';
 import { createReleaseService } from './update-release-service.mjs';
+import { fetchElectronUpdate } from './update-electron-fetch.mjs';
 import { createDownloadService } from './update-download-service.mjs';
+import { createMacUpdateService } from './mac-update-service.mjs';
 import { createAutoUpdaterService } from './auto-updater-service.mjs';
 import { createUpdateCoordinator } from './update-coordinator.mjs';
 import { registerUpdateHandlers } from './update-ipc-handlers.mjs';
 
-const { app, shell, net, powerMonitor } = electron;
+const { app, shell, powerMonitor } = electron;
 const DEFAULT_REPO = 'baiguidong/moss';
 let mainWindow = null;
 let coordinator;
@@ -33,12 +35,27 @@ export async function initUpdateIpcHandlers({ prepareForInstall, getInstallBlock
     const saved = JSON.parse(fs.readFileSync(prefsPath, 'utf8'));
     if (saved && typeof saved === 'object' && !Array.isArray(saved)) preferences = saved;
   } catch { /* Defaults on first launch. */ }
+  const directory = process.platform === 'darwin'
+    ? path.join(app.getPath('userData'), 'updates') : path.join(app.getPath('downloads'), 'Moss Updates');
+  const attempt = preferences.installAttempt;
+  if (attempt && attempt.from !== currentVersion) {
+    // Only the Mac downloader owns this cache. Windows manages its own pending installer.
+    if (process.platform === 'darwin' && attempt.version === currentVersion && /^[a-f0-9]{64}$/.test(attempt.candidateId)
+      && /^Moss-[A-Za-z0-9.+-]+-mac\.zip$/.test(attempt.asset?.name)
+      && attempt.path === path.join(directory, attempt.candidateId, attempt.asset.name)) {
+      await fs.promises.unlink(attempt.path).catch(error => { if (error.code !== 'ENOENT') log.warn('Update ZIP cleanup', error); });
+    }
+    delete preferences.installAttempt;
+  }
+  const downloader = createDownloadService({ directory, fetchImpl: fetchElectronUpdate });
   let nativeUpdater;
-  if (capabilities.mode === 'nativeUpdater') {
+  if (capabilities.mode === 'nativeUpdater' && capabilities.platform === 'darwin') {
+    nativeUpdater = createMacUpdateService({ executable: process.execPath, downloader, quit: () => app.quit(),
+      logPath: path.join(app.getPath('userData'), 'update-install.log') });
+  } else if (capabilities.mode === 'nativeUpdater') {
     const { default: updaterModule } = await import('electron-updater');
     nativeUpdater = createAutoUpdaterService({ updater: updaterModule.autoUpdater, logger: log });
   }
-  const fetchImpl = (url, options) => net.fetch(url, options);
   coordinator = createUpdateCoordinator({
     currentVersion, capabilities, releasePage: `https://github.com/${DEFAULT_REPO}/releases`, preferences,
     savePreferences(next) {
@@ -46,8 +63,8 @@ export async function initUpdateIpcHandlers({ prepareForInstall, getInstallBlock
       fs.writeFileSync(`${prefsPath}.tmp`, JSON.stringify(next), { mode: 0o600 });
       fs.renameSync(`${prefsPath}.tmp`, prefsPath);
     },
-    releases: createReleaseService({ repo: DEFAULT_REPO, currentVersion, capabilities, fetchImpl }),
-    downloader: createDownloadService({ directory: path.join(app.getPath('downloads'), 'Moss Updates'), fetchImpl }),
+    releases: createReleaseService({ repo: DEFAULT_REPO, currentVersion, capabilities, fetchImpl: fetchElectronUpdate }),
+    downloader,
     nativeUpdater, prepareForInstall, getInstallBlockers,
     openPath: file => shell.openPath(file), showItemInFolder: file => shell.showItemInFolder(file),
     onState(state) {

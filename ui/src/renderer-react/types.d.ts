@@ -1958,6 +1958,8 @@ export type UpdateState = {
   version?: string;
   candidateId?: string;
   downloadId?: string;
+  downloadPath?: string;
+  recovery?: { version: string; path: string; downloadId: string };
   fileName?: string;
   notes?: string;
   reason?: string;

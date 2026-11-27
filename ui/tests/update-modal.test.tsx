@@ -27,3 +27,14 @@ test('verification has no install/open button; release notes are escaped', () =>
   const html = render({ phase: 'verifying', notes: '<script>alert(1)</script>' });
   expect(html).toContain('正在校验'); expect(html).not.toContain('>打开安装包<'); expect(html).not.toContain('<script>');
 });
+test('macOS ZIP installs in-app and exposes its full path on installation failure', () => {
+  const capabilities = { ...state.capabilities, mode: 'nativeUpdater', packageType: 'zip' };
+  const downloaded = render({ capabilities });
+  expect(downloaded).toContain('安装并重启');
+  expect(downloaded).not.toContain('打开 DMG');
+  const downloadPath = '/Users/test/Library/Application Support/Moss/updates/id/Moss-1.2.0-arm64-mac.zip';
+  const failed = render({ capabilities, phase: 'error', retry: 'install', downloadPath });
+  expect(failed).toContain(downloadPath);
+  expect(failed).toContain('解压 ZIP');
+  expect(failed).toContain('在 Finder 中显示');
+});

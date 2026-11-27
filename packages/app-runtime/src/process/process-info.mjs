@@ -44,9 +44,9 @@ export async function signalProcessTree(pid, signal) {
 
 export function processTreeExists(pid) {
   if (!Number.isSafeInteger(pid) || pid < 1) return false
-  if (process.platform === 'win32') return true
   try {
-    process.kill(-pid, 0)
+    // Windows taskkill addresses a tree through its live root PID.
+    process.kill(process.platform === 'win32' ? pid : -pid, 0)
     return true
   } catch (error) {
     if (error.code === 'EPERM') return true
@@ -58,14 +58,11 @@ export function processTreeExists(pid) {
 export async function waitForProcessTreeGone(pid, timeoutMs = 2_000) {
   const deadline = Date.now() + Math.max(0, timeoutMs)
   do {
-    const direct = await readProcessInfo(pid)
-    if (!direct && !processTreeExists(pid)) return true
-    if (process.platform === 'win32' && !direct) return true
+    if (!processTreeExists(pid) && (process.platform === 'win32' || !await readProcessInfo(pid))) return true
     if (Date.now() >= deadline) break
     await new Promise(resolve => setTimeout(resolve, 25))
   } while (true)
-  const direct = await readProcessInfo(pid)
-  return !direct && !processTreeExists(pid)
+  return !processTreeExists(pid) && (process.platform === 'win32' || !await readProcessInfo(pid))
 }
 
 async function windowsProcesses(pid) {

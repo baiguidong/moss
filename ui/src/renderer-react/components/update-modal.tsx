@@ -15,7 +15,7 @@ const size = (bytes = 0) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
 type UpdateActions = {
   check: () => void; download: () => void; cancel: () => void; install: () => void;
-  open: () => void; reveal: () => void; release: () => void; autoDownload: (enabled: boolean) => void;
+  open: () => void; reveal: (downloadId: string) => void; release: () => void; autoDownload: (enabled: boolean) => void;
 };
 
 export function UpdateContent({ state, actions, operationError }: { state: UpdateState; actions: UpdateActions; operationError?: string }) {
@@ -23,6 +23,9 @@ export function UpdateContent({ state, actions, operationError }: { state: Updat
   const mac = state.capabilities.platform === 'darwin';
   const busy = busyPhases.has(state.phase);
   const hasDownload = Boolean(state.downloadId);
+  const recovery = state.retry === 'install' && state.downloadPath && state.downloadId
+    ? { path: state.downloadPath, downloadId: state.downloadId, version: state.version }
+    : state.recovery;
   const retry = state.retry === 'install' ? actions.install : state.retry === 'download' ? actions.download : actions.check;
   return (
     <div className="space-y-4 p-5">
@@ -53,8 +56,12 @@ export function UpdateContent({ state, actions, operationError }: { state: Updat
               : '这是 Windows 便携版。下载后请退出 Moss，手动替换旧的 EXE，再打开新版。'}
         </p>
       )}
-      {state.retry === 'install' && <p className="text-xs text-muted-foreground">退出准备后部分功能可能已停止。请重试安装；也可退出 Moss 后重新打开。</p>}
-      {hasDownload && <p className="break-all text-xs text-muted-foreground">{state.fileName}</p>}
+      {recovery && !busy && <div className="space-y-2 text-xs text-muted-foreground">
+        <p>{recovery.version} 安装未完成。{mac ? '如需手动安装，请解压 ZIP，退出 Moss，将 Moss.app 拖到原安装位置并替换。' : '如需手动安装，请退出 Moss 后运行已下载的安装程序。'}</p>
+        <p className="select-all break-all">{recovery.path}</p>
+        <Button size="sm" variant="outline" onClick={() => actions.reveal(recovery.downloadId)}><FolderOpen className="mr-1 h-3.5 w-3.5" />{mac ? '在 Finder 中显示' : '在文件夹中显示'}</Button>
+      </div>}
+      {hasDownload && !recovery && <p className="break-all text-xs text-muted-foreground">{state.fileName}</p>}
       <div className="flex flex-wrap gap-2">
         {state.phase === 'available' && <Button size="sm" onClick={actions.download}><Download className="mr-1 h-3.5 w-3.5" />下载安装包</Button>}
         {state.phase === 'downloading' && <Button size="sm" variant="outline" onClick={actions.cancel}>取消下载</Button>}
@@ -62,7 +69,7 @@ export function UpdateContent({ state, actions, operationError }: { state: Updat
           <>
             {native ? <Button size="sm" onClick={actions.install}>安装并重启</Button>
               : mac && <Button size="sm" onClick={actions.open}>打开安装包</Button>}
-            <Button size="sm" variant="outline" onClick={actions.reveal}><FolderOpen className="mr-1 h-3.5 w-3.5" />{mac ? '在 Finder 中显示' : '在文件夹中显示'}</Button>
+            {!recovery && <Button size="sm" variant="outline" onClick={() => actions.reveal(state.downloadId!)}><FolderOpen className="mr-1 h-3.5 w-3.5" />{mac ? '在 Finder 中显示' : '在文件夹中显示'}</Button>}
           </>
         )}
         {state.phase === 'error' && !hasDownload && <Button size="sm" onClick={retry}><RefreshCw className="mr-1 h-3.5 w-3.5" />重试</Button>}
@@ -144,7 +151,7 @@ export function UpdateModal({ onPendingVersionChange }: { onPendingVersionChange
           cancel: () => void run(api.cancel),
           install: () => void run(() => api.install({ candidateId: state.candidateId! })),
           open: () => void run(() => api.openDownloaded({ downloadId: state.downloadId! })),
-          reveal: () => void run(() => api.showDownloaded({ downloadId: state.downloadId! })),
+          reveal: downloadId => void run(() => api.showDownloaded({ downloadId })),
           release: () => void run(api.openReleasePage),
           autoDownload: enabled => void run(() => api.setAutoDownload({ enabled })),
         }} /> : <div className="p-5 text-sm">{operationError || '正在读取更新状态…'}</div>}

@@ -19,7 +19,7 @@ export function createDownloadService({ directory, fetchImpl = fetch, idleTimeou
   return {
     async download(candidate, { signal, onProgress, onVerifying } = {}) {
       const { asset, id } = candidate;
-      if (!/^[a-f0-9]{64}$/.test(id) || !/^Moss-[A-Za-z0-9.+-]+\.(dmg|exe)$/.test(asset.name)) throw new Error('安装包名称无效。');
+      if (!/^[a-f0-9]{64}$/.test(id) || !/^Moss-[A-Za-z0-9.+-]+\.(zip|dmg|exe)$/.test(asset.name)) throw new Error('安装包名称无效。');
       const dir = path.join(directory, id);
       await fsp.mkdir(dir, { recursive: true, mode: 0o700 });
       for (const entry of [directory, dir]) {

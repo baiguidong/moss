@@ -7,8 +7,12 @@ export function createUpdateCoordinator({
   openPath, showItemInFolder, prepareForInstall, getInstallBlockers = () => [],
   preferences = {}, savePreferences = () => {}, onState = () => {}, installTimeout = 15_000,
 }) {
-  let prefs = { autoDownload: preferences.autoDownload !== false, dismissedVersion: preferences.dismissedVersion || '' };
+  let prefs = { autoDownload: preferences.autoDownload !== false, dismissedVersion: preferences.dismissedVersion || '', installAttempt: preferences.installAttempt };
   let state = { revision: 0, currentVersion, capabilities, phase: capabilities.mode === 'development' || capabilities.mode === 'unsupported' ? 'unsupported' : 'idle', reason: capabilities.reason, releasePage, autoDownload: prefs.autoDownload };
+  const previous = prefs.installAttempt;
+  if (capabilities.mode === 'nativeUpdater' && previous?.from === currentVersion && previous.path && previous.asset?.sha512) {
+    state.recovery = { version: previous.version, path: previous.path, downloadId: randomUUID() };
+  }
   let candidate = null;
   let filePath = null;
   let checkPromise = null;
@@ -46,7 +50,7 @@ export function createUpdateCoordinator({
           if (!candidate) return publish({ phase: 'upToDate', version: undefined, candidateId: undefined, notes: undefined });
           if (candidate.unsupported) return publish({ phase: 'unsupported', version: candidate.version, reason: candidate.reason, releasePage: candidate.htmlUrl, candidateId: undefined });
           publish({ phase: 'available', version: candidate.version, candidateId: candidate.id, notes: candidate.notes, fileName: candidate.asset.name, releasePage: candidate.htmlUrl, downloadId: undefined, progress: undefined });
-          if (background && capabilities.mode === 'nativeUpdater' && prefs.autoDownload && suppressedDownload !== candidate.id) {
+          if ((background || capabilities.platform === 'darwin') && capabilities.mode === 'nativeUpdater' && prefs.autoDownload && suppressedDownload !== candidate.id) {
             // Run after checkPromise is cleared; failures remain visible in the snapshot.
             queueMicrotask(() => { void api.download(candidate.id); });
           }
@@ -75,7 +79,7 @@ export function createUpdateCoordinator({
             onVerifying: () => publish({ phase: 'verifying' }),
           });
           signal.throwIfAborted();
-          return publish({ phase: 'downloaded', downloadId: randomUUID(), error: undefined });
+          return publish({ phase: 'downloaded', downloadId: randomUUID(), downloadPath: filePath, error: undefined });
         } catch (error) {
           filePath = null;
           return signal.aborted ? publish({ phase: 'available', error: '下载已取消。', progress: undefined }) : fail(error, 'download');
@@ -98,23 +102,31 @@ export function createUpdateCoordinator({
     },
     async open(downloadId, reveal = false) {
       if (installPromise || state.phase === 'installing') throw new Error('正在准备安装，请稍候。');
+      if (reveal && downloadId && state.recovery?.downloadId === downloadId) {
+        try { await downloader.verify(previous.path, previous.asset); }
+        catch (error) {
+          persist({ ...prefs, installAttempt: undefined });
+          publish({ recovery: undefined });
+          throw error;
+        }
+        await showItemInFolder(previous.path);
+        return snapshot();
+      }
       if (!filePath || !downloadId || state.downloadId !== downloadId) throw new Error('下载记录已失效，请重新下载。');
       if (!reveal && (capabilities.platform !== 'darwin' || capabilities.packageType !== 'dmg')) throw new Error('当前安装包仅支持在文件夹中显示。');
       if (opening) return snapshot();
       opening = true;
       try {
         try { await downloader.verify(filePath, candidate.asset); }
-        catch (error) { filePath = null; publish({ downloadId: undefined }); return fail(error, 'download'); }
+        catch (error) { filePath = null; publish({ downloadId: undefined, downloadPath: undefined }); return fail(error, 'download'); }
         try {
-          if (reveal) await showItemInFolder(filePath);
-          else {
-            const error = await openPath(filePath);
-            if (error) throw new Error(error);
-          }
+          if (reveal) { await showItemInFolder(filePath); return snapshot(); }
+          const error = await openPath(filePath);
+          if (error) throw new Error(error);
           return publish({ phase: 'downloaded', error: undefined, retry: undefined });
         } catch (error) {
           // A shell failure doesn't invalidate a verified package.
-          return publish({ phase: 'downloaded', error: `无法打开安装包：${message(error)}` });
+          return publish({ error: `无法打开安装包：${message(error)}` });
         }
       } finally { opening = false; }
     },
@@ -131,7 +143,9 @@ export function createUpdateCoordinator({
           if (blockers.length) return publish({ phase: 'downloaded', error: `请先结束以下工作，再安装更新：${blockers.join('、')}` });
           publish({ phase: 'verifying', error: undefined });
           try { await downloader.verify(filePath, candidate.asset); }
-          catch (error) { filePath = null; publish({ downloadId: undefined }); return fail(error, 'download'); }
+          catch (error) { filePath = null; publish({ downloadId: undefined, downloadPath: undefined }); return fail(error, 'download'); }
+          persist({ ...prefs, installAttempt: { from: currentVersion, version: candidate.version, path: filePath, asset: candidate.asset, candidateId: candidate.id } });
+          if (nativeUpdater.stage) await nativeUpdater.stage(candidate, filePath);
           publish({ phase: 'preparingInstall' });
           await prepareForInstall();
           publish({ phase: 'installing' });
@@ -141,10 +155,17 @@ export function createUpdateCoordinator({
           };
           installTimer = setTimeout(() => failed(new Error('安装请求后应用未退出。可重试安装，或退出 Moss 后手动运行安装包。')), installTimeout);
           installTimer.unref?.();
-          nativeUpdater.install(candidate, failed);
+          await nativeUpdater.install(candidate, failed);
           return snapshot();
         } catch (error) {
           clearTimeout(installTimer);
+          await nativeUpdater.discard?.();
+          if (error?.code === 'INVALID_UPDATE_BUNDLE') {
+            persist({ ...prefs, installAttempt: undefined });
+            filePath = null;
+            publish({ downloadId: undefined, downloadPath: undefined });
+            return fail(error, 'download');
+          }
           return fail(error, 'install');
         } finally { installPromise = null; }
       });
