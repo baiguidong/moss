@@ -3806,7 +3806,7 @@ async function runSessionPromptNow(options) {
         emitToRenderer('turn-observation:updated', { sessionId: options.sessionRecord.id });
         const outputs = result.changes.filter(file => file.status !== 'deleted' && /\.(txt|pdf|docx?|xlsx?|pptx?|html?|md|csv|tsv|svg|png|jpe?g|webp)$/i.test(file.path)).slice(0, 32);
         if (outputs.length) await presentationService.present(options.sessionRecord.id, { items: outputs.map(file => ({ path: file.filePath })), title: '本轮文件成果' }, { turnId: result.id, epoch: turnContext.epoch, fallback: true, origin: 'tool' }).catch(() => {});
-        if (result.changes.length || result.coverage !== 'complete') await presentationService.register(options.sessionRecord.id, {
+        if (result.changes.length > 0 && result.coverage !== 'unavailable') await presentationService.register(options.sessionRecord.id, {
           kind: 'turn-diff', title: result.coverage === 'complete' ? `本轮变更 · ${result.changes.length} 个文件` : '本轮文件观察', revision: String(result.finishedAt),
           source: { type: 'turn-diff', observationId: result.id }, availability: 'ready', persistence: 'durable',
           capabilities: { preview: true, edit: false, popout: false },
