@@ -3,7 +3,7 @@ import type { AskUserQuestionRequest, SessionSummary } from '../types';
 import type { OperationDraft } from './operation-drafts';
 
 export type PendingWorkState = 'attention' | 'review' | 'progress' | 'done';
-export type PendingWorkSource = 'question' | 'approval' | 'result' | 'failure' | 'operation';
+export type PendingWorkSource = 'question' | 'approval' | 'result' | 'failure' | 'operation' | 'update';
 
 export type PendingWorkItem = {
   id: string;
@@ -24,6 +24,7 @@ export type PendingWorkInput = {
   notifications?: AppNotification[];
   sessions?: SessionSummary[];
   operationDrafts?: OperationDraft[];
+  desktopUpdate?: { version: string; detectedAt: number };
   now?: number;
   doneWindowMs?: number;
 };
@@ -68,10 +69,20 @@ export function buildPendingWorkItems({
   notifications = [],
   sessions = [],
   operationDrafts = [],
+  desktopUpdate,
   now = Date.now(),
   doneWindowMs = DEFAULT_DONE_WINDOW_MS,
 }: PendingWorkInput = {}): PendingWorkItem[] {
   const items: PendingWorkItem[] = [];
+  if (desktopUpdate) {
+    const id = `update:${desktopUpdate.version}`;
+    items.push({
+      id, dedupeKey: id, source: 'update', state: 'review',
+      title: `Moss v${desktopUpdate.version} 可更新`,
+      summary: '查看版本说明和更新进度',
+      createdAt: desktopUpdate.detectedAt,
+    });
+  }
   const sessionById = new Map(sessions.map((session) => [session.id, session]));
   const sessionsWithQuestions = new Set(questions.map((request) => request.sessionId));
   const planDecisionSessionIds = new Set(

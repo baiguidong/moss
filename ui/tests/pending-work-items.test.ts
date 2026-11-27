@@ -16,6 +16,17 @@ const session = (patch: Record<string, unknown> = {}) => ({
 } as any);
 
 describe('pending work aggregation', () => {
+  test('counts an available desktop update once alongside other work', () => {
+    const sessions = [session({ projectSessionStatus: 'failed' })];
+    const desktopUpdate = { version: '1.2.0', detectedAt: 15_000 };
+    const items = buildPendingWorkItems({ sessions, desktopUpdate });
+    expect(items.filter(item => item.source === 'update')).toMatchObject([
+      { id: 'update:1.2.0', createdAt: 15_000, state: 'review' },
+    ]);
+    expect(countPendingWorkItems(items)).toBe(2);
+    expect(countPendingWorkItems(buildPendingWorkItems({ sessions }))).toBe(1);
+  });
+
   test('sorts actionable work before progress and completed sessions', () => {
     const items = buildPendingWorkItems({
       now: 20_000,

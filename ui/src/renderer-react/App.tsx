@@ -1728,18 +1728,27 @@ export default function App() {
     [baseSidebarSessions, questionRequests],
   );
 
+  const [desktopUpdate, setDesktopUpdate] = React.useState<{ version: string; detectedAt: number }>();
+  const onPendingVersionChange = React.useCallback((version?: string) => {
+    setDesktopUpdate(version ? { version, detectedAt: Date.now() } : undefined);
+  }, []);
   const pendingWorkItems = React.useMemo(
     () => buildPendingWorkItems({
       questions: questionRequests,
       notifications: appNotifications,
       sessions: summaries,
       operationDrafts,
+      desktopUpdate,
     }),
-    [appNotifications, operationDrafts, questionRequests, summaries],
+    [appNotifications, desktopUpdate, operationDrafts, questionRequests, summaries],
   );
   const pendingWorkCount = React.useMemo(() => countPendingWorkItems(pendingWorkItems), [pendingWorkItems]);
 
   const handleOpenPendingWork = React.useCallback(async (item: PendingWorkItem) => {
+    if (item.source === 'update') {
+      window.dispatchEvent(new Event('moss:open-update-modal'));
+      return;
+    }
     if (item.sessionId) {
       if (item.source === 'question' || item.source === 'approval') {
         updateQuestionRequests(requests => {
@@ -3615,7 +3624,7 @@ export default function App() {
           onSelect={handleOpenSearchResult}
         />
         <ServerLoginDialog authentication={serverAuthentication} />
-        <UpdateModal />
+        <UpdateModal onPendingVersionChange={onPendingVersionChange} />
       </div>
       </WindowChrome>
     </div>

@@ -76,11 +76,15 @@ export function UpdateContent({ state, actions, operationError }: { state: Updat
   );
 }
 
-export function UpdateModal() {
+export function UpdateModal({ onPendingVersionChange }: { onPendingVersionChange: (version?: string) => void }) {
   const [visible, setVisible] = React.useState(false);
   const [state, setState] = React.useState<UpdateState | null>(null);
   const [operationError, setOperationError] = React.useState('');
   const lastPrompt = React.useRef('');
+  const pendingVersion = state?.candidateId ? state.version : undefined;
+  React.useEffect(() => {
+    onPendingVersionChange(pendingVersion);
+  }, [onPendingVersionChange, pendingVersion]);
   const accept = React.useCallback((next: UpdateState) => {
     setState(current => !current || next.revision >= current.revision ? next : current);
   }, []);
