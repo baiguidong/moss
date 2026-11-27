@@ -59,8 +59,8 @@ try {
   await logoutDialog.getByRole('button', { name: '取消', exact: true }).click();
   assert.equal(await page.evaluate(async () => (await (await fetch('/api/auth')).json()).authenticated), true);
   previousSettings = await page.evaluate(async () => {
-    const { url, apiKey, model, fastModel, thinkingMode } = await window.agentDesktop.getSettings();
-    return { url, apiKey, model, fastModel, thinkingMode };
+    const { url, apiKey, model, fastModel, thinkingMode, localModelEnabled } = await window.agentDesktop.getSettings();
+    return { url, apiKey, model, fastModel, thinkingMode, localModelEnabled };
   });
   const basic = await page.evaluate(async () => {
     const api = window.agentDesktop;
@@ -82,10 +82,11 @@ try {
     return (await window.agentDesktop.readWorkspaceFile({ sessionId, filePath: detail.workspace + '/reconnect.txt' })).content;
   }, basic.sessionId);
   assert.equal(reconnected, 'once\n');
+  assert.equal(previousSettings.localModelEnabled, false);
   // Reuse the actual local runtime and tool-permission path with an isolated model endpoint.
   const modelUrl = `http://${process.env.MOSS_WEB_TEST_MODEL_HOST || '127.0.0.1'}:${fixture.address().port}`;
   await page.evaluate(async url => {
-    await window.agentDesktop.updateSettings({ url, apiKey: 'web-test-only', model: 'claude-sonnet-4-5', fastModel: 'claude-sonnet-4-5', thinkingMode: 'disabled' });
+    await window.agentDesktop.updateSettings({ localModelEnabled: true, url, apiKey: 'web-test-only', model: 'claude-sonnet-4-5', fastModel: 'claude-sonnet-4-5', thinkingMode: 'disabled' });
     window.__questions = [];
     window.agentDesktop.onQuestionRequest(question => window.__questions.push(question));
     const created = await window.agentDesktop.createSession({ title: 'Web permission validation', agentMode: 'local' });
