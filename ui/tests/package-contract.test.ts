@@ -118,8 +118,8 @@ describe('desktop package contract', () => {
     expect(mainSource).not.toContain('sessionRecord.isCoordinatorMode = Boolean(sessionRecord.projectId)\n      || metadata.mode');
   });
 
-  test('keeps desktop signing and notarization disabled', () => {
-    expect(desktopPackage.build.mac.identity).toBeNull();
+  test('uses ad-hoc macOS signing and keeps notarization optional', () => {
+    expect(desktopPackage.build.mac.identity).toBe('-');
     expect(desktopPackage.build.mac.hardenedRuntime).toBe(false);
     expect(desktopPackage.build.mac.notarize).toBe(false);
     expect(desktopPackage.build.dmg.sign).toBe(false);
@@ -133,9 +133,9 @@ describe('desktop package contract', () => {
     expect(desktopPackage.scripts['release:win']).toStartWith('node scripts/clean-installers.mjs');
     expect(desktopPackage.scripts['dist:win']).toContain('electron-builder --win --x64');
     const verifierSource = readFileSync(path.join(uiRoot, 'scripts', 'verify-package.mjs'), 'utf8');
-    expect(verifierSource).toContain('verifyUnsignedPackage(platform, paths, installerFiles)');
+    expect(verifierSource).toContain('verifyPackageSignatures(platform, paths, installerFiles)');
     expect(verifierSource).toContain('certificateTableOffset !== 0 || certificateTableSize !== 0');
-    expect(verifierSource).toContain('macOS app unexpectedly contains a distribution signature');
+    expect(verifierSource).toContain("run('codesign', ['--verify', '--deep', '--strict', appDir])");
     expect(verifierSource).toContain('verifyBuiltinArchive(builtinDir, entry)');
     expect(verifierSource).toContain("path.join(paths.resourcesDir, 'connectors')");
     expect(desktopPackage.build.extraResources.some(

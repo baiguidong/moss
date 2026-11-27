@@ -264,20 +264,22 @@ export function assertUnsignedPe(filePath) {
   }
 }
 
-function verifyUnsignedPackage(platform, paths, installerFiles) {
+function verifyMacApp(appDir) {
+  run('codesign', ['--verify', '--deep', '--strict', appDir]);
+  const output = run('codesign', ['-dv', '--verbose=4', appDir]);
+  const identity = process.env.MOSS_MAC_SIGNING_IDENTITY?.trim();
+  if (identity && identity !== '-') {
+    if (!output.includes(`Authority=${identity}`)) throw new Error('macOS package signing identity mismatch.');
+    if (process.env.MOSS_MAC_NOTARIZE === 'true') run('xcrun', ['stapler', 'validate', appDir]);
+  } else if (!/^Signature=adhoc$/m.test(output)) {
+    throw new Error('Expected an ad-hoc signature on the packaged macOS app.');
+  }
+}
+
+function verifyPackageSignatures(platform, paths, installerFiles) {
   if (platform === 'darwin') {
-    const details = commandResult('codesign', ['-dv', '--verbose=4', paths.appDir]);
-    const output = `${details.stdout || ''}${details.stderr || ''}`;
-    const identity = process.env.MOSS_MAC_SIGNING_IDENTITY?.trim();
-    if (identity) {
-      if (!output.includes(`Authority=${identity}`)) throw new Error('macOS package signing identity mismatch.');
-      run('codesign', ['--verify', '--deep', '--strict', paths.appDir]);
-      if (process.env.MOSS_MAC_NOTARIZE === 'true') run('xcrun', ['stapler', 'validate', paths.appDir]);
-      return;
-    }
-    if (/^Authority=/m.test(output) || /TeamIdentifier=(?!not set)/.test(output)) {
-      throw new Error(`macOS app unexpectedly contains a distribution signature:\n${output.trim()}`);
-    }
+    verifyMacApp(paths.appDir);
+    if (process.env.MOSS_MAC_SIGNING_IDENTITY?.trim()) return;
     for (const name of installerFiles.filter((entry) => entry.endsWith('.dmg'))) {
       const result = commandResult('codesign', ['-dv', path.join(paths.installersDir, name)]);
       const output = `${result.stdout || ''}${result.stderr || ''}`;
@@ -499,17 +501,35 @@ async function main() {
   }
   if (platform === 'darwin') {
     for (const name of installerFiles.filter((entry) => entry.endsWith('.dmg'))) {
-      run('hdiutil', ['verify', path.join(paths.installersDir, name)]);
+      const dmg = path.join(paths.installersDir, name);
+      run('hdiutil', ['verify', dmg]);
+      const mount = await fsp.mkdtemp(path.join(os.tmpdir(), 'moss-dmg-'));
+      try {
+        run('hdiutil', ['attach', '-readonly', '-nobrowse', '-mountpoint', mount, dmg]);
+        try {
+          verifyMacApp(path.join(mount, path.basename(paths.appDir)));
+        } finally {
+          run('hdiutil', ['detach', mount]);
+        }
+      } finally {
+        await fsp.rmdir(mount);
+      }
     }
     for (const name of installerFiles.filter((entry) => entry.endsWith('.zip'))) {
-      run('unzip', ['-tq', path.join(paths.installersDir, name)]);
+      const extracted = await fsp.mkdtemp(path.join(os.tmpdir(), 'moss-update-zip-'));
+      try {
+        run('ditto', ['-x', '-k', path.join(paths.installersDir, name), extracted]);
+        verifyMacApp(path.join(extracted, path.basename(paths.appDir)));
+      } finally {
+        await fsp.rm(extracted, { recursive: true, force: true });
+      }
     }
   }
   if (platform === 'win32' && installerFiles.filter((name) => name.endsWith('.exe')).length < 2) {
     throw new Error('Expected both NSIS and portable Windows artifacts.');
   }
   await verifyUpdateMetadata(platform, paths, installerFiles, appPackage.version);
-  verifyUnsignedPackage(platform, paths, installerFiles);
+  verifyPackageSignatures(platform, paths, installerFiles);
   if (platform === 'win32' && process.env.GITHUB_ACTIONS === 'true') {
     await verifyWindowsInstallation(paths, `Moss-Setup-${appPackage.version}-${arch}.exe`, builtins);
   }
@@ -521,7 +541,7 @@ async function main() {
     ripgrepVersion,
     sharp: sharpOutput,
     ...runtimeVersions,
-    unsigned: !(platform === 'darwin' && process.env.MOSS_MAC_SIGNING_IDENTITY),
+    unsigned: platform === 'win32',
     installerFiles,
   }, null, 2));
 }

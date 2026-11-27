@@ -227,7 +227,7 @@
       ],
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "identity": null,
+      "identity": "-",
       "notarize": false
     },
     "win": {

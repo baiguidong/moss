@@ -86,12 +86,14 @@ jobs:
       - name: Build and verify macOS arm64 installers
         run: bun run --cwd ui dist:mac
         env:
+          # PR builds sign ad hoc on the hosted runner without a signing certificate.
+          CSC_FOR_PULL_REQUEST: 'true'
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: moss-macos-arm64-unsigned
+          name: moss-macos-arm64-adhoc
           path: |
             ui/dist/installers/*.dmg
             ui/dist/installers/*.zip
